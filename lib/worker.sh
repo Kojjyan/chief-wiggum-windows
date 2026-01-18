@@ -92,11 +92,13 @@ detect_workspace_violations() {
             echo ""
         } >> "$project_dir/.ralph/logs/violations.log"
 
-        log_error "Reverting unauthorized changes..."
-        # Revert changes outside workspace
-        git checkout -- . 2>&1 | tee -a "$WORKER_DIR/worker.log"
-
-        log_error "Changes have been reverted. Task marked as FAILED."
+        log_error "NOT reverting changes - may include user edits from main repo."
+        log_error "Task marked as FAILED. Please manually review the changes."
+        log_error ""
+        log_error "To prevent this:"
+        log_error "  1. Do NOT edit files in the main repo while workers are running"
+        log_error "  2. Ensure your git working directory is clean before running 'wiggum run'"
+        log_error ""
 
         return 1
     fi

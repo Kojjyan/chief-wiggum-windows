@@ -108,6 +108,10 @@ main() {
 
     log "Starting Chief Wiggum in $PROJECT_DIR (max $MAX_WORKERS concurrent workers)"
     echo ""
+    echo "⚠️  WARNING: Do NOT edit files in the main repository while workers are running!"
+    echo "    Workers run in isolated git worktrees. Any uncommitted changes in the main"
+    echo "    repo will cause workspace violation detection and task failures."
+    echo ""
     echo "Press Ctrl+C to stop and view 'wiggum status' for details"
     echo "=========================================="
     echo ""
