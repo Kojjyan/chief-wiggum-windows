@@ -37,6 +37,18 @@ get_todo_tasks() {
         }' "$kanban"
 }
 
+get_failed_tasks() {
+    local kanban="$1"
+    # Extract task IDs from TASKS section - ONLY failed tasks (- [*])
+    awk 'BEGIN{in_tasks=0}
+        /^## TASKS$/{in_tasks=1; next}
+        /^## / && in_tasks{in_tasks=0}
+        in_tasks && /^- \[\*\] \*\*\[[A-Za-z]{2,8}-[0-9]+\]\*\*/{
+            match($0, /\[[A-Za-z]{2,8}-[0-9]+\]/)
+            print substr($0, RSTART+1, RLENGTH-2)
+        }' "$kanban"
+}
+
 extract_task() {
     local task_id="$1"
     local kanban="$2"

@@ -145,6 +145,20 @@ main() {
     fi
 
     echo ""
+
+    # Check for failed tasks and reset them to pending for retry
+    local failed_tasks=$(get_failed_tasks "$RALPH_DIR/kanban.md")
+    if [ -n "$failed_tasks" ]; then
+        log "Found failed tasks - resetting for retry:"
+        for task_id in $failed_tasks; do
+            echo "  → Retrying $task_id"
+            if ! update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" " "; then
+                log_error "Failed to reset $task_id to pending"
+            fi
+        done
+        echo ""
+    fi
+
     log "Starting Chief Wiggum in $PROJECT_DIR (max $MAX_WORKERS concurrent workers)"
     echo ""
     echo "⚠️  WARNING: Do NOT edit files in the main repository while workers are running!"
