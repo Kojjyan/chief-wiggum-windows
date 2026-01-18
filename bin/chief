@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Chief Wiggum - Worker launcher and manager
+
+CHIEF_HOME="${CHIEF_HOME:-$HOME/.claude/chief-wiggum}"
+PROJECT_DIR="$(pwd)"
+RALPH_DIR="$PROJECT_DIR/.ralph"
+
+source "$CHIEF_HOME/lib/task-parser.sh"
+source "$CHIEF_HOME/lib/logger.sh"
+
+main() {
+    # Initialize project if needed
+    if [ ! -d "$RALPH_DIR" ]; then
+        log_error ".ralph/ directory not found. Run 'chief-init' first."
+        exit 1
+    fi
+
+    if [ ! -f "$RALPH_DIR/kanban.md" ]; then
+        log_error ".ralph/kanban.md not found. Create a kanban file first."
+        exit 1
+    fi
+
+    log "Starting Chief Wiggum in $PROJECT_DIR"
+
+    # Parse kanban and spawn worker for each TODO task
+    local tasks=$(get_todo_tasks "$RALPH_DIR/kanban.md")
+
+    if [ -z "$tasks" ]; then
+        log "No TODO tasks found in kanban. Nothing to do."
+        exit 0
+    fi
+
+    local worker_pids=()
+    local worker_count=0
+
+    for task_id in $tasks; do
+        log "Spawning worker for $task_id"
+        spawn_worker "$task_id" &
+        worker_pids+=($!)
+        ((worker_count++))
+    done
+
+    # Save PIDs for chief-stop
+    printf '%s\n' "${worker_pids[@]}" > "$RALPH_DIR/.chief.pid"
+
+    log "Spawned $worker_count workers"
+    log "Monitor: chief-status"
+    log "Stop: chief-stop"
+
+    # Optionally wait for all workers (commented out by default)
+    # wait
+}
+
+spawn_worker() {
+    local task_id="$1"
+    local worker_id="worker-${task_id}-$$"
+    local worker_dir="$RALPH_DIR/workers/$worker_id"
+
+    # Create worker directory
+    mkdir -p "$worker_dir"
+    mkdir -p "$RALPH_DIR/logs"
+
+    # Extract task from kanban and create worker PRD
+    extract_task "$task_id" "$RALPH_DIR/kanban.md" > "$worker_dir/prd.md"
+
+    # Launch worker
+    export WORKER_ID="$worker_id"
+    export TASK_ID="$task_id"
+    export CHIEF_HOME
+    bash "$CHIEF_HOME/lib/worker.sh" "$worker_dir" "$PROJECT_DIR" >> "$RALPH_DIR/logs/workers.log" 2>&1
+}
+
+main "$@"

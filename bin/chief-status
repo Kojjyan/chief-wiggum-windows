@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Show status of workers
+
+PROJECT_DIR="$(pwd)"
+RALPH_DIR="$PROJECT_DIR/.ralph"
+
+if [ ! -f "$RALPH_DIR/.chief.pid" ]; then
+    echo "No chief process running in this project"
+    exit 0
+fi
+
+echo "=== Chief Wiggum Status ==="
+echo "Project: $PROJECT_DIR"
+echo ""
+
+# Read PIDs and check if still running
+worker_count=0
+running_count=0
+
+while read -r pid; do
+    ((worker_count++))
+    if kill -0 "$pid" 2>/dev/null; then
+        ((running_count++))
+        # Find worker dir for this PID
+        worker_info=$(ps -p "$pid" -o args= 2>/dev/null | grep -oP 'workers/\K[^/]+' || echo "unknown")
+        echo "✓ Worker $worker_info (PID: $pid) - RUNNING"
+    else
+        echo "✗ Worker (PID: $pid) - FINISHED"
+    fi
+done < "$RALPH_DIR/.chief.pid"
+
+echo ""
+echo "Total: $worker_count workers, $running_count running"
+
+# Show recent activity from logs
+if [ -f "$RALPH_DIR/logs/workers.log" ]; then
+    echo ""
+    echo "Recent activity (last 5 lines):"
+    tail -5 "$RALPH_DIR/logs/workers.log" | sed 's/^/  /'
+fi

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Initialize .ralph/ directory in a project
+
+CHIEF_HOME="${CHIEF_HOME:-$HOME/.claude/chief-wiggum}"
+PROJECT_DIR="$(pwd)"
+RALPH_DIR="$PROJECT_DIR/.ralph"
+
+echo "Initializing Chief Wiggum in $PROJECT_DIR"
+
+# Check if git repo
+if [ ! -d ".git" ]; then
+    echo "WARNING: Not a git repository. Chief Wiggum requires git for worker isolation."
+    echo "Run 'git init' first."
+    exit 1
+fi
+
+# Create .ralph/ structure
+mkdir -p "$RALPH_DIR/workers"
+mkdir -p "$RALPH_DIR/results"
+mkdir -p "$RALPH_DIR/logs"
+
+# Create kanban template if it doesn't exist
+if [ ! -f "$RALPH_DIR/kanban.md" ]; then
+    cat > "$RALPH_DIR/kanban.md" <<'EOF'
+# Project Kanban
+
+## TODO
+
+- [ ] **[TASK-001]** Example task
+  - Description: This is an example task. Replace with your actual tasks.
+  - Priority: HIGH
+  - Dependencies: none
+
+## IN_PROGRESS
+
+(Tasks being worked on by workers)
+
+## DONE
+
+(Completed tasks)
+
+## BLOCKED
+
+(Tasks with unmet dependencies or issues)
+EOF
+    echo "Created .ralph/kanban.md (edit this file to add your tasks)"
+else
+    echo ".ralph/kanban.md already exists"
+fi
+
+echo ""
+echo "✓ Initialized .ralph/ directory"
+echo ""
+echo "Next steps:"
+echo "  1. Edit .ralph/kanban.md to add your tasks"
+echo "  2. Run 'chief' to start workers"
+echo "  3. Monitor with 'chief-status'"
+echo ""

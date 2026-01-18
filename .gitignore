@@ -1,0 +1,17 @@
+# Ralph directory (project-specific, not part of source)
+.ralph/
+
+# Common patterns
+*.log
+*.pid
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
+
+# Test artifacts
+test-*/

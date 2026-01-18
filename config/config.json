@@ -1,0 +1,18 @@
+{
+  "workers": {
+    "max_iterations": 50,
+    "sleep_seconds": 2,
+    "agent_file": "${CHIEF_HOME}/config/worker-agent.md"
+  },
+  "hooks": {
+    "enabled": true,
+    "worker_hooks": "${CHIEF_HOME}/hooks/worker-hooks.json"
+  },
+  "paths": {
+    "ralph_dir": ".ralph",
+    "kanban_file": "kanban.md",
+    "results_dir": "results",
+    "workers_dir": "workers",
+    "logs_dir": "logs"
+  }
+}
