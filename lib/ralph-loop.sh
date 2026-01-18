@@ -22,19 +22,25 @@ ralph_loop() {
         fi
 
         # Build prompt referencing the PRD
-        local prompt="Read $prd_file, find next incomplete task (- [ ]), execute it completely, then mark it complete (- [x])"
+        local prompt="Read @$prd_file, find the next incomplete task (- [ ]), execute it completely, then mark it as complete (- [x]) by editing the PRD file."
 
         log_debug "Iteration $iteration: Executing Claude Code"
 
         # Execute Claude Code autonomously in worker's workspace
         cd "$workspace" || exit 1
-        claude code \
-            --dangerously-skip-permissions \
-            --agent-file "$agent_file" \
-            --setting-sources "project,local" \
-            --print \
-            --output-format json \
-            "$prompt" 2>&1 | tee -a "$workspace/../worker.log"
+
+        # Debug: show exact command
+        {
+            echo "=== DEBUG ITERATION $iteration ==="
+            echo "PWD: $(pwd)"
+            echo "PRD file: $prd_file"
+            echo "Prompt: $prompt"
+            echo "Command: claude --dangerously-skip-permissions --verbose --output-format stream-json -p \"$prompt\""
+            echo "=== RUNNING ==="
+        } >> "$workspace/../worker.log"
+
+        # Run Claude with the prompt
+        claude --dangerously-skip-permissions --verbose --output-format stream-json -p "$prompt" >> "$workspace/../worker.log" 2>&1
 
         iteration=$((iteration + 1))
         sleep 2  # Prevent tight loop

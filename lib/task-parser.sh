@@ -3,7 +3,7 @@
 
 has_incomplete_tasks() {
     local file="$1"
-    grep -q '- \[ \]' "$file"
+    grep -q -- '- \[ \]' "$file"
 }
 
 get_todo_tasks() {
