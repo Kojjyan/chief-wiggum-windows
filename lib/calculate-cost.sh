@@ -15,24 +15,48 @@ calculate_worker_cost() {
     local cache_creation_tokens=0
     local cache_read_tokens=0
 
-    # Parse JSON lines for token usage
-    while IFS= read -r line; do
-        # Extract input_tokens (excluding cache fields)
-        local it=$(echo "$line" | grep -o '"input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
-        [ -n "$it" ] && input_tokens=$((input_tokens + it))
+    # Parse token usage from stream-JSON output
+    local log_dir="$(dirname "$log_file")/logs"
 
-        # Extract output_tokens
-        local ot=$(echo "$line" | grep -o '"output_tokens":[0-9]*' | head -1 | cut -d':' -f2)
-        [ -n "$ot" ] && output_tokens=$((output_tokens + ot))
+    if [ -d "$log_dir" ]; then
+        # New format: Parse from iteration logs
+        while IFS= read -r line; do
+            # Extract input_tokens (excluding cache fields)
+            local it=$(echo "$line" | grep -o '"input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$it" ] && input_tokens=$((input_tokens + it))
 
-        # Extract cache_creation_input_tokens
-        local cct=$(echo "$line" | grep -o '"cache_creation_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
-        [ -n "$cct" ] && cache_creation_tokens=$((cache_creation_tokens + cct))
+            # Extract output_tokens
+            local ot=$(echo "$line" | grep -o '"output_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$ot" ] && output_tokens=$((output_tokens + ot))
 
-        # Extract cache_read_input_tokens
-        local crt=$(echo "$line" | grep -o '"cache_read_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
-        [ -n "$crt" ] && cache_read_tokens=$((cache_read_tokens + crt))
-    done < <(grep '"input_tokens"' "$log_file")
+            # Extract cache_creation_input_tokens
+            local cct=$(echo "$line" | grep -o '"cache_creation_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$cct" ] && cache_creation_tokens=$((cache_creation_tokens + cct))
+
+            # Extract cache_read_input_tokens
+            local crt=$(echo "$line" | grep -o '"cache_read_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$crt" ] && cache_read_tokens=$((cache_read_tokens + crt))
+        done < <(find "$log_dir" -type f \( -name "iteration-*.log" -o -name "*-summary.log" \) -exec grep '"input_tokens"' {} \;)
+    else
+        # Old format: Parse from worker.log (backward compatibility)
+        while IFS= read -r line; do
+            # Extract input_tokens (excluding cache fields)
+            local it=$(echo "$line" | grep -o '"input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$it" ] && input_tokens=$((input_tokens + it))
+
+            # Extract output_tokens
+            local ot=$(echo "$line" | grep -o '"output_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$ot" ] && output_tokens=$((output_tokens + ot))
+
+            # Extract cache_creation_input_tokens
+            local cct=$(echo "$line" | grep -o '"cache_creation_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$cct" ] && cache_creation_tokens=$((cache_creation_tokens + cct))
+
+            # Extract cache_read_input_tokens
+            local crt=$(echo "$line" | grep -o '"cache_read_input_tokens":[0-9]*' | head -1 | cut -d':' -f2)
+            [ -n "$crt" ] && cache_read_tokens=$((cache_read_tokens + crt))
+        done < <(grep '"input_tokens"' "$log_file")
+    fi
 
     # Calculate time spent from log timestamps
     local time_spent=0
