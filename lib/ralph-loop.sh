@@ -194,6 +194,12 @@ CRITICAL: Do NOT read files in the logs/ directory - they contain full conversat
             break
         fi
 
+        # Check if shutdown was requested during work phase
+        if [ "$shutdown_requested" = true ]; then
+            log "Shutdown requested during work phase - exiting loop"
+            break
+        fi
+
         # PHASE 2: ALWAYS generate summary for context continuity (not conditional)
         log "Generating summary for iteration $iteration"
 
@@ -296,6 +302,12 @@ Please provide your summary based on the conversation so far, following this str
             } >> "$prd_file"
 
             log "Summary appended to PRD and worker.log"
+
+        # Check if shutdown was requested during summary phase
+        if [ "$shutdown_requested" = true ]; then
+            log "Shutdown requested during summary phase - exiting loop"
+            break
+        fi
 
         iteration=$((iteration + 1))
         sleep 2  # Prevent tight loop
