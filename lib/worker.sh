@@ -51,10 +51,9 @@ main() {
     setup_worker
 
     # Start Ralph loop for this worker's task in background to capture PID
-    # Params: prd_file, agent_file, workspace, max_iterations, max_turns_per_session
+    # Params: prd_file, workspace, max_iterations, max_turns_per_session
     ralph_loop \
         "$WORKER_DIR/prd.md" \
-        "$WIGGUM_HOME/config/worker-agent.md" \
         "$WORKER_DIR/workspace" \
         "$MAX_ITERATIONS" \
         "$MAX_TURNS_PER_SESSION" &

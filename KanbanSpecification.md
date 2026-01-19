@@ -33,7 +33,7 @@ Each task entry follows this exact structure:
 ```markdown
 - [ ] **[TASK-ID]** Brief task description
   - Description: Detailed description of what needs to be done
-  - Priority: HIGH|MEDIUM|LOW
+  - Priority: CRITICAL|HIGH|MEDIUM|LOW
   - Dependencies: TASK-ID-1, TASK-ID-2 | none
 ```
 
@@ -44,7 +44,7 @@ Tasks can include additional optional fields for more detailed specifications:
 ```markdown
 - [ ] **[TASK-ID]** Brief task description
   - Description: Detailed description of what needs to be done
-  - Priority: HIGH|MEDIUM|LOW
+  - Priority: CRITICAL|HIGH|MEDIUM|LOW
   - Dependencies: TASK-ID-1, TASK-ID-2 | none
   - Scope:
     - Specific item to implement or deliver
@@ -106,7 +106,7 @@ Tasks use markdown checkboxes to indicate their status:
 ### Priority (Required)
 
 - Indented with 2 spaces: `  - Priority:`
-- Valid values: `HIGH`, `MEDIUM`, `LOW`
+- Valid values: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`
 - Used for task ordering and commit metadata
 - Case-sensitive (must be uppercase)
 
@@ -297,6 +297,7 @@ The `lib/task-parser.sh` script provides these functions:
 
 ### Priority Guidelines
 
+- **CRITICAL**: Security vulnerabilities, data loss risks, system-breaking bugs
 - **HIGH**: Blocking other work, critical bugs, or foundational features
 - **MEDIUM**: Important features, non-critical bugs, enhancements
 - **LOW**: Nice-to-haves, optimizations, documentation improvements

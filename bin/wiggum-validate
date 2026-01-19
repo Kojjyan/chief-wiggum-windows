@@ -25,7 +25,7 @@ Options:
 Validates:
   - Task ID format ([A-Za-z]{2,8}-[0-9]+)
   - Required fields (Description, Priority)
-  - Priority values (HIGH, MEDIUM, LOW)
+  - Priority values (CRITICAL, HIGH, MEDIUM, LOW)
   - Unique task IDs
   - Dependency references exist
   - Proper indentation (2 spaces for fields, 4 spaces for sub-items)
@@ -161,8 +161,8 @@ validate_kanban() {
                 # Validate priority value
                 local priority_value="${line#*Priority: }"
                 priority_value="${priority_value%%[[:space:]]*}"  # Trim trailing whitespace
-                if [[ ! "$priority_value" =~ ^(HIGH|MEDIUM|LOW)$ ]]; then
-                    add_error "$line_num" "Invalid priority '$priority_value' for task '$current_task_id' - must be HIGH, MEDIUM, or LOW"
+                if [[ ! "$priority_value" =~ ^(CRITICAL|HIGH|MEDIUM|LOW)$ ]]; then
+                    add_error "$line_num" "Invalid priority '$priority_value' for task '$current_task_id' - must be CRITICAL, HIGH, MEDIUM, or LOW"
                 fi
                 in_scope=false
                 in_oos=false

@@ -18,10 +18,9 @@ extract_summary_text() {
 
 ralph_loop() {
     local prd_file="$1"                    # Worker's PRD file (absolute path)
-    local agent_file="$2"                  # Agent definition
-    local workspace="$3"                   # Worker's git worktree
-    local max_iterations="${4:-20}"
-    local max_turns_per_session="${5:-50}" # Limit turns to control context window
+    local workspace="$2"                   # Worker's git worktree
+    local max_iterations="${3:-20}"
+    local max_turns_per_session="${4:-50}" # Limit turns to control context window
     local iteration=0
 
     # Track if shutdown was requested

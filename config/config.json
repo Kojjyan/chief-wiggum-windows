@@ -1,8 +1,7 @@
 {
   "workers": {
     "max_iterations": 50,
-    "sleep_seconds": 2,
-    "agent_file": "${CHIEF_HOME}/config/worker-agent.md"
+    "sleep_seconds": 2
   },
   "hooks": {
     "enabled": true,
