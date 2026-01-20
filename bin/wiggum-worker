@@ -302,8 +302,19 @@ cmd_resume() {
     bash "$WIGGUM_HOME/lib/worker.sh" "$worker_dir" "$PROJECT_DIR" \
         >> "$RALPH_DIR/logs/workers.log" 2>&1 &
 
-    local new_pid=$!
-    echo "Worker resumed in background (PID: $new_pid)"
+    # Wait briefly for worker.pid to be created (same as cmd_start)
+    local wait_count=0
+    while [ ! -f "$worker_dir/worker.pid" ] && [ $wait_count -lt 10 ]; do
+        sleep 0.1
+        ((wait_count++))
+    done
+
+    if [ -f "$worker_dir/worker.pid" ]; then
+        local worker_pid=$(cat "$worker_dir/worker.pid")
+        echo "Worker running (PID: $worker_pid)"
+    else
+        echo "Worker started (PID file pending)"
+    fi
     echo "Use 'wiggum monitor' to follow progress"
 }
 

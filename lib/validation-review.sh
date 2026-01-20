@@ -111,7 +111,7 @@ EOF
 # Returns: 0 on success (regardless of PASS/FAIL), 1 on agent error
 run_validation_review() {
     local worker_dir="$1"
-    local max_turns="${2:-5}"
+    local max_turns="${2:-50}"
     local workspace="$worker_dir/workspace"
     local log_file="$worker_dir/logs/validation-review.log"
 
