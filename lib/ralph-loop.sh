@@ -27,16 +27,26 @@ start_violation_monitor() {
             if [[ -n "$modified" ]]; then
                 local timestamp=$(date -Iseconds)
 
-                # Log the real-time detection
-                echo "[$timestamp] REAL-TIME VIOLATION DETECTED" >> "$worker_dir/violation-monitor.log"
-                echo "Modified files in main repo:" >> "$worker_dir/violation-monitor.log"
-                echo "$modified" >> "$worker_dir/violation-monitor.log"
-                echo "---" >> "$worker_dir/violation-monitor.log"
+                # Check if worker directory still exists (worker may have been killed)
+                if [[ ! -d "$worker_dir" ]]; then
+                    # Worker directory gone, exit the monitor
+                    exit 0
+                fi
+
+                # Log the real-time detection (suppress errors if dir disappears mid-write)
+                {
+                    echo "[$timestamp] REAL-TIME VIOLATION DETECTED"
+                    echo "Modified files in main repo:"
+                    echo "$modified"
+                    echo "---"
+                } >> "$worker_dir/violation-monitor.log" 2>/dev/null || exit 0
 
                 # Create flag file for worker to check (optional early termination)
-                echo "VIOLATION_DETECTED" > "$worker_dir/violation_flag.txt"
-                echo "$timestamp" >> "$worker_dir/violation_flag.txt"
-                echo "$modified" >> "$worker_dir/violation_flag.txt"
+                {
+                    echo "VIOLATION_DETECTED"
+                    echo "$timestamp"
+                    echo "$modified"
+                } > "$worker_dir/violation_flag.txt" 2>/dev/null || true
 
                 # Log to stderr so it appears in worker output
                 echo "[VIOLATION MONITOR] Changes detected in main repository!" >&2

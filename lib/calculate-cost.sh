@@ -5,6 +5,12 @@ calculate_worker_cost() {
     local log_file="$1"
     local log_dir="$(dirname "$log_file")/logs"
 
+    # Check if logs directory exists
+    if [ ! -d "$log_dir" ]; then
+        echo "Error: Logs directory not found: $log_dir" >&2
+        return 1
+    fi
+
     # Sum all result entries from iteration logs using jq
     local totals
     totals=$(find "$log_dir" -type f -name "iteration-*.log" -exec grep '"type":"result"' {} \; | \
@@ -82,7 +88,7 @@ calculate_worker_cost() {
     export WORKER_CACHE_READ_TOKENS=$cache_read_tokens
 }
 
-# If called directly with log file argument
-if [ $# -gt 0 ]; then
+# If called directly with log file argument (not when sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [ $# -gt 0 ]; then
     calculate_worker_cost "$1"
 fi

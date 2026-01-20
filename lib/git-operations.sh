@@ -188,6 +188,11 @@ git_finalize_worker() {
     local worker_dir="$1"
     local task_id="$2"
     local project_dir="$3"
+
+    # Convert to absolute paths before cd changes working directory
+    worker_dir=$(cd "$worker_dir" && pwd)
+    project_dir=$(cd "$project_dir" && pwd)
+
     local workspace="$worker_dir/workspace"
     local worker_id
     worker_id=$(basename "$worker_dir")
