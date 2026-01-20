@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Worker script - spawned by wiggum for each task
+# Acts as a thin coordinator that invokes agents via the agent-registry.
 
 WORKER_DIR="$1"         # e.g., .ralph/workers/worker-TASK-001-12345
 PROJECT_DIR="$2"        # Project root directory
@@ -10,17 +11,12 @@ WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
 WORKER_ID=$(basename "$WORKER_DIR")  # e.g., worker-TASK-001-12345
 TASK_ID=$(echo "$WORKER_ID" | sed -E 's/worker-(TASK-[0-9]+)-.*/\1/')  # e.g., TASK-001
 
-# Configuration for ralph loop
-MAX_ITERATIONS="${WIGGUM_MAX_ITERATIONS:-20}"           # Max outer loop iterations
-MAX_TURNS_PER_SESSION="${WIGGUM_MAX_TURNS:-50}"         # Max turns per Claude session (controls context window)
-
 # Source shared libraries
-source "$WIGGUM_HOME/lib/ralph-loop.sh"
+source "$WIGGUM_HOME/lib/agent-registry.sh"
 source "$WIGGUM_HOME/lib/logger.sh"
 source "$WIGGUM_HOME/lib/file-lock.sh"
 source "$WIGGUM_HOME/lib/audit-logger.sh"
 source "$WIGGUM_HOME/lib/task-parser.sh"
-source "$WIGGUM_HOME/lib/validation-review.sh"
 source "$WIGGUM_HOME/lib/git-operations.sh"
 
 # Save references to sourced kanban functions before defining wrapper
@@ -35,18 +31,18 @@ main() {
 
     # Track if shutdown was requested
     local worker_interrupted=false
-    local ralph_loop_pid=""
+    local agent_pid=""
 
     # Setup signal handlers for graceful shutdown
     handle_worker_shutdown() {
         log "Worker $WORKER_ID received shutdown signal"
         worker_interrupted=true
 
-        # Kill ralph_loop if it's running
-        if [ -n "$ralph_loop_pid" ] && kill -0 "$ralph_loop_pid" 2>/dev/null; then
-            log "Terminating ralph_loop (PID: $ralph_loop_pid)"
-            kill -TERM "$ralph_loop_pid" 2>/dev/null || true
-            wait "$ralph_loop_pid" 2>/dev/null || true
+        # Kill agent if it's running
+        if [ -n "$agent_pid" ] && kill -0 "$agent_pid" 2>/dev/null; then
+            log "Terminating agent (PID: $agent_pid)"
+            kill -TERM "$agent_pid" 2>/dev/null || true
+            wait "$agent_pid" 2>/dev/null || true
         fi
 
         # Exit immediately to stop the worker
@@ -59,41 +55,36 @@ main() {
 
     setup_worker
 
-    # Handle resume mode - pass environment variables to ralph_loop
+    # Handle resume mode - pass environment variables to agent
     if [ -n "${WIGGUM_RESUME_ITERATION:-}" ]; then
         log "Worker resuming from iteration $WIGGUM_RESUME_ITERATION"
         export WIGGUM_RESUME_ITERATION
         export WIGGUM_RESUME_CONTEXT
     fi
 
-    # Start Ralph loop for this worker's task in background to capture PID
-    # Params: prd_file, workspace, max_iterations, max_turns_per_session
-    ralph_loop \
-        "$WORKER_DIR/prd.md" \
-        "$WORKER_DIR/workspace" \
-        "$MAX_ITERATIONS" \
-        "$MAX_TURNS_PER_SESSION" &
-    ralph_loop_pid=$!
+    # Run task-worker agent in background to capture PID
+    run_agent "task-worker" "$WORKER_DIR" "$PROJECT_DIR" &
+    local agent_pid=$!
 
-    # Wait for ralph_loop to complete
-    if wait "$ralph_loop_pid"; then
+    # Wait for agent to complete
+    if wait "$agent_pid"; then
         if [ "$worker_interrupted" = true ]; then
             log "Worker $WORKER_ID interrupted by signal"
         else
-            log "Worker $WORKER_ID completed successfully"
+            log "Worker $WORKER_ID task-worker agent completed successfully"
         fi
     else
         if [ "$worker_interrupted" = true ]; then
             log "Worker $WORKER_ID interrupted by signal"
         else
-            log_error "Worker $WORKER_ID failed or timed out"
+            log_error "Worker $WORKER_ID task-worker agent failed or timed out"
         fi
     fi
 
-    # Run validation review on completed work using shared library
+    # Run validation-review agent on completed work
     if [ -d "$WORKER_DIR/workspace" ]; then
         log "Running validation review on completed work"
-        run_validation_review "$WORKER_DIR" 5
+        run_agent "validation-review" "$WORKER_DIR" "$PROJECT_DIR" 5
     fi
 
     # Determine final status

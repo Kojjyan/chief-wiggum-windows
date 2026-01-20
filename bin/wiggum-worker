@@ -18,7 +18,8 @@ source "$WIGGUM_HOME/lib/logger.sh"
 source "$WIGGUM_HOME/lib/task-parser.sh"
 source "$WIGGUM_HOME/lib/audit-logger.sh"
 source "$WIGGUM_HOME/lib/worker-lifecycle.sh"
-source "$WIGGUM_HOME/lib/validation-review.sh"
+source "$WIGGUM_HOME/lib/agent-registry.sh"
+source "$WIGGUM_HOME/lib/agents/validation-review.sh"  # For check_validation_result utility
 source "$WIGGUM_HOME/lib/git-operations.sh"
 
 # Default configuration (can be overridden by env vars)
@@ -177,7 +178,7 @@ prepare_resume_context() {
 
 # Resume from validation phase (summary.txt exists, work is complete)
 # Runs validation review, then commits and creates PR if passed
-# Uses shared libraries: validation-review.sh and git-operations.sh
+# Uses agent-registry and git-operations.sh
 resume_from_validation() {
     local worker_dir="$1"
     local task_id="$2"
@@ -191,8 +192,8 @@ resume_from_validation() {
     # Mark task as in-progress before running validation
     update_kanban_status "$PROJECT_DIR/.ralph/kanban.md" "$task_id" "="
 
-    # Run validation review using shared library
-    run_validation_review "$worker_dir" 50
+    # Run validation-review agent
+    run_agent "validation-review" "$worker_dir" "$PROJECT_DIR" 50
 
     # Check validation result
     if ! check_validation_result "$worker_dir"; then

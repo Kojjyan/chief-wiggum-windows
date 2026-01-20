@@ -1,16 +1,67 @@
 #!/usr/bin/env bash
-# validation-review.sh - Validation reviewer agent for completed work
+# validation-review.sh - Code review and validation agent
 #
-# Provides functions to run validation review on completed worker tasks.
-# Used by both lib/worker.sh and bin/wiggum-worker for consistent validation.
+# Self-contained agent for reviewing completed work against PRD requirements.
+# Uses single-shot execution pattern.
+#
+# Required paths: prd.md, workspace
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/run-agent-once.sh"
+AGENT_TYPE="validation-review"
 
-# Get the validation review system prompt
-# Args: <workspace_path>
-get_validation_system_prompt() {
+# Source dependencies
+source "$WIGGUM_HOME/lib/run-agent-once.sh"
+source "$WIGGUM_HOME/lib/logger.sh"
+
+# Required paths before agent can run
+agent_required_paths() {
+    echo "prd.md"
+    echo "workspace"
+}
+
+# Main entry point
+agent_run() {
+    local worker_dir="$1"
+    local project_dir="$2"
+    local max_turns="${3:-5}"
+
+    local workspace="$worker_dir/workspace"
+    local log_file="$worker_dir/logs/validation-review.log"
+
+    if [ ! -d "$workspace" ]; then
+        log_error "Workspace not found: $workspace"
+        VALIDATION_RESULT="UNKNOWN"
+        return 1
+    fi
+
+    mkdir -p "$worker_dir/logs"
+
+    # Clean up old validation files before re-running
+    rm -f "$log_file" "$worker_dir/validation-result.txt" "$worker_dir/validation-review.md"
+
+    log "Running validation review..."
+
+    run_agent_once "$workspace" \
+        "$(_get_system_prompt "$workspace")" \
+        "$(_get_user_prompt)" \
+        "$log_file" \
+        "$max_turns"
+
+    local agent_exit=$?
+
+    # Parse result
+    _extract_validation_result "$worker_dir"
+
+    if [ $agent_exit -eq 0 ]; then
+        log "Validation review completed with result: $VALIDATION_RESULT"
+    else
+        log_warn "Validation review had issues (exit: $agent_exit)"
+    fi
+
+    return $agent_exit
+}
+
+# System prompt
+_get_system_prompt() {
     local workspace="$1"
 
     cat << EOF
@@ -26,8 +77,8 @@ If you find issues, document them clearly but do not attempt fixes.
 EOF
 }
 
-# Get the validation review user prompt
-get_validation_user_prompt() {
+# User prompt
+_get_user_prompt() {
     cat << 'EOF'
 VALIDATION AND REVIEW TASK:
 
@@ -105,40 +156,13 @@ This tag is parsed programmatically to determine if the work can proceed to comm
 EOF
 }
 
-# Run validation review on a worker's completed work
-# Args: <worker_dir> [max_turns]
-# Sets: VALIDATION_RESULT (PASS, FAIL, or UNKNOWN)
-# Returns: 0 on success (regardless of PASS/FAIL), 1 on agent error
-run_validation_review() {
+# Extract validation result from log file
+_extract_validation_result() {
     local worker_dir="$1"
-    local max_turns="${2:-50}"
-    local workspace="$worker_dir/workspace"
     local log_file="$worker_dir/logs/validation-review.log"
-
-    if [ ! -d "$workspace" ]; then
-        log_error "Workspace not found: $workspace"
-        VALIDATION_RESULT="UNKNOWN"
-        return 1
-    fi
-
-    mkdir -p "$worker_dir/logs"
-
-    # Clean up old validation files before re-running
-    rm -f "$log_file" "$worker_dir/validation-result.txt" "$worker_dir/validation-review.md"
-
-    local system_prompt
-    system_prompt=$(get_validation_system_prompt "$workspace")
-    local user_prompt
-    user_prompt=$(get_validation_user_prompt)
-
-    log "Running validation review..."
-
-    run_agent_once "$workspace" "$system_prompt" "$user_prompt" "$log_file" "$max_turns"
-    local agent_exit=$?
 
     VALIDATION_RESULT="UNKNOWN"
 
-    # Extract review content and result
     if [ -f "$log_file" ]; then
         # Extract review content between <review> tags
         if grep -q '<review>' "$log_file"; then
@@ -155,18 +179,9 @@ run_validation_review() {
 
     # Store result for other scripts to read
     echo "$VALIDATION_RESULT" > "$worker_dir/validation-result.txt"
-
-    if [ $agent_exit -eq 0 ]; then
-        log "Validation review completed with result: $VALIDATION_RESULT"
-    else
-        log_warn "Validation review had issues (exit: $agent_exit)"
-    fi
-
-    return $agent_exit
 }
 
-# Check validation result from a worker directory
-# Args: <worker_dir>
+# Check validation result from a worker directory (utility for callers)
 # Returns: 0 if PASS, 1 if FAIL or UNKNOWN
 check_validation_result() {
     local worker_dir="$1"

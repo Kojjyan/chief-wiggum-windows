@@ -4,7 +4,7 @@
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
 source "$WIGGUM_HOME/lib/defaults.sh"
 source "$WIGGUM_HOME/lib/pr-comments.sh"
-source "$WIGGUM_HOME/lib/pr-comment-fix.sh"
+source "$WIGGUM_HOME/lib/agent-registry.sh"
 
 show_help() {
     cat << EOF
@@ -295,7 +295,7 @@ cmd_task_fix() {
     fi
 
     log "Starting comment fix loop for $(basename "$worker_dir")"
-    run_comment_fix "$pattern" "$worker_dir"
+    run_agent "pr-comment-fix" "$worker_dir" "$(pwd)"
 }
 
 # Parse arguments
