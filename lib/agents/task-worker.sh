@@ -79,8 +79,9 @@ agent_run() {
     fi
     local workspace="$WORKTREE_PATH"
 
-    # Start violation monitoring
-    start_violation_monitor "$project_dir" "$worker_dir" 30
+    # Start violation monitoring (log-based, 100ms interval)
+    # Pass: workspace, worker_dir, agent_pid ($$), project_dir
+    start_violation_monitor "$workspace" "$worker_dir" "$$" "$project_dir"
     trap '_task_worker_stop_monitor' EXIT
 
     # Change to workspace

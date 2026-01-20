@@ -228,7 +228,7 @@ wait_for_worker_pid() {
     local wait_count=0
     while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt $timeout ]; do
         sleep 0.1
-        ((wait_count++))
+        ((wait_count++)) || true
     done
 
     [ -f "$worker_dir/agent.pid" ]

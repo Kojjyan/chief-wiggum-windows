@@ -116,7 +116,7 @@ do_start() {
     local wait_count=0
     while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 10 ]; do
         sleep 0.1
-        ((wait_count++))
+        ((wait_count++)) || true
     done
 
     if [ -f "$worker_dir/agent.pid" ]; then

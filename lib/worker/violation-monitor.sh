@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # violation-monitor.sh - Background monitor for workspace boundary violations
 #
-# Runs in background, periodically checks for changes in the main project repo
-# that would indicate workspace violations or user edits during worker execution.
+# Monitors iteration logs in real-time (100ms intervals) for violations:
+# - Edit tool calls with file_path outside workspace directory
+# - Bash commands that operate on git main repo
 #
-# Extracted from ralph-loop.sh for reuse by agents.
+# On violation: immediately terminates agent and creates violation flag.
 
 source "$WIGGUM_HOME/lib/core/logger.sh"
 
@@ -14,59 +15,180 @@ VIOLATION_MONITOR_PID=""
 # Start real-time violation monitor
 #
 # Args:
-#   project_dir     - The main project directory to monitor
-#   worker_dir      - Worker directory for logging
-#   monitor_interval - Check interval in seconds (default: 30)
+#   workspace       - The allowed workspace directory
+#   worker_dir      - Worker directory (for logs and violation flag)
+#   agent_pid       - PID of the agent to kill on violation
+#   project_dir     - The main project directory (for detecting git commands there)
 #
 # Returns: The PID of the background monitor process (also sets VIOLATION_MONITOR_PID)
 start_violation_monitor() {
-    local project_dir="$1"
+    local workspace="$1"
     local worker_dir="$2"
-    local monitor_interval="${3:-30}"
+    local agent_pid="$3"
+    local project_dir="$4"
+
+    local logs_dir="$worker_dir/logs"
+    local monitor_log="$worker_dir/violation-monitor.log"
 
     (
-        while true; do
-            sleep "$monitor_interval"
+        local last_size=0
+        local current_log=""
+        local iteration=0
 
-            # Check git status in project root (excluding .ralph directory)
-            cd "$project_dir" 2>/dev/null || continue
-            local modified=$(git status --porcelain 2>/dev/null | grep -v "^.. .ralph/" | head -5)
+        while kill -0 "$agent_pid" 2>/dev/null; do
+            sleep 0.1
 
-            if [[ -n "$modified" ]]; then
-                local timestamp=$(date -Iseconds)
+            # Find the current iteration log file
+            local new_log=$(ls -t "$logs_dir"/iteration-*.log 2>/dev/null | head -1)
 
-                # Check if worker directory still exists (worker may have been killed)
-                if [[ ! -d "$worker_dir" ]]; then
-                    # Worker directory gone, exit the monitor
-                    exit 0
+            # If log file changed, reset position
+            if [[ "$new_log" != "$current_log" ]]; then
+                current_log="$new_log"
+                last_size=0
+                ((iteration++)) || true
+            fi
+
+            # Skip if no log file yet
+            [[ -z "$current_log" ]] && continue
+            [[ ! -f "$current_log" ]] && continue
+
+            # Get current file size
+            local current_size
+            current_size=$(stat -c%s "$current_log" 2>/dev/null || echo 0)
+
+            # Skip if no new content
+            [[ "$current_size" -le "$last_size" ]] && continue
+
+            # Read new content and check for violations
+            local new_content
+            new_content=$(tail -c +$((last_size + 1)) "$current_log" 2>/dev/null)
+            last_size=$current_size
+
+            # Parse each line of new content
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+
+                # Check for Edit tool violations
+                if echo "$line" | grep -q '"name":"Edit"'; then
+                    local file_path
+                    file_path=$(echo "$line" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+
+                    if [[ -n "$file_path" ]]; then
+                        # Allow: workspace paths and ../prd.md
+                        if [[ "$file_path" != "$workspace"* ]] && \
+                           [[ "$file_path" != "../prd.md" ]] && \
+                           [[ "$file_path" != "$worker_dir/prd.md" ]]; then
+                            # VIOLATION: Edit outside workspace
+                            _log_violation "$monitor_log" "Edit" "$file_path" "$workspace"
+                            _create_violation_flag "$worker_dir" "EDIT_OUTSIDE_WORKSPACE" "$file_path"
+                            _terminate_agent "$agent_pid" "$worker_dir"
+                            exit 1
+                        fi
+                    fi
                 fi
 
-                # Log the real-time detection (suppress errors if dir disappears mid-write)
-                {
-                    echo "[$timestamp] REAL-TIME VIOLATION DETECTED"
-                    echo "Modified files in main repo:"
-                    echo "$modified"
-                    echo "---"
-                } >> "$worker_dir/violation-monitor.log" 2>/dev/null || exit 0
+                # Check for Write tool violations
+                if echo "$line" | grep -q '"name":"Write"'; then
+                    local file_path
+                    file_path=$(echo "$line" | grep -oP '"file_path"\s*:\s*"\K[^"]+' 2>/dev/null || true)
 
-                # Create flag file for worker to check (optional early termination)
-                {
-                    echo "VIOLATION_DETECTED"
-                    echo "$timestamp"
-                    echo "$modified"
-                } > "$worker_dir/violation_flag.txt" 2>/dev/null || true
+                    if [[ -n "$file_path" ]]; then
+                        if [[ "$file_path" != "$workspace"* ]] && \
+                           [[ "$file_path" != "../prd.md" ]] && \
+                           [[ "$file_path" != "$worker_dir/prd.md" ]]; then
+                            # VIOLATION: Write outside workspace
+                            _log_violation "$monitor_log" "Write" "$file_path" "$workspace"
+                            _create_violation_flag "$worker_dir" "WRITE_OUTSIDE_WORKSPACE" "$file_path"
+                            _terminate_agent "$agent_pid" "$worker_dir"
+                            exit 1
+                        fi
+                    fi
+                fi
 
-                # Log to stderr so it appears in worker output
-                echo "[VIOLATION MONITOR] Changes detected in main repository!" >&2
-                echo "[VIOLATION MONITOR] This will cause task failure at cleanup." >&2
-                echo "[VIOLATION MONITOR] Files: $(echo "$modified" | head -1)" >&2
-            fi
+                # Check for Bash commands that operate on main repo
+                if echo "$line" | grep -q '"name":"Bash"'; then
+                    local command
+                    command=$(echo "$line" | grep -oP '"command"\s*:\s*"\K[^"]+' 2>/dev/null || true)
+
+                    if [[ -n "$command" ]]; then
+                        # Decode JSON escape sequences
+                        command=$(echo -e "$command")
+
+                        # Check for git commands in project_dir (not workspace)
+                        if echo "$command" | grep -qE "cd\s+['\"]?$project_dir" || \
+                           echo "$command" | grep -qE "git\s+(add|commit|push|checkout|branch|merge|rebase|reset)" | grep -v "$workspace"; then
+                            # Check if command explicitly targets main repo
+                            if [[ "$command" == *"$project_dir"* ]] && [[ "$command" != *"$workspace"* ]]; then
+                                # VIOLATION: Git command on main repo
+                                _log_violation "$monitor_log" "Bash/Git" "$command" "$workspace"
+                                _create_violation_flag "$worker_dir" "GIT_COMMAND_ON_MAIN_REPO" "$command"
+                                _terminate_agent "$agent_pid" "$worker_dir"
+                                exit 1
+                            fi
+                        fi
+                    fi
+                fi
+
+            done <<< "$new_content"
         done
     ) &
 
     VIOLATION_MONITOR_PID=$!
-    log_debug "Violation monitor started with PID: $VIOLATION_MONITOR_PID"
+    log_debug "Violation monitor started with PID: $VIOLATION_MONITOR_PID (watching agent PID: $agent_pid)"
     echo "$VIOLATION_MONITOR_PID"
+}
+
+# Internal: Log a violation
+_log_violation() {
+    local log_file="$1"
+    local tool="$2"
+    local target="$3"
+    local workspace="$4"
+    local timestamp
+    timestamp=$(date -Iseconds)
+
+    {
+        echo "[$timestamp] VIOLATION DETECTED"
+        echo "Tool: $tool"
+        echo "Target: $target"
+        echo "Allowed workspace: $workspace"
+        echo "---"
+    } >> "$log_file" 2>/dev/null || true
+
+    echo "[VIOLATION MONITOR] $tool violation detected: $target" >&2
+}
+
+# Internal: Create violation flag file
+_create_violation_flag() {
+    local worker_dir="$1"
+    local violation_type="$2"
+    local details="$3"
+    local timestamp
+    timestamp=$(date -Iseconds)
+
+    {
+        echo "VIOLATION_DETECTED"
+        echo "$timestamp"
+        echo "Type: $violation_type"
+        echo "Details: $details"
+    } > "$worker_dir/violation_flag.txt" 2>/dev/null || true
+}
+
+# Internal: Terminate the agent process
+_terminate_agent() {
+    local agent_pid="$1"
+    local worker_dir="$2"
+
+    echo "[VIOLATION MONITOR] Terminating agent (PID: $agent_pid) due to violation" >&2
+
+    # Try graceful termination first
+    kill -TERM "$agent_pid" 2>/dev/null || true
+    sleep 0.5
+
+    # Force kill if still running
+    if kill -0 "$agent_pid" 2>/dev/null; then
+        kill -9 "$agent_pid" 2>/dev/null || true
+    fi
 }
 
 # Stop the violation monitor

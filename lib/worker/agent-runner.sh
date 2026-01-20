@@ -61,10 +61,10 @@ agent_runner_init() {
     # Setup signal handlers
     trap '_agent_runner_signal_handler' INT TERM
 
-    # Start violation monitoring if interval > 0
-    if [ "$monitor_interval" -gt 0 ]; then
-        start_violation_monitor "$project_dir" "$agent_dir" "$monitor_interval"
-    fi
+    # NOTE: Violation monitoring is now handled by each agent individually
+    # (e.g., task-worker.sh starts its own log-based monitor)
+    # The generic git-status-based monitor was removed because it caused
+    # false positives when multiple workers run concurrently.
 
     return 0
 }
@@ -99,11 +99,15 @@ agent_runner_interrupted() {
 
 # Detect workspace violations
 #
-# Checks if any files outside the workspace were modified in project root.
-# This is the same check as in worker.sh but exposed as a reusable function.
+# Checks if a violation was detected by the log-based violation monitor.
+# The monitor parses iteration logs for Edit/Write/Bash tool calls outside workspace.
+#
+# NOTE: Previously this function checked git status in the main repo, which caused
+# false positives when multiple workers ran concurrently (one worker's violation
+# would flag all workers). Now it only checks the worker-specific violation flag.
 #
 # Args:
-#   workspace   - The workspace directory (where agent should work)
+#   workspace   - The workspace directory (unused, kept for API compatibility)
 #   project_dir - The project root directory (optional, uses init value)
 #
 # Returns: 0 if no violations, 1 if violations detected
@@ -113,37 +117,28 @@ agent_runner_detect_violations() {
 
     log_debug "Checking for workspace boundary violations"
 
-    # Check if any files outside workspace were modified in project root
-    cd "$project_dir" || return 0
-
-    # Get list of modified files in project root (excluding .ralph directory)
-    local modified_files=$(git status --porcelain 2>/dev/null | grep -v "^.. .ralph/" | awk '{print $2}')
-
-    if [[ -n "$modified_files" ]]; then
+    # Check if the log-based violation monitor flagged this worker
+    if [[ -f "$_AGENT_RUNNER_DIR/violation_flag.txt" ]]; then
         log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         log_error "⚠️  CRITICAL: Workspace boundary violation detected!"
         log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         log_error ""
-        log_error "Modified files outside workspace:"
-        echo "$modified_files" | while read -r file; do
-            log_error "  - $file"
+        log_error "Violation details:"
+        cat "$_AGENT_RUNNER_DIR/violation_flag.txt" | while read -r line; do
+            log_error "  $line"
         done
         log_error ""
         log_error "Expected workspace: $workspace"
-        log_error "Actual modifications: $project_dir"
         log_error ""
 
-        # Create violations log directory if it doesn't exist
-        mkdir -p "$project_dir/.ralph/logs"
-
         # Log violation with timestamp
+        mkdir -p "$project_dir/.ralph/logs"
         {
             echo "================================================================================"
             echo "VIOLATION: Workspace Escape"
             echo "Timestamp: $(date -Iseconds)"
             echo "Agent Dir: $_AGENT_RUNNER_DIR"
-            echo "Files modified outside workspace:"
-            echo "$modified_files"
+            cat "$_AGENT_RUNNER_DIR/violation_flag.txt"
             echo "================================================================================"
             echo ""
         } >> "$project_dir/.ralph/logs/violations.log"

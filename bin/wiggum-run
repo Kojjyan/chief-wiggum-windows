@@ -62,10 +62,20 @@ spawn_worker() {
 
     # Handle specific exit codes
     if [ "$start_exit_code" -eq "$EXIT_WORKER_ALREADY_EXISTS" ]; then
-        # Worker directory exists from previous run - clean it up and retry
+        # Worker directory exists from previous run
         local existing_dir
         existing_dir=$(find_any_worker_by_task_id "$RALPH_DIR" "$task_id")
         if [ -n "$existing_dir" ]; then
+            # Check if the worker process is still running
+            local stale_pid
+            stale_pid=$(cat "$existing_dir/agent.pid" 2>/dev/null || true)
+            if [ -n "$stale_pid" ] && kill -0 "$stale_pid" 2>/dev/null; then
+                # TRAP: Process is still running, refuse to spawn duplicate
+                log_error "Worker for $task_id is still running (PID: $stale_pid)"
+                log_error "Use 'wiggum stop $task_id' or 'wiggum kill $task_id' first"
+                return 1
+            fi
+            # Process not running, safe to clean up stale directory
             log "Cleaning up stale worker directory for $task_id: $(basename "$existing_dir")"
             rm -rf "$existing_dir"
             # Retry spawning
