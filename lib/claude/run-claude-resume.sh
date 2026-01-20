@@ -4,9 +4,8 @@
 # Used for generating summaries or continuing a conversation after
 # the main work loop completes. This is a primitive that agents can use.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
 
 # Resume an existing Claude session with a new prompt
 #

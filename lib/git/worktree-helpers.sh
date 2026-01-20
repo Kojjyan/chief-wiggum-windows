@@ -4,9 +4,8 @@
 # Provides functions to setup and cleanup git worktrees for agent isolation.
 # Extracted from worker.sh to be reusable across different agent types.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/git-operations.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/git/git-operations.sh"
 
 # Global variable set by setup_worktree
 WORKTREE_PATH=""

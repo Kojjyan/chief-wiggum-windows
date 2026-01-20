@@ -4,9 +4,8 @@
 # Provides functions for syncing and filtering PR comments for review.
 # Used by `wiggum review task <patterns> sync` command.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
 
 # Load review config on source
 load_review_config

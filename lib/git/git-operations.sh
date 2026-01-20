@@ -4,9 +4,8 @@
 # Provides functions for creating commits and pull requests from worker workspaces.
 # Used by lib/worker.sh and bin/wiggum-resume for consistent git operations.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/calculate-cost.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/metrics/calculate-cost.sh"
 
 # Create a commit in the worker workspace
 # Args: <workspace> <task_id> <task_desc> <task_priority> <worker_id>

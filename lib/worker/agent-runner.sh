@@ -8,15 +8,14 @@
 # - Logging setup
 #
 # Usage:
-#   source "$WIGGUM_HOME/lib/agent-runner.sh"
+#   source "$WIGGUM_HOME/lib/worker/agent-runner.sh"
 #   agent_runner_init "$agent_dir" "$project_dir"
 #   # ... run your agent logic ...
 #   agent_runner_cleanup
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/defaults.sh"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/violation-monitor.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
 
 # Global state for agent runner
 _AGENT_RUNNER_DIR=""

@@ -6,8 +6,7 @@
 #
 # Extracted from ralph-loop.sh for reuse by agents.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Global variable for violation monitor PID (needed for cleanup from signal handler)
 VIOLATION_MONITOR_PID=""

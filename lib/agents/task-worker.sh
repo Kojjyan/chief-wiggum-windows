@@ -16,17 +16,17 @@
 AGENT_TYPE="task-worker"
 
 # Source dependencies
-source "$WIGGUM_HOME/lib/run-claude-ralph-loop.sh"
-source "$WIGGUM_HOME/lib/run-claude-resume.sh"
-source "$WIGGUM_HOME/lib/violation-monitor.sh"
-source "$WIGGUM_HOME/lib/task-parser.sh"
-source "$WIGGUM_HOME/lib/logger.sh"
-source "$WIGGUM_HOME/lib/worktree-helpers.sh"
-source "$WIGGUM_HOME/lib/git-operations.sh"
-source "$WIGGUM_HOME/lib/file-lock.sh"
-source "$WIGGUM_HOME/lib/audit-logger.sh"
-source "$WIGGUM_HOME/lib/metrics-export.sh"
-source "$WIGGUM_HOME/lib/agent-registry.sh"
+source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
+source "$WIGGUM_HOME/lib/claude/run-claude-resume.sh"
+source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
+source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/git/worktree-helpers.sh"
+source "$WIGGUM_HOME/lib/git/git-operations.sh"
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
+source "$WIGGUM_HOME/lib/metrics/audit-logger.sh"
+source "$WIGGUM_HOME/lib/metrics/metrics-export.sh"
+source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
 
 # Save references to sourced kanban functions before defining wrappers
 eval "_kanban_mark_done() $(declare -f update_kanban | sed '1d')"

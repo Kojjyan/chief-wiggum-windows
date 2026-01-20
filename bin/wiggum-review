@@ -2,10 +2,10 @@
 # Review and manage worker PRs using gh CLI
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
-source "$WIGGUM_HOME/lib/exit-codes.sh"
-source "$WIGGUM_HOME/lib/defaults.sh"
-source "$WIGGUM_HOME/lib/pr-comments.sh"
-source "$WIGGUM_HOME/lib/agent-registry.sh"
+source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/git/pr-comments.sh"
+source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
 
 show_help() {
     cat << EOF

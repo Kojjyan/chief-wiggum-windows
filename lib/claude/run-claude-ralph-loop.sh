@@ -9,9 +9,8 @@
 # Core concept: ralph-loop runs claude in a loop, run-agent-once runs it just once.
 # This script extracts the loop to be reusable across different contexts.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
 
 # Extract clean text from Claude CLI stream-JSON output
 # Filters out JSON and returns only assistant text responses

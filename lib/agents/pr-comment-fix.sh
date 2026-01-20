@@ -9,9 +9,9 @@
 AGENT_TYPE="pr-comment-fix"
 
 # Source dependencies
-source "$WIGGUM_HOME/lib/run-claude-ralph-loop.sh"
-source "$WIGGUM_HOME/lib/defaults.sh"
-source "$WIGGUM_HOME/lib/logger.sh"
+source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Load review config on source
 load_review_config

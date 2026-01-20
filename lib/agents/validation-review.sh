@@ -9,8 +9,8 @@
 AGENT_TYPE="validation-review"
 
 # Source dependencies
-source "$WIGGUM_HOME/lib/run-claude-once.sh"
-source "$WIGGUM_HOME/lib/logger.sh"
+source "$WIGGUM_HOME/lib/claude/run-claude-once.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Required paths before agent can run
 agent_required_paths() {

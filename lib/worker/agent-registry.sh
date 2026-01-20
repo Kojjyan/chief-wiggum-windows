@@ -11,9 +11,8 @@
 #   - run_agent()     - Full lifecycle (PID, signals, violation monitor) for top-level agents
 #   - run_sub_agent() - Execution only, for nested agents (no lifecycle management)
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/agent-runner.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/worker/agent-runner.sh"
 
 # Track currently loaded agent to prevent re-sourcing
 _LOADED_AGENT=""

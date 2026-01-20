@@ -6,12 +6,12 @@ PROJECT_DIR="$(pwd)"
 RALPH_DIR="$PROJECT_DIR/.ralph"
 
 # Source shared libraries
-source "$WIGGUM_HOME/lib/exit-codes.sh"
-source "$WIGGUM_HOME/lib/task-parser.sh"
-source "$WIGGUM_HOME/lib/logger.sh"
-source "$WIGGUM_HOME/lib/file-lock.sh"
-source "$WIGGUM_HOME/lib/audit-logger.sh"
-source "$WIGGUM_HOME/lib/worker-lifecycle.sh"
+source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
+source "$WIGGUM_HOME/lib/metrics/audit-logger.sh"
+source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
 # Default configuration
 MAX_WORKERS=4

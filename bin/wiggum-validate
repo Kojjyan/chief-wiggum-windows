@@ -2,9 +2,9 @@
 # Chief Wiggum - Kanban validation command
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
-source "$WIGGUM_HOME/lib/exit-codes.sh"
-source "$WIGGUM_HOME/lib/defaults.sh"
-source "$WIGGUM_HOME/lib/logger.sh"
+source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Validation error tracking
 declare -a VALIDATION_ERRORS=()

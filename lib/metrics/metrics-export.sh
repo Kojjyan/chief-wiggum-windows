@@ -2,8 +2,7 @@
 # Export metrics to metrics.json file
 # This script aggregates metrics from all workers and writes to .ralph/metrics.json
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/calculate-cost.sh"
+source "$WIGGUM_HOME/lib/metrics/calculate-cost.sh"
 
 # Export metrics for all workers to .ralph/metrics.json
 export_metrics() {

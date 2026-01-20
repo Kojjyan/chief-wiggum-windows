@@ -2,9 +2,8 @@
 # Run Claude agent once with configurable parameters
 # Generic one-shot agent execution
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
-source "$SCRIPT_DIR/defaults.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
 
 run_agent_once() {
     local workspace="$1"

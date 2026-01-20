@@ -3,7 +3,7 @@
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
 
-source "$WIGGUM_HOME/lib/exit-codes.sh"
+source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 
 show_help() {
     cat << EOF

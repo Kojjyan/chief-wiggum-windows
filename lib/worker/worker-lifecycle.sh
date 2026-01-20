@@ -7,8 +7,7 @@
 # Note: All agents use agent.pid for their PID file. Process validation uses
 # the "bash" pattern since agents run via run_agent() in subshells.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/logger.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Find the newest worker directory for a task
 # Args: <ralph_dir> <task_id>

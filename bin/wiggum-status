@@ -2,10 +2,10 @@
 # Show status of workers
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
-source "$WIGGUM_HOME/lib/exit-codes.sh"
-source "$WIGGUM_HOME/lib/defaults.sh"
-source "$WIGGUM_HOME/lib/worker-lifecycle.sh"
-source "$WIGGUM_HOME/lib/calculate-cost.sh"
+source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
+source "$WIGGUM_HOME/lib/metrics/calculate-cost.sh"
 
 show_help() {
     cat << EOF
