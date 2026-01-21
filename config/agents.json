@@ -5,6 +5,16 @@
       "max_turns": 50,
       "timeout_seconds": 3600
     },
+    "task-worker-plan-mode": {
+      "max_iterations": 20,
+      "max_turns": 50,
+      "timeout_seconds": 4200
+    },
+    "plan-mode": {
+      "max_iterations": 5,
+      "max_turns": 30,
+      "timeout_seconds": 600
+    },
     "pr-comment-fix": {
       "max_iterations": 10,
       "max_turns": 30,

@@ -25,6 +25,9 @@ Worker Management:
   start <TASK-ID>     Manually start a worker for a task
   resume <id> [-f]    Resume a previously stopped worker
 
+Planning:
+  plan <TASK-ID>      Create implementation plan for a task (read-only)
+
 Cleanup & Review:
   clean <target>      Clean up worktrees and worker directories
   review              Review and manage worker Pull Requests
@@ -96,6 +99,9 @@ main() {
             ;;
         start)
             exec "$WIGGUM_HOME/bin/wiggum-start" "$@"
+            ;;
+        plan)
+            exec "$WIGGUM_HOME/bin/wiggum-plan" "$@"
             ;;
         resume)
             exec "$WIGGUM_HOME/bin/wiggum-resume" "$@"
