@@ -14,12 +14,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-
       - name: Run shellcheck on bin scripts
         run: |
-          shellcheck --severity=warning bin/*
+          find bin -type f -executable -exec shellcheck --severity=warning {} +
 
       - name: Run shellcheck on lib scripts
         run: |
@@ -79,13 +76,13 @@ jobs:
           chmod +x tests/test-runner.sh
           chmod +x tests/test-framework.sh
           find tests -name "test_*.sh" -exec chmod +x {} \;
-          chmod +x bin/*
+          find bin -type f -exec chmod +x {} \;
           find lib -name "*.sh" -exec chmod +x {} \;
 
       - name: Run tests with coverage
         run: |
           mkdir -p coverage
-          kcov --include-path=./lib,./bin coverage/kcov-output bash tests/test-runner.sh || true
+          kcov --include-path=./lib,./bin coverage/kcov-output bash tests/test-runner.sh
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -100,7 +97,7 @@ jobs:
             echo "## Coverage Report Generated" >> $GITHUB_STEP_SUMMARY
             echo "Coverage report has been uploaded as an artifact." >> $GITHUB_STEP_SUMMARY
             if [ -f coverage/kcov-output/kcov-merged/coverage.json ]; then
-              COVERAGE=$(cat coverage/kcov-output/kcov-merged/coverage.json | grep -o '"percent_covered":"[^"]*"' | head -1 | cut -d'"' -f4)
+              COVERAGE=$(jq -r '.percent_covered' coverage/kcov-output/kcov-merged/coverage.json)
               echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
             fi
           else
