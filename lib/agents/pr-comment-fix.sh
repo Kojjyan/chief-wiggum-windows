@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
-# pr-comment-fix.sh - PR comment fix agent
-#
-# Self-contained agent for fixing PR review comments.
-# Uses ralph loop pattern to iteratively address comments.
-#
-# Required paths: task-comments.md, workspace
+# =============================================================================
+# AGENT METADATA
+# =============================================================================
+# AGENT_TYPE: pr-comment-fix
+# AGENT_DESCRIPTION: PR comment fix agent that addresses pull request review
+#   feedback. Uses ralph loop pattern to iteratively fix issues raised by
+#   reviewers. Reads comments from task-comments.md, makes code changes,
+#   and tracks progress in comment-status.md. Can auto-commit and push fixes.
+# REQUIRED_PATHS:
+#   - task-comments.md : File containing PR review comments to address
+#   - workspace        : Directory containing the code to modify
+# =============================================================================
 
 AGENT_TYPE="pr-comment-fix"
 export AGENT_TYPE
+AGENT_DESCRIPTION="PR comment fix agent that addresses pull request review feedback"
+export AGENT_DESCRIPTION
+
+# Required paths before agent can run
+agent_required_paths() {
+    echo "task-comments.md"
+    echo "workspace"
+}
 
 # Source dependencies
 source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
@@ -22,12 +36,6 @@ _FIX_COMMENTS_FILE=""
 _FIX_STATUS_FILE=""
 _FIX_OUTPUT_DIR=""
 _FIX_WORKSPACE=""
-
-# Required paths before agent can run
-agent_required_paths() {
-    echo "task-comments.md"
-    echo "workspace"
-}
 
 # Main entry point
 agent_run() {

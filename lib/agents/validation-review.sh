@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
-# validation-review.sh - Code review and validation agent
-#
-# Self-contained agent for reviewing completed work against PRD requirements.
-# Uses single-shot execution pattern.
-#
-# Required paths: prd.md, workspace
+# =============================================================================
+# AGENT METADATA
+# =============================================================================
+# AGENT_TYPE: validation-review
+# AGENT_DESCRIPTION: Code review and validation agent that reviews completed
+#   work against PRD requirements. Uses single-shot execution pattern.
+#   Performs requirements verification, code quality review, implementation
+#   consistency checks, and testing coverage analysis. Returns PASS/FAIL result.
+# REQUIRED_PATHS:
+#   - prd.md      : Product Requirements Document to validate against
+#   - workspace   : Directory containing the completed work to review
+# =============================================================================
 
 AGENT_TYPE="validation-review"
 export AGENT_TYPE
-
-# Source dependencies
-source "$WIGGUM_HOME/lib/claude/run-claude-once.sh"
-source "$WIGGUM_HOME/lib/core/logger.sh"
+AGENT_DESCRIPTION="Code review and validation agent that reviews completed work against PRD requirements"
+export AGENT_DESCRIPTION
 
 # Required paths before agent can run
 agent_required_paths() {
     echo "prd.md"
     echo "workspace"
 }
+
+# Source dependencies
+source "$WIGGUM_HOME/lib/claude/run-claude-once.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Main entry point
 agent_run() {

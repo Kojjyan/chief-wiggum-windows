@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# task-worker.sh - Main task execution agent
-#
-# Self-contained agent for executing tasks from a PRD.
-# Manages the complete task lifecycle:
-# - Git worktree setup
-# - PRD task execution via ralph loop
-# - Validation review (nested sub-agent)
-# - Commit and PR creation
-# - Kanban status updates
-# - Worktree cleanup
-#
-# Required paths: prd.md
-# Note: workspace is created by this agent, not required in advance
+# =============================================================================
+# AGENT METADATA
+# =============================================================================
+# AGENT_TYPE: task-worker
+# AGENT_DESCRIPTION: Main task execution agent that manages the complete task
+#   lifecycle from PRD. Handles git worktree setup, PRD task execution via
+#   ralph loop pattern, validation review (via nested sub-agent), commit and
+#   PR creation, kanban status updates, and worktree cleanup. The primary
+#   workhorse agent for automated task completion.
+# REQUIRED_PATHS:
+#   - prd.md : Product Requirements Document containing tasks to execute
+# NOTE: workspace is created by this agent, not required in advance
+# =============================================================================
 
 AGENT_TYPE="task-worker"
 export AGENT_TYPE
+AGENT_DESCRIPTION="Main task execution agent that manages the complete task lifecycle from PRD"
+export AGENT_DESCRIPTION
+
+# Required paths before agent can run
+agent_required_paths() {
+    echo "prd.md"
+    # Note: workspace is created by this agent, not required in advance
+}
 
 # Source dependencies
 source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
@@ -32,12 +40,6 @@ source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
 # Save references to sourced kanban functions before defining wrappers
 eval "_kanban_mark_done() $(declare -f update_kanban | sed '1d')"
 eval "_kanban_mark_failed() $(declare -f update_kanban_failed | sed '1d')"
-
-# Required paths before agent can run
-agent_required_paths() {
-    echo "prd.md"
-    # Note: workspace is created by this agent, not required in advance
-}
 
 # Main entry point - manages complete task lifecycle
 agent_run() {
