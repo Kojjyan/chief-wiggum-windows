@@ -67,10 +67,22 @@ if [ ! -f "$RALPH_DIR/kanban.md" ]; then
 
 ## TASKS
 
-- [ ] **[TASK-001]** Example task
-  - Description: This is an example task. Replace with your actual tasks.
+- [ ] **[TASK-001]** Example task demonstrating all available fields
+  - Description: This is a comprehensive example showing all supported fields. Replace this with your actual tasks. The Description field provides detailed context about what needs to be done.
   - Priority: HIGH
+  - Complexity: MEDIUM
   - Dependencies: none
+  - Scope:
+    - First specific deliverable or action item
+    - Second specific deliverable or action item
+    - Third specific deliverable or action item
+  - Out of Scope:
+    - Related work that should NOT be included
+    - Future enhancements to defer for later tasks
+  - Acceptance Criteria:
+    - Specific condition that must be met for completion
+    - Another measurable success criterion
+    - Final validation checkpoint
 
 EOF
     echo "Created .ralph/kanban.md (edit this file to add your tasks)"

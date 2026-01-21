@@ -184,24 +184,30 @@ Please provide your summary based on the conversation so far, following this str
 
         log "Requesting summary for session $session_id"
 
-        # Capture full output to iteration summary file
-        local summary_full
-        summary_full=$("$CLAUDE" --resume "$session_id" --max-turns 2 \
-            --dangerously-skip-permissions -p "$summary_prompt" 2>&1 | \
-            tee "$output_dir/summaries/${session_prefix}-$iteration-summary.txt")
+        # Capture full JSON output to logs directory (same format as work phase)
+        local summary_log="$output_dir/logs/${session_prefix}-$iteration-summary.log"
+        local summary_txt="$output_dir/summaries/${session_prefix}-$iteration-summary.txt"
+
+        "$CLAUDE" --verbose --resume "$session_id" --max-turns 2 \
+            --output-format stream-json \
+            --dangerously-skip-permissions -p "$summary_prompt" \
+            > "$summary_log" 2>&1
 
         local summary_exit_code=$?
         log "Summary generation completed (exit code: $summary_exit_code)"
 
-        # Extract clean text from JSON stream
+        # Extract clean text from JSON stream and save to summaries directory
         local summary
-        summary=$(extract_summary_text "$summary_full")
+        summary=$(extract_summary_text "$(cat "$summary_log")")
 
         # Check if summary is empty
         if [ -z "$summary" ]; then
             log_warn "Summary for iteration $iteration is empty"
             summary="[Summary generation failed or produced no output]"
         fi
+
+        # Save plain text summary
+        echo "$summary" > "$summary_txt"
 
         log "Summary generated for iteration $iteration"
 

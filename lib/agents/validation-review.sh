@@ -4,7 +4,7 @@
 # =============================================================================
 # AGENT_TYPE: validation-review
 # AGENT_DESCRIPTION: Code review and validation agent that reviews completed
-#   work against PRD requirements. Uses single-shot execution pattern.
+#   work against PRD requirements. Uses ralph loop pattern with summaries.
 #   Performs requirements verification, code quality review, implementation
 #   consistency checks, and testing coverage analysis. Returns PASS/FAIL result.
 # REQUIRED_PATHS:
@@ -24,17 +24,21 @@ agent_required_paths() {
 }
 
 # Source dependencies
-source "$WIGGUM_HOME/lib/claude/run-claude-once.sh"
+source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
+
+# Callback context for ralph loop
+_VALIDATION_WORKER_DIR=""
+_VALIDATION_WORKSPACE=""
 
 # Main entry point
 agent_run() {
     local worker_dir="$1"
     local _project_dir="$2"  # Reserved for future use
-    local max_turns="${3:-5}"
+    local max_turns="${3:-50}"
+    local max_iterations="${WIGGUM_VALIDATION_MAX_ITERATIONS:-5}"
 
     local workspace="$worker_dir/workspace"
-    local log_file="$worker_dir/logs/validation-review.log"
 
     if [ ! -d "$workspace" ]; then
         log_error "Workspace not found: $workspace"
@@ -43,21 +47,29 @@ agent_run() {
     fi
 
     mkdir -p "$worker_dir/logs"
+    mkdir -p "$worker_dir/summaries"
 
     # Clean up old validation files before re-running
-    rm -f "$log_file" "$worker_dir/validation-result.txt" "$worker_dir/validation-review.md"
+    rm -f "$worker_dir/validation-result.txt" "$worker_dir/validation-review.md"
+    rm -f "$worker_dir/logs/validation-"*.log
+    rm -f "$worker_dir/summaries/validation-"*.txt
 
     log "Running validation review..."
 
-    run_agent_once "$workspace" \
+    # Set callback context
+    _VALIDATION_WORKER_DIR="$worker_dir"
+    _VALIDATION_WORKSPACE="$workspace"
+
+    # Run validation loop
+    run_ralph_loop "$workspace" \
         "$(_get_system_prompt "$workspace")" \
-        "$(_get_user_prompt)" \
-        "$log_file" \
-        "$max_turns"
+        "_validation_user_prompt" \
+        "_validation_completion_check" \
+        "$max_iterations" "$max_turns" "$worker_dir" "validation"
 
     local agent_exit=$?
 
-    # Parse result
+    # Parse result from the latest validation log
     _extract_validation_result "$worker_dir"
 
     if [ $agent_exit -eq 0 ]; then
@@ -67,6 +79,47 @@ agent_run() {
     fi
 
     return $agent_exit
+}
+
+# User prompt callback for ralph loop
+_validation_user_prompt() {
+    local iteration="$1"
+    local output_dir="$2"
+
+    if [ "$iteration" -eq 0 ]; then
+        # First iteration - full review prompt
+        _get_user_prompt
+    else
+        # Subsequent iterations - continue from previous summary
+        local prev_iter=$((iteration - 1))
+        cat << CONTINUE_EOF
+CONTINUATION OF VALIDATION REVIEW:
+
+This is iteration $iteration of your validation review. Your previous review work is summarized in @../summaries/validation-$prev_iter-summary.txt.
+
+Please continue your review:
+1. If you haven't completed all review sections, continue from where you left off
+2. If you found issues that need deeper investigation, investigate them now
+3. When your review is complete, provide the final <review> and <result> tags
+
+Remember: The <result> tag must contain exactly PASS or FAIL.
+CONTINUE_EOF
+    fi
+}
+
+# Completion check callback - returns 0 if review is complete
+_validation_completion_check() {
+    # Check if any validation log contains a result tag
+    local latest_log
+    latest_log=$(ls -t "$_VALIDATION_WORKER_DIR/logs"/validation-*.log 2>/dev/null | grep -v summary | head -1)
+
+    if [ -n "$latest_log" ] && [ -f "$latest_log" ]; then
+        if grep -qP '<result>(PASS|FAIL)</result>' "$latest_log" 2>/dev/null; then
+            return 0  # Complete
+        fi
+    fi
+
+    return 1  # Not complete
 }
 
 # System prompt
@@ -165,14 +218,17 @@ This tag is parsed programmatically to determine if the work can proceed to comm
 EOF
 }
 
-# Extract validation result from log file
+# Extract validation result from log files
 _extract_validation_result() {
     local worker_dir="$1"
-    local log_file="$worker_dir/logs/validation-review.log"
 
     VALIDATION_RESULT="UNKNOWN"
 
-    if [ -f "$log_file" ]; then
+    # Find the latest validation log (excluding summary logs)
+    local log_file
+    log_file=$(ls -t "$worker_dir/logs"/validation-*.log 2>/dev/null | grep -v summary | head -1)
+
+    if [ -n "$log_file" ] && [ -f "$log_file" ]; then
         # Extract review content between <review> tags
         if grep -q '<review>' "$log_file"; then
             sed -n '/<review>/,/<\/review>/p' "$log_file" | sed '1d;$d' > "$worker_dir/validation-review.md"

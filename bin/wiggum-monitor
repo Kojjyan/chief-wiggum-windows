@@ -6,12 +6,40 @@ source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
-# Check if Python TUI is available
-TUI_VENV="$WIGGUM_HOME/tui/.venv"
-TUI_PYTHON="$TUI_VENV/bin/python"
+# Resolve the actual script location (follow symlinks)
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+SOURCE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Check if Python TUI is available - check source directory first, then WIGGUM_HOME
+TUI_VENV=""
+TUI_PYTHON=""
+
+find_tui() {
+    # Check source directory first (for development/symlink installs)
+    if [ -x "$SOURCE_ROOT/tui/.venv/bin/python" ]; then
+        TUI_VENV="$SOURCE_ROOT/tui/.venv"
+        TUI_PYTHON="$TUI_VENV/bin/python"
+        return 0
+    fi
+    # Fall back to WIGGUM_HOME
+    if [ -x "$WIGGUM_HOME/tui/.venv/bin/python" ]; then
+        TUI_VENV="$WIGGUM_HOME/tui/.venv"
+        TUI_PYTHON="$TUI_VENV/bin/python"
+        return 0
+    fi
+    return 1
+}
+
+find_tui
 
 tui_available() {
-    [ -x "$TUI_PYTHON" ] && "$TUI_PYTHON" -c "import wiggum_tui" 2>/dev/null
+    [ -n "$TUI_PYTHON" ] && [ -x "$TUI_PYTHON" ] && "$TUI_PYTHON" -c "import wiggum_tui" 2>/dev/null
 }
 
 show_help() {
@@ -59,26 +87,6 @@ if [ ! -d "$RALPH_DIR" ]; then
     exit $EXIT_ERROR
 fi
 
-# For TUI mode, we don't require active workers (can view history)
-# For other modes, check for active workers
-if [[ "${1:-}" != "tui" ]] && ! tui_available; then
-    has_active_workers=false
-    if [ -d "$RALPH_DIR/workers" ]; then
-        # Use scan_active_workers to check for running workers
-        while read -r pid _task_id _worker_id; do
-            if [ -n "$pid" ]; then
-                has_active_workers=true
-                break
-            fi
-        done < <(scan_active_workers "$RALPH_DIR")
-    fi
-
-    if [ "$has_active_workers" = false ]; then
-        echo "No active workers found. Run 'wiggum run' first."
-        exit $EXIT_REVIEW_NO_WORKERS
-    fi
-fi
-
 # Determine default mode - use TUI if available, otherwise combined
 default_mode="combined"
 if tui_available; then
@@ -87,13 +95,17 @@ fi
 
 mode="${1:-$default_mode}"
 
+# Ensure logs directory and workers.log exist for tail -f
+mkdir -p "$RALPH_DIR/logs"
+touch "$RALPH_DIR/logs/workers.log"
+
 case "$mode" in
     tui)
         # Launch interactive TUI dashboard
         if tui_available; then
             exec "$TUI_PYTHON" -m wiggum_tui
         else
-            echo "TUI not available. Install with: cd $WIGGUM_HOME/tui && uv sync"
+            echo "TUI not available. Install with: cd $SOURCE_ROOT/tui && uv sync"
             echo "Falling back to combined mode..."
             echo
             echo "=== Monitoring Chief Wiggum Workers ==="

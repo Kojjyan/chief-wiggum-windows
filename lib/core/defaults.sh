@@ -12,6 +12,16 @@ RALPH_DIR="${RALPH_DIR:-$PROJECT_DIR/.ralph}"
 # Claude binary (allows specifying a different binary or path)
 CLAUDE="${CLAUDE:-claude}"
 
+# Pass through API configuration environment variables if set
+# These allow custom API endpoints, authentication, and model selection
+# Use ${VAR:-} syntax to handle set -u (nounset) mode
+[ -n "${ANTHROPIC_BASE_URL:-}" ] && export ANTHROPIC_BASE_URL
+[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && export ANTHROPIC_AUTH_TOKEN
+[ -n "${API_TIMEOUT_MS:-}" ] && export API_TIMEOUT_MS
+[ -n "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}" ] && export ANTHROPIC_DEFAULT_OPUS_MODEL
+[ -n "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" ] && export ANTHROPIC_DEFAULT_SONNET_MODEL
+[ -n "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" ] && export ANTHROPIC_DEFAULT_HAIKU_MODEL
+
 # Worker configuration defaults
 MAX_WORKERS="${WIGGUM_MAX_WORKERS:-4}"
 export MAX_WORKERS

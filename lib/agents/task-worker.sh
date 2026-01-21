@@ -55,7 +55,8 @@ agent_run() {
     # Extract worker and task IDs
     local worker_id task_id
     worker_id=$(basename "$worker_dir")
-    task_id=$(echo "$worker_id" | sed -E 's/worker-(TASK-[0-9]+)-.*/\1/')
+    # Match any task prefix format: TASK-001, PIPELINE-001, etc.
+    task_id=$(echo "$worker_id" | sed -E 's/worker-([A-Z]+-[0-9]+)-.*/\1/')
 
     # Setup environment
     export WORKER_ID="$worker_id"
@@ -142,7 +143,7 @@ agent_run() {
     # Run validation-review as a nested sub-agent
     if [ -d "$workspace" ]; then
         log "Running validation review on completed work"
-        run_sub_agent "validation-review" "$worker_dir" "$project_dir" 10
+        run_sub_agent "validation-review" "$worker_dir" "$project_dir"
     fi
 
     # === FINALIZATION PHASE ===
@@ -167,31 +168,41 @@ agent_run() {
     local pr_url="N/A"
     local task_desc=""
 
+    log_debug "Finalization check: has_violations=$has_violations, final_status=$final_status"
+
     # Only create commits and PRs if no violations and task is complete
     if [ "$has_violations" = false ] && [ "$final_status" = "COMPLETE" ]; then
+        log "Creating commit and PR for task $task_id"
         if [ -d "$workspace" ]; then
             cd "$workspace" || return 1
 
             # Get task description from kanban for commit message
             task_desc=$(grep -F "**[$task_id]**" "$project_dir/.ralph/kanban.md" | sed 's/.*\*\*\[.*\]\*\* //' | head -1)
+            log_debug "Task description: ${task_desc:-<empty>}"
 
             # Get task priority
             local task_priority
             task_priority=$(grep -F -A2 "**[$task_id]**" "$project_dir/.ralph/kanban.md" | grep "Priority:" | sed 's/.*Priority: //')
+            log_debug "Task priority: ${task_priority:-<empty>}"
 
             # Create commit using shared library
             if git_create_commit "$workspace" "$task_id" "$task_desc" "$task_priority" "$worker_id"; then
                 local branch_name="$GIT_COMMIT_BRANCH"
+                log "Commit created on branch: $branch_name"
 
                 # Create PR using shared library
                 git_create_pr "$branch_name" "$task_id" "$task_desc" "$worker_dir" "$project_dir"
                 pr_url="$GIT_PR_URL"
+                log "PR created: $pr_url"
             else
+                log_error "Failed to create commit"
                 final_status="FAILED"
             fi
+        else
+            log_error "Workspace not found: $workspace"
         fi
     else
-        log "Skipping commit and PR creation - task status: $final_status"
+        log "Skipping commit and PR creation - has_violations=$has_violations, final_status=$final_status"
     fi
 
     # === CLEANUP PHASE ===
