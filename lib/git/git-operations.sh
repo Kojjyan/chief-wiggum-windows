@@ -97,8 +97,8 @@ git_create_pr() {
 
     # Build PR body
     local changes_section="This PR contains the automated implementation of the task requirements."
-    if [ -f "$worker_dir/summary.txt" ]; then
-        changes_section=$(cat "$worker_dir/summary.txt")
+    if [ -f "$worker_dir/summaries/summary.txt" ]; then
+        changes_section=$(cat "$worker_dir/summaries/summary.txt")
     fi
 
     # Calculate and include metrics if available

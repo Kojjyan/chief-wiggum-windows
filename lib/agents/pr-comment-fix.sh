@@ -162,7 +162,7 @@ EOF
     # Add context from previous iterations if available
     if [ "$iteration" -gt 0 ]; then
         local prev_iter=$((iteration - 1))
-        if [ -f "$output_dir/fix-$prev_iter-summary.txt" ]; then
+        if [ -f "$output_dir/summaries/fix-$prev_iter-summary.txt" ]; then
             cat << CONTEXT_EOF
 
 CONTEXT FROM PREVIOUS ITERATION:
@@ -170,7 +170,7 @@ CONTEXT FROM PREVIOUS ITERATION:
 This is iteration $iteration of the fix session. Previous work has been done.
 
 To understand what has already been fixed:
-- Read @../fix-$prev_iter-summary.txt for context on previous fixes
+- Read @../summaries/fix-$prev_iter-summary.txt for context on previous fixes
 - Check @../comment-status.md to see which comments are already addressed
 - Do NOT repeat work that was already completed
 CONTEXT_EOF

@@ -78,7 +78,7 @@ determine_resume_iteration() {
     fi
 
     # If N has summary, resume from N+1; else redo N
-    if [ -f "$worker_dir/iteration-${max_iter}-summary.txt" ]; then
+    if [ -f "$worker_dir/summaries/iteration-${max_iter}-summary.txt" ]; then
         echo "$((max_iter + 1))"
     else
         echo "$max_iter"
@@ -92,7 +92,7 @@ prepare_resume_context() {
 
     if [ "$resume_iter" -gt 0 ]; then
         local prev_iter=$((resume_iter - 1))
-        local prev_summary="$worker_dir/iteration-${prev_iter}-summary.txt"
+        local prev_summary="$worker_dir/summaries/iteration-${prev_iter}-summary.txt"
 
         if [ -f "$prev_summary" ]; then
             # Use the previous summary as context
@@ -236,7 +236,7 @@ do_resume() {
     fi
 
     # Check if summary.txt exists - work is complete, run validation/finalize
-    if [ -f "$worker_dir/summary.txt" ]; then
+    if [ -f "$worker_dir/summaries/summary.txt" ]; then
         echo "Summary found - work is complete, running validation and finalization..."
         resume_from_validation "$worker_dir" "$task_id"
         return $?

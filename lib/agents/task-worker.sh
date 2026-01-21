@@ -91,8 +91,9 @@ agent_run() {
         return 1
     }
 
-    # Create logs subdirectory
+    # Create logs and summaries subdirectories
     mkdir -p "$worker_dir/logs"
+    mkdir -p "$worker_dir/summaries"
 
     # === EXECUTION PHASE ===
     # Set up callback context
@@ -119,11 +120,13 @@ agent_run() {
             "$(_get_final_summary_prompt)" \
             "$worker_dir/logs/final-summary.log" 3
 
-        # Extract to summary.txt
+        # Extract to summaries/summary.txt (parse stream-JSON to get text, then extract summary tags)
         if [ -f "$worker_dir/logs/final-summary.log" ]; then
-            sed -n '/<summary>/,/<\/summary>/p' "$worker_dir/logs/final-summary.log" | \
-                sed '1d;$d' > "$worker_dir/summary.txt"
-            log "Final summary saved to summary.txt"
+            grep '"type":"assistant"' "$worker_dir/logs/final-summary.log" | \
+                jq -r 'select(.message.content[]? | .type == "text") | .message.content[] | select(.type == "text") | .text' 2>/dev/null | \
+                sed -n '/<summary>/,/<\/summary>/p' | \
+                sed '1d;$d' > "$worker_dir/summaries/summary.txt"
+            log "Final summary saved to summaries/summary.txt"
         fi
     fi
 
@@ -290,8 +293,8 @@ _update_kanban_status() {
 
         # Get detailed summary if it exists
         local summary=""
-        if [ -f "$worker_dir/summary.txt" ]; then
-            summary=$(cat "$worker_dir/summary.txt")
+        if [ -f "$worker_dir/summaries/summary.txt" ]; then
+            summary=$(cat "$worker_dir/summaries/summary.txt")
             log "Including detailed summary in changelog"
         fi
 
@@ -409,7 +412,7 @@ RESUME_EOF
         else
             # Normal iteration context - use previous iteration summaries
             local prev_iter=$((iteration - 1))
-            if [ -f "$output_dir/iteration-$prev_iter-summary.txt" ]; then
+            if [ -f "$output_dir/summaries/iteration-$prev_iter-summary.txt" ]; then
                 cat << CONTEXT_EOF
 
 CONTEXT FROM PREVIOUS ITERATION:
@@ -417,12 +420,12 @@ CONTEXT FROM PREVIOUS ITERATION:
 This is iteration $iteration of a multi-iteration work session. Previous work has been completed in earlier iterations.
 
 To understand what has already been accomplished and maintain continuity:
-- Read the file @../iteration-$prev_iter-summary.txt to understand completed work and context
+- Read the file @../summaries/iteration-$prev_iter-summary.txt to understand completed work and context
 - This summary describes what was done, decisions made, and files modified
 - Use this information to avoid duplicating work and to build upon previous progress
 - Ensure your approach aligns with patterns and decisions from earlier iterations
 
-CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large (100KB-500KB each) and will deplete your context window. Only read the iteration-X-summary.txt files for context.
+CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large (100KB-500KB each) and will deplete your context window. Only read the summaries/iteration-X-summary.txt files for context.
 CONTEXT_EOF
             fi
         fi

@@ -73,8 +73,9 @@ run_ralph_loop() {
         return 1
     }
 
-    # Create logs subdirectory
+    # Create logs and summaries subdirectories
     mkdir -p "$output_dir/logs"
+    mkdir -p "$output_dir/summaries"
 
     # Track the last session ID for potential final summary
     while [ $iteration -lt $max_iterations ]; do
@@ -181,10 +182,10 @@ Please provide your summary based on the conversation so far, following this str
 
         log "Requesting summary for session $session_id"
 
-        # Capture full output to iteration summary file (in output_dir root, not logs/)
+        # Capture full output to iteration summary file
         local summary_full=$("$CLAUDE" --resume "$session_id" --max-turns 2 \
             --dangerously-skip-permissions -p "$summary_prompt" 2>&1 | \
-            tee "$output_dir/${session_prefix}-$iteration-summary.txt")
+            tee "$output_dir/summaries/${session_prefix}-$iteration-summary.txt")
 
         local summary_exit_code=$?
         log "Summary generation completed (exit code: $summary_exit_code)"

@@ -31,6 +31,7 @@ run_agent_resume() {
 
     if [ -n "$output_file" ]; then
         "$CLAUDE" --resume "$session_id" \
+            --output-format stream-json \
             --max-turns "$max_turns" \
             --dangerously-skip-permissions \
             -p "$prompt" > "$output_file" 2>&1
