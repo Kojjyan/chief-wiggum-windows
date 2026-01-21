@@ -49,6 +49,13 @@ class LogsPanel(Widget):
         Binding("f", "cycle_filter", "Filter"),
         Binding("g", "goto_top", "Top"),
         Binding("G", "goto_bottom", "Bottom"),
+        # Vim-style scrolling
+        Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("k", "scroll_up", "Scroll Up", show=False),
+        Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
+        Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
+        Binding("ctrl+f", "page_down", "Page Down", show=False),
+        Binding("ctrl+b", "page_up", "Page Up", show=False),
     ]
 
     LOG_SOURCES = [
@@ -227,6 +234,54 @@ class LogsPanel(Widget):
         try:
             log_viewer = self.query_one("#log-viewer", RichLog)
             log_viewer.scroll_end()
+        except Exception:
+            pass
+
+    def action_scroll_down(self) -> None:
+        """Scroll down one line (vim j)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=1)
+        except Exception:
+            pass
+
+    def action_scroll_up(self) -> None:
+        """Scroll up one line (vim k)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=-1)
+        except Exception:
+            pass
+
+    def action_half_page_down(self) -> None:
+        """Scroll half page down (vim ctrl+d)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=log_viewer.size.height // 2)
+        except Exception:
+            pass
+
+    def action_half_page_up(self) -> None:
+        """Scroll half page up (vim ctrl+u)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=-(log_viewer.size.height // 2))
+        except Exception:
+            pass
+
+    def action_page_down(self) -> None:
+        """Scroll full page down (vim ctrl+f)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=log_viewer.size.height)
+        except Exception:
+            pass
+
+    def action_page_up(self) -> None:
+        """Scroll full page up (vim ctrl+b)."""
+        try:
+            log_viewer = self.query_one("#log-viewer", RichLog)
+            log_viewer.scroll_relative(y=-log_viewer.size.height)
         except Exception:
             pass
 

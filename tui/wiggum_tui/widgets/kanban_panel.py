@@ -7,6 +7,7 @@ from textual.widgets import Static, Button
 from textual.widget import Widget
 from textual.screen import ModalScreen
 from textual.binding import Binding
+from textual import events
 
 from ..data.kanban_parser import parse_kanban, group_tasks_by_status
 from ..data.models import Task, TaskStatus
@@ -323,6 +324,17 @@ class KanbanPanel(Widget):
     }
     """
 
+    BINDINGS = [
+        # Vim-style navigation
+        Binding("j", "next_card", "Next Card", show=False),
+        Binding("k", "prev_card", "Prev Card", show=False),
+        Binding("h", "prev_column", "Prev Column", show=False),
+        Binding("l", "next_column", "Next Column", show=False),
+        Binding("g", "first_card", "First Card", show=False),
+        Binding("G", "last_card", "Last Card", show=False),
+        Binding("enter", "open_card", "Open Card", show=False),
+    ]
+
     def __init__(self, ralph_dir: Path) -> None:
         super().__init__()
         self.ralph_dir = ralph_dir
@@ -396,3 +408,120 @@ class KanbanPanel(Widget):
                     classes="kanban-board",
                 )
             )
+
+    def _get_all_cards(self) -> list[TaskCard]:
+        """Get all TaskCard widgets in order."""
+        try:
+            return list(self.query(TaskCard))
+        except Exception:
+            return []
+
+    def _get_focused_card_index(self) -> int:
+        """Get index of currently focused card, or -1 if none."""
+        cards = self._get_all_cards()
+        for i, card in enumerate(cards):
+            if card.has_focus:
+                return i
+        return -1
+
+    def action_next_card(self) -> None:
+        """Move to next card (vim j)."""
+        cards = self._get_all_cards()
+        if not cards:
+            return
+        current = self._get_focused_card_index()
+        next_idx = (current + 1) % len(cards) if current >= 0 else 0
+        cards[next_idx].focus()
+
+    def action_prev_card(self) -> None:
+        """Move to previous card (vim k)."""
+        cards = self._get_all_cards()
+        if not cards:
+            return
+        current = self._get_focused_card_index()
+        prev_idx = (current - 1) % len(cards) if current >= 0 else len(cards) - 1
+        cards[prev_idx].focus()
+
+    def action_first_card(self) -> None:
+        """Move to first card (vim gg)."""
+        cards = self._get_all_cards()
+        if cards:
+            cards[0].focus()
+
+    def action_last_card(self) -> None:
+        """Move to last card (vim G)."""
+        cards = self._get_all_cards()
+        if cards:
+            cards[-1].focus()
+
+    def _get_column_cards(self) -> list[list[TaskCard]]:
+        """Get cards grouped by column."""
+        try:
+            columns = list(self.query(KanbanColumn))
+            result = []
+            for col in columns:
+                col_cards = list(col.query(TaskCard))
+                result.append(col_cards)
+            return result
+        except Exception:
+            return []
+
+    def action_prev_column(self) -> None:
+        """Move to previous column (vim h)."""
+        column_cards = self._get_column_cards()
+        if not column_cards:
+            return
+
+        # Find current column
+        current_col = -1
+        current_row = 0
+        for col_idx, cards in enumerate(column_cards):
+            for row_idx, card in enumerate(cards):
+                if card.has_focus:
+                    current_col = col_idx
+                    current_row = row_idx
+                    break
+
+        if current_col <= 0:
+            # Already at first column or no focus
+            return
+
+        # Move to previous column, same row or last card
+        prev_col = column_cards[current_col - 1]
+        if prev_col:
+            target_row = min(current_row, len(prev_col) - 1)
+            prev_col[target_row].focus()
+
+    def action_next_column(self) -> None:
+        """Move to next column (vim l)."""
+        column_cards = self._get_column_cards()
+        if not column_cards:
+            return
+
+        # Find current column
+        current_col = -1
+        current_row = 0
+        for col_idx, cards in enumerate(column_cards):
+            for row_idx, card in enumerate(cards):
+                if card.has_focus:
+                    current_col = col_idx
+                    current_row = row_idx
+                    break
+
+        if current_col < 0 or current_col >= len(column_cards) - 1:
+            # No focus or already at last column
+            return
+
+        # Move to next column, same row or last card
+        next_col = column_cards[current_col + 1]
+        if next_col:
+            target_row = min(current_row, len(next_col) - 1)
+            next_col[target_row].focus()
+
+    def action_open_card(self) -> None:
+        """Open focused card details (vim enter)."""
+        cards = self._get_all_cards()
+        for card in cards:
+            if card.has_focus:
+                self.app.push_screen(TaskDetailModal(card._task_data))
+                break

@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, Select, Tree
 from textual.widgets.tree import TreeNode
@@ -60,9 +61,19 @@ class ConversationPanel(Widget):
 
     BINDINGS = [
         ("e", "expand_all", "Expand all"),
-        ("c", "collapse_all", "Collapse all"),
+        ("C", "collapse_all", "Collapse all"),  # Uppercase to avoid conflict
         ("+", "expand_selected", "Expand selected"),
         ("-", "collapse_selected", "Collapse selected"),
+        # Vim-style navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("h", "collapse_node", "Collapse", show=False),
+        Binding("l", "expand_node", "Expand", show=False),
+        Binding("o", "toggle_node", "Toggle", show=False),
+        Binding("g", "goto_top", "Top", show=False),
+        Binding("G", "goto_bottom", "Bottom", show=False),
+        Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
+        Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -502,5 +513,94 @@ class ConversationPanel(Widget):
                 for child in tree.cursor_node.children:
                     self._collapse_node_recursive(child)
                 tree.cursor_node.expand()  # Keep selected node open
+        except Exception:
+            pass
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down (vim j)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            tree.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up (vim k)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            tree.action_cursor_up()
+        except Exception:
+            pass
+
+    def action_collapse_node(self) -> None:
+        """Collapse current node (vim h)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            if tree.cursor_node:
+                if tree.cursor_node.is_expanded:
+                    tree.cursor_node.collapse()
+                elif tree.cursor_node.parent:
+                    # Move to parent if already collapsed
+                    tree.select_node(tree.cursor_node.parent)
+        except Exception:
+            pass
+
+    def action_expand_node(self) -> None:
+        """Expand current node (vim l)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            if tree.cursor_node:
+                if not tree.cursor_node.is_expanded and tree.cursor_node.children:
+                    tree.cursor_node.expand()
+                elif tree.cursor_node.children:
+                    # Move to first child if already expanded
+                    tree.select_node(tree.cursor_node.children[0])
+        except Exception:
+            pass
+
+    def action_toggle_node(self) -> None:
+        """Toggle expand/collapse current node (vim o)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            if tree.cursor_node:
+                tree.cursor_node.toggle()
+        except Exception:
+            pass
+
+    def action_goto_top(self) -> None:
+        """Go to first node (vim gg)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            tree.select_node(tree.root)
+        except Exception:
+            pass
+
+    def action_goto_bottom(self) -> None:
+        """Go to last visible node (vim G)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            # Find last visible node
+            last_node = tree.root
+            while last_node.is_expanded and last_node.children:
+                last_node = last_node.children[-1]
+            tree.select_node(last_node)
+        except Exception:
+            pass
+
+    def action_half_page_down(self) -> None:
+        """Move half page down (vim ctrl+d)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            for _ in range(10):
+                tree.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_half_page_up(self) -> None:
+        """Move half page up (vim ctrl+u)."""
+        try:
+            tree = self.query_one("#conv-tree", Tree)
+            for _ in range(10):
+                tree.action_cursor_up()
         except Exception:
             pass

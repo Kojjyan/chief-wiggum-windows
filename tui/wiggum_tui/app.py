@@ -61,6 +61,11 @@ class WiggumApp(App):
         Binding("5", "switch_tab('conversations')", "Chat", show=True),
         Binding("r", "refresh", "Refresh"),
         Binding("?", "help", "Help"),
+        # Vim-style tab navigation
+        Binding("h", "prev_tab", "Prev Tab", show=False),
+        Binding("l", "next_tab", "Next Tab", show=False),
+        Binding("H", "first_tab", "First Tab", show=False),
+        Binding("L", "last_tab", "Last Tab", show=False),
     ]
 
     def __init__(self, ralph_dir: Path) -> None:
@@ -141,10 +146,44 @@ class WiggumApp(App):
         except Exception:
             pass
 
+    TAB_ORDER = ["kanban", "workers", "logs", "metrics", "conversations"]
+
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific tab."""
         tabbed = self.query_one(TabbedContent)
         tabbed.active = tab_id
+
+    def action_prev_tab(self) -> None:
+        """Switch to previous tab (vim h)."""
+        tabbed = self.query_one(TabbedContent)
+        current = tabbed.active
+        try:
+            idx = self.TAB_ORDER.index(current)
+            new_idx = (idx - 1) % len(self.TAB_ORDER)
+            tabbed.active = self.TAB_ORDER[new_idx]
+        except ValueError:
+            pass
+
+    def action_next_tab(self) -> None:
+        """Switch to next tab (vim l)."""
+        tabbed = self.query_one(TabbedContent)
+        current = tabbed.active
+        try:
+            idx = self.TAB_ORDER.index(current)
+            new_idx = (idx + 1) % len(self.TAB_ORDER)
+            tabbed.active = self.TAB_ORDER[new_idx]
+        except ValueError:
+            pass
+
+    def action_first_tab(self) -> None:
+        """Switch to first tab (vim H)."""
+        tabbed = self.query_one(TabbedContent)
+        tabbed.active = self.TAB_ORDER[0]
+
+    def action_last_tab(self) -> None:
+        """Switch to last tab (vim L)."""
+        tabbed = self.query_one(TabbedContent)
+        tabbed.active = self.TAB_ORDER[-1]
 
     def action_refresh(self) -> None:
         """Manually refresh all panels."""
@@ -169,8 +208,11 @@ class WiggumApp(App):
         """Show help dialog."""
         self.notify(
             "Keyboard shortcuts:\n"
-            "1-5: Switch tabs │ r: Refresh │ q: Quit\n"
-            "s: Stop worker │ k: Kill worker │ c: View chat",
+            "1-5: Switch tabs │ h/l: Prev/Next tab │ H/L: First/Last tab\n"
+            "j/k: Down/Up │ g/G: Top/Bottom │ Ctrl+d/u: Half page\n"
+            "Workers: s-Stop K-Kill c-Chat L-Logs │ Logs: f-Filter\n"
+            "Tree: h/l-Collapse/Expand o-Toggle e-ExpandAll C-CollapseAll\n"
+            "r: Refresh │ q: Quit",
             title="Help",
-            timeout=5,
+            timeout=8,
         )

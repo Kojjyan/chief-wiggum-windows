@@ -42,9 +42,16 @@ class WorkersPanel(Widget):
 
     BINDINGS = [
         Binding("s", "stop_worker", "Stop"),
-        Binding("k", "kill_worker", "Kill"),
+        Binding("K", "kill_worker", "Kill"),  # Uppercase to avoid conflict with vim k
         Binding("c", "view_conversation", "View Chat"),
-        Binding("l", "view_logs", "View Logs"),
+        Binding("L", "view_logs", "View Logs"),  # Uppercase to avoid conflict with vim l
+        # Vim-style navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("g", "goto_top", "Top", show=False),
+        Binding("G", "goto_bottom", "Bottom", show=False),
+        Binding("ctrl+d", "half_page_down", "Half Page Down", show=False),
+        Binding("ctrl+u", "half_page_up", "Half Page Up", show=False),
     ]
 
     class WorkerSelected(Message):
@@ -205,6 +212,59 @@ class WorkersPanel(Widget):
         if worker:
             self.app.action_switch_tab("logs")
             # Could emit a message to switch log source
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down (vim j)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            table.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up (vim k)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            table.action_cursor_up()
+        except Exception:
+            pass
+
+    def action_goto_top(self) -> None:
+        """Go to first row (vim gg)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            table.move_cursor(row=0)
+        except Exception:
+            pass
+
+    def action_goto_bottom(self) -> None:
+        """Go to last row (vim G)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            if self._workers_list:
+                table.move_cursor(row=len(self._workers_list) - 1)
+        except Exception:
+            pass
+
+    def action_half_page_down(self) -> None:
+        """Move half page down (vim ctrl+d)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            current = table.cursor_row or 0
+            new_row = min(current + 10, len(self._workers_list) - 1)
+            table.move_cursor(row=new_row)
+        except Exception:
+            pass
+
+    def action_half_page_up(self) -> None:
+        """Move half page up (vim ctrl+u)."""
+        try:
+            table = self.query_one("#workers-table", DataTable)
+            current = table.cursor_row or 0
+            new_row = max(current - 10, 0)
+            table.move_cursor(row=new_row)
+        except Exception:
+            pass
 
     def refresh_data(self) -> None:
         """Refresh worker data and re-render."""
