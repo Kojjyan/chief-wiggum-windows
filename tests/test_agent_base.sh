@@ -1,0 +1,515 @@
+#!/usr/bin/env bash
+# Test suite for agent architecture improvements
+# Tests: agent-base.sh, exit-codes.sh, agents.json config, communication protocol
+
+set -euo pipefail
+
+# Get the script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source the test framework
+source "$SCRIPT_DIR/test-framework.sh"
+
+# Setup WIGGUM_HOME for tests
+export WIGGUM_HOME="$PROJECT_ROOT"
+
+# =============================================================================
+# Test: Exit Codes
+# =============================================================================
+
+test_exit_codes_are_defined() {
+    source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+
+    assert_equals "56" "$EXIT_AGENT_INIT_FAILED" "EXIT_AGENT_INIT_FAILED should be 56"
+    assert_equals "57" "$EXIT_AGENT_PREREQ_FAILED" "EXIT_AGENT_PREREQ_FAILED should be 57"
+    assert_equals "58" "$EXIT_AGENT_READY_FAILED" "EXIT_AGENT_READY_FAILED should be 58"
+    assert_equals "59" "$EXIT_AGENT_OUTPUT_MISSING" "EXIT_AGENT_OUTPUT_MISSING should be 59"
+    assert_equals "60" "$EXIT_AGENT_VALIDATION_FAILED" "EXIT_AGENT_VALIDATION_FAILED should be 60"
+    assert_equals "61" "$EXIT_AGENT_VIOLATION" "EXIT_AGENT_VIOLATION should be 61"
+    assert_equals "62" "$EXIT_AGENT_TIMEOUT" "EXIT_AGENT_TIMEOUT should be 62"
+    assert_equals "63" "$EXIT_AGENT_MAX_ITERATIONS" "EXIT_AGENT_MAX_ITERATIONS should be 63"
+}
+
+test_exit_codes_under_64() {
+    source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+
+    local codes=(
+        "$EXIT_AGENT_INIT_FAILED"
+        "$EXIT_AGENT_PREREQ_FAILED"
+        "$EXIT_AGENT_READY_FAILED"
+        "$EXIT_AGENT_OUTPUT_MISSING"
+        "$EXIT_AGENT_VALIDATION_FAILED"
+        "$EXIT_AGENT_VIOLATION"
+        "$EXIT_AGENT_TIMEOUT"
+        "$EXIT_AGENT_MAX_ITERATIONS"
+    )
+
+    for code in "${codes[@]}"; do
+        if [ "$code" -lt 64 ]; then
+            assert_success "true" "Exit code $code is under 64"
+        else
+            assert_failure "true" "Exit code $code should be under 64"
+        fi
+    done
+}
+
+# =============================================================================
+# Test: Agent Metadata
+# =============================================================================
+
+test_agent_init_metadata() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    agent_init_metadata "test-agent" "Test description for agent"
+
+    assert_equals "test-agent" "$AGENT_TYPE" "AGENT_TYPE should be set"
+    assert_equals "Test description for agent" "$AGENT_DESCRIPTION" "AGENT_DESCRIPTION should be set"
+}
+
+# =============================================================================
+# Test: Agent Context
+# =============================================================================
+
+test_agent_setup_context() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    agent_setup_context "/tmp/worker-dir" "/tmp/workspace" "/tmp/project" "TASK-001"
+
+    assert_equals "/tmp/worker-dir" "$(agent_get_worker_dir)" "worker_dir should be set"
+    assert_equals "/tmp/workspace" "$(agent_get_workspace)" "workspace should be set"
+    assert_equals "/tmp/project" "$(agent_get_project_dir)" "project_dir should be set"
+    assert_equals "TASK-001" "$(agent_get_task_id)" "task_id should be set"
+}
+
+# =============================================================================
+# Test: Config Loading
+# =============================================================================
+
+test_config_loading_task_worker() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    load_agent_config "task-worker"
+
+    assert_equals "20" "$AGENT_CONFIG_MAX_ITERATIONS" "task-worker max_iterations should be 20"
+    assert_equals "50" "$AGENT_CONFIG_MAX_TURNS" "task-worker max_turns should be 50"
+    assert_equals "3600" "$AGENT_CONFIG_TIMEOUT_SECONDS" "task-worker timeout_seconds should be 3600"
+}
+
+test_config_loading_pr_comment_fix() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    load_agent_config "pr-comment-fix"
+
+    assert_equals "10" "$AGENT_CONFIG_MAX_ITERATIONS" "pr-comment-fix max_iterations should be 10"
+    assert_equals "30" "$AGENT_CONFIG_MAX_TURNS" "pr-comment-fix max_turns should be 30"
+    assert_equals "true" "$AGENT_CONFIG_AUTO_COMMIT" "pr-comment-fix auto_commit should be true"
+}
+
+test_config_loading_validation_review() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    load_agent_config "validation-review"
+
+    assert_equals "5" "$AGENT_CONFIG_MAX_ITERATIONS" "validation-review max_iterations should be 5"
+    assert_equals "50" "$AGENT_CONFIG_MAX_TURNS" "validation-review max_turns should be 50"
+}
+
+test_config_loading_unknown_agent_uses_defaults() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    load_agent_config "unknown-agent-type"
+
+    assert_equals "10" "$AGENT_CONFIG_MAX_ITERATIONS" "unknown agent should use default max_iterations"
+    assert_equals "30" "$AGENT_CONFIG_MAX_TURNS" "unknown agent should use default max_turns"
+}
+
+# =============================================================================
+# Test: Communication Protocol - Paths
+# =============================================================================
+
+test_agent_comm_path_result() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local path
+    path=$(agent_comm_path "/tmp/worker" "result")
+    assert_equals "/tmp/worker/agent-result.json" "$path" "result path should be correct"
+}
+
+test_agent_comm_path_validation() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local path
+    path=$(agent_comm_path "/tmp/worker" "validation")
+    assert_equals "/tmp/worker/validation-result.txt" "$path" "validation path should be correct"
+}
+
+test_agent_comm_path_prd() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local path
+    path=$(agent_comm_path "/tmp/worker" "prd")
+    assert_equals "/tmp/worker/prd.md" "$path" "prd path should be correct"
+}
+
+test_agent_comm_path_workspace() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local path
+    path=$(agent_comm_path "/tmp/worker" "workspace")
+    assert_equals "/tmp/worker/workspace" "$path" "workspace path should be correct"
+}
+
+test_agent_comm_path_summary() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local path
+    path=$(agent_comm_path "/tmp/worker" "summary")
+    assert_equals "/tmp/worker/summaries/summary.txt" "$path" "summary path should be correct"
+}
+
+# =============================================================================
+# Test: Communication Protocol - Validation Read/Write
+# =============================================================================
+
+test_agent_write_and_read_validation_pass() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    agent_write_validation "$tmpdir" "PASS"
+    local result
+    result=$(agent_read_validation "$tmpdir")
+
+    assert_equals "PASS" "$result" "Should read back PASS"
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_write_and_read_validation_fail() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    agent_write_validation "$tmpdir" "FAIL"
+    local result
+    result=$(agent_read_validation "$tmpdir")
+
+    assert_equals "FAIL" "$result" "Should read back FAIL"
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_read_validation_missing_file() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    local result
+    result=$(agent_read_validation "$tmpdir")
+
+    assert_equals "UNKNOWN" "$result" "Missing file should return UNKNOWN"
+
+    rm -rf "$tmpdir"
+}
+
+# =============================================================================
+# Test: Structured Agent Results
+# =============================================================================
+
+test_agent_write_result_creates_file() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    agent_write_result "$tmpdir" "success" 0 '{}' '[]' '{}'
+
+    assert_file_exists "$tmpdir/agent-result.json" "agent-result.json should be created"
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_write_result_valid_json() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    agent_write_result "$tmpdir" "success" 0 '{}' '[]' '{}'
+
+    # Validate JSON is parseable
+    if jq '.' "$tmpdir/agent-result.json" > /dev/null 2>&1; then
+        assert_success "true" "agent-result.json should be valid JSON"
+    else
+        assert_failure "true" "agent-result.json should be valid JSON"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_read_result_status() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    agent_write_result "$tmpdir" "success" 0 '{}' '[]' '{}'
+
+    local status
+    status=$(agent_read_result "$tmpdir" ".status")
+
+    assert_equals "success" "$status" "Should read back status as success"
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_result_is_success() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    agent_write_result "$tmpdir" "success" 0 '{}' '[]' '{}'
+
+    if agent_result_is_success "$tmpdir"; then
+        assert_success "true" "agent_result_is_success should return true for success"
+    else
+        assert_failure "true" "agent_result_is_success should return true for success"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_result_is_success_failure() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    agent_write_result "$tmpdir" "failure" 1 '{}' '[]' '{}'
+
+    if agent_result_is_success "$tmpdir"; then
+        assert_failure "true" "agent_result_is_success should return false for failure"
+    else
+        assert_success "true" "agent_result_is_success should return false for failure"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+test_agent_get_output() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/logs"
+
+    agent_init_metadata "test-agent" "Test"
+    agent_setup_context "$tmpdir" "$tmpdir/workspace" "/tmp/project" "TEST-001"
+
+    local outputs='{"pr_url":"https://github.com/test/pr/123","branch":"feature/test"}'
+    agent_write_result "$tmpdir" "success" 0 "$outputs" '[]' '{}'
+
+    local pr_url
+    pr_url=$(agent_get_output "$tmpdir" "pr_url")
+
+    assert_equals "https://github.com/test/pr/123" "$pr_url" "Should read pr_url from outputs"
+
+    rm -rf "$tmpdir"
+}
+
+# =============================================================================
+# Test: Utility Functions
+# =============================================================================
+
+test_agent_create_directories() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    agent_create_directories "$tmpdir"
+
+    assert_dir_exists "$tmpdir/logs" "logs directory should be created"
+    assert_dir_exists "$tmpdir/summaries" "summaries directory should be created"
+
+    rm -rf "$tmpdir"
+}
+
+# =============================================================================
+# Test: Lifecycle Hooks (default implementations)
+# =============================================================================
+
+test_default_hooks_return_success() {
+    source "$WIGGUM_HOME/lib/core/agent-base.sh"
+
+    if agent_on_init "/tmp/worker" "/tmp/project"; then
+        assert_success "true" "agent_on_init should return 0 by default"
+    else
+        assert_failure "true" "agent_on_init should return 0 by default"
+    fi
+
+    if agent_on_ready "/tmp/worker" "/tmp/project"; then
+        assert_success "true" "agent_on_ready should return 0 by default"
+    else
+        assert_failure "true" "agent_on_ready should return 0 by default"
+    fi
+
+    if agent_on_error "/tmp/worker" 1 "prereq"; then
+        assert_success "true" "agent_on_error should return 0 by default"
+    else
+        assert_failure "true" "agent_on_error should return 0 by default"
+    fi
+
+    if agent_on_signal "INT"; then
+        assert_success "true" "agent_on_signal should return 0 by default"
+    else
+        assert_failure "true" "agent_on_signal should return 0 by default"
+    fi
+}
+
+# =============================================================================
+# Test: JSON Config File Validity
+# =============================================================================
+
+test_agents_json_is_valid() {
+    if jq '.' "$WIGGUM_HOME/config/agents.json" > /dev/null 2>&1; then
+        assert_success "true" "config/agents.json should be valid JSON"
+    else
+        assert_failure "true" "config/agents.json should be valid JSON"
+    fi
+}
+
+test_agents_json_has_required_agents() {
+    local agents
+    agents=$(jq -r '.agents | keys[]' "$WIGGUM_HOME/config/agents.json" 2>/dev/null | sort | tr '\n' ',')
+
+    assert_output_contains "$agents" "task-worker" "agents.json should have task-worker"
+    assert_output_contains "$agents" "pr-comment-fix" "agents.json should have pr-comment-fix"
+    assert_output_contains "$agents" "validation-review" "agents.json should have validation-review"
+}
+
+test_agents_json_has_defaults() {
+    local has_defaults
+    has_defaults=$(jq 'has("defaults")' "$WIGGUM_HOME/config/agents.json" 2>/dev/null)
+
+    assert_equals "true" "$has_defaults" "agents.json should have defaults section"
+}
+
+# =============================================================================
+# Test: Shell Script Syntax
+# =============================================================================
+
+test_agent_base_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/core/agent-base.sh" 2>/dev/null; then
+        assert_success "true" "agent-base.sh should have valid bash syntax"
+    else
+        assert_failure "true" "agent-base.sh should have valid bash syntax"
+    fi
+}
+
+test_exit_codes_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/core/exit-codes.sh" 2>/dev/null; then
+        assert_success "true" "exit-codes.sh should have valid bash syntax"
+    else
+        assert_failure "true" "exit-codes.sh should have valid bash syntax"
+    fi
+}
+
+test_agent_registry_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>/dev/null; then
+        assert_success "true" "agent-registry.sh should have valid bash syntax"
+    else
+        assert_failure "true" "agent-registry.sh should have valid bash syntax"
+    fi
+}
+
+test_task_worker_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/agents/task-worker.sh" 2>/dev/null; then
+        assert_success "true" "task-worker.sh should have valid bash syntax"
+    else
+        assert_failure "true" "task-worker.sh should have valid bash syntax"
+    fi
+}
+
+test_pr_comment_fix_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/agents/pr-comment-fix.sh" 2>/dev/null; then
+        assert_success "true" "pr-comment-fix.sh should have valid bash syntax"
+    else
+        assert_failure "true" "pr-comment-fix.sh should have valid bash syntax"
+    fi
+}
+
+test_validation_review_sh_syntax() {
+    if bash -n "$WIGGUM_HOME/lib/agents/validation-review.sh" 2>/dev/null; then
+        assert_success "true" "validation-review.sh should have valid bash syntax"
+    else
+        assert_failure "true" "validation-review.sh should have valid bash syntax"
+    fi
+}
+
+# =============================================================================
+# Run Tests
+# =============================================================================
+
+run_test test_exit_codes_are_defined
+run_test test_exit_codes_under_64
+run_test test_agent_init_metadata
+run_test test_agent_setup_context
+run_test test_config_loading_task_worker
+run_test test_config_loading_pr_comment_fix
+run_test test_config_loading_validation_review
+run_test test_config_loading_unknown_agent_uses_defaults
+run_test test_agent_comm_path_result
+run_test test_agent_comm_path_validation
+run_test test_agent_comm_path_prd
+run_test test_agent_comm_path_workspace
+run_test test_agent_comm_path_summary
+run_test test_agent_write_and_read_validation_pass
+run_test test_agent_write_and_read_validation_fail
+run_test test_agent_read_validation_missing_file
+run_test test_agent_write_result_creates_file
+run_test test_agent_write_result_valid_json
+run_test test_agent_read_result_status
+run_test test_agent_result_is_success
+run_test test_agent_result_is_success_failure
+run_test test_agent_get_output
+run_test test_agent_create_directories
+run_test test_default_hooks_return_success
+run_test test_agents_json_is_valid
+run_test test_agents_json_has_required_agents
+run_test test_agents_json_has_defaults
+run_test test_agent_base_sh_syntax
+run_test test_exit_codes_sh_syntax
+run_test test_agent_registry_sh_syntax
+run_test test_task_worker_sh_syntax
+run_test test_pr_comment_fix_sh_syntax
+run_test test_validation_review_sh_syntax
+
+# Print summary
+print_test_summary
+exit_with_test_result

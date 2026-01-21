@@ -330,11 +330,16 @@ AGENT_RESULT_FILE="agent-result.json"
 #   metadata   - JSON object string of additional metadata (optional)
 agent_write_result() {
     local worker_dir="$1"
-    local status="$2"
+    local result_status="$2"
     local exit_code="$3"
-    local outputs="${4:-{}}"
-    local errors="${5:-[]}"
-    local metadata="${6:-{}}"
+    local outputs="${4-}"
+    local errors="${5-}"
+    local metadata="${6-}"
+
+    # Set defaults for optional JSON params (avoid shell expansion issues)
+    [ -z "$outputs" ] && outputs='{}'
+    [ -z "$errors" ] && errors='[]'
+    [ -z "$metadata" ] && metadata='{}'
 
     local result_file="$worker_dir/$AGENT_RESULT_FILE"
     local worker_id task_id
@@ -344,57 +349,48 @@ agent_write_result() {
     # Get timing info from context or estimate
     local started_at completed_at duration_seconds
     completed_at=$(date -Iseconds)
+    duration_seconds=0
+    started_at="$completed_at"
 
     # Try to get start time from worker.log
     if [ -f "$worker_dir/worker.log" ]; then
         local start_epoch
-        start_epoch=$(grep "AGENT_STARTED" "$worker_dir/worker.log" | tail -1 | grep -oP 'start_time=\K\d+' || echo "")
-        if [ -n "$start_epoch" ]; then
+        start_epoch=$(grep "AGENT_STARTED" "$worker_dir/worker.log" 2>/dev/null | tail -1 | grep -oP 'start_time=\K\d+' || true)
+        if [ -n "$start_epoch" ] && [[ "$start_epoch" =~ ^[0-9]+$ ]]; then
             started_at=$(date -Iseconds -d "@$start_epoch" 2>/dev/null || date -Iseconds)
             duration_seconds=$(($(date +%s) - start_epoch))
-        else
-            started_at="$completed_at"
-            duration_seconds=0
         fi
-    else
-        started_at="$completed_at"
-        duration_seconds=0
     fi
 
     # Get iterations from logs directory
     local iterations_completed=0
     if [ -d "$worker_dir/logs" ]; then
-        iterations_completed=$(find "$worker_dir/logs" -maxdepth 1 -name "iteration-*.log" -o -name "validation-*.log" -o -name "fix-*.log" 2>/dev/null | wc -l)
+        local count
+        count=$(find "$worker_dir/logs" -maxdepth 1 \( -name "iteration-*.log" -o -name "validation-*.log" -o -name "fix-*.log" \) 2>/dev/null | wc -l || true)
+        iterations_completed=$(echo "$count" | tr -d '[:space:]')
     fi
+    # Ensure numeric values
+    [[ "$iterations_completed" =~ ^[0-9]+$ ]] || iterations_completed=0
+    [[ "$duration_seconds" =~ ^[0-9]+$ ]] || duration_seconds=0
+    [[ "$exit_code" =~ ^[0-9]+$ ]] || exit_code=1
 
-    # Build JSON result
-    jq -n \
-        --arg agent_type "${AGENT_TYPE:-unknown}" \
-        --arg status "$status" \
-        --argjson exit_code "$exit_code" \
-        --arg started_at "$started_at" \
-        --arg completed_at "$completed_at" \
-        --argjson duration_seconds "$duration_seconds" \
-        --arg task_id "$task_id" \
-        --arg worker_id "$worker_id" \
-        --argjson iterations_completed "$iterations_completed" \
-        --argjson outputs "$outputs" \
-        --argjson errors "$errors" \
-        --argjson metadata "$metadata" \
-        '{
-            agent_type: $agent_type,
-            status: $status,
-            exit_code: $exit_code,
-            started_at: $started_at,
-            completed_at: $completed_at,
-            duration_seconds: $duration_seconds,
-            task_id: $task_id,
-            worker_id: $worker_id,
-            iterations_completed: $iterations_completed,
-            outputs: $outputs,
-            errors: $errors,
-            metadata: $metadata
-        }' > "$result_file"
+    # Build JSON result using a heredoc to avoid quoting issues
+    cat > "$result_file" << JSONEOF
+{
+  "agent_type": "${AGENT_TYPE:-unknown}",
+  "status": "$result_status",
+  "exit_code": $exit_code,
+  "started_at": "$started_at",
+  "completed_at": "$completed_at",
+  "duration_seconds": $duration_seconds,
+  "task_id": "$task_id",
+  "worker_id": "$worker_id",
+  "iterations_completed": $iterations_completed,
+  "outputs": $outputs,
+  "errors": $errors,
+  "metadata": $metadata
+}
+JSONEOF
 }
 
 # Read agent result from JSON file

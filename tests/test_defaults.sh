@@ -2,8 +2,9 @@
 # Tests for lib/core/defaults.sh
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WIGGUM_HOME_BACKUP="$WIGGUM_HOME"
-PROJECT_DIR_BACKUP="$PROJECT_DIR"
+# Derive project root from tests directory (don't rely on WIGGUM_HOME being set)
+WIGGUM_HOME_BACKUP="$(cd "$TESTS_DIR/.." && pwd)"
+PROJECT_DIR_BACKUP="${PROJECT_DIR:-}"
 
 source "$TESTS_DIR/test-framework.sh"
 
@@ -30,7 +31,9 @@ teardown() {
     rm -rf "$TEST_DIR"
     # Restore original WIGGUM_HOME for subsequent tests
     export WIGGUM_HOME="$WIGGUM_HOME_BACKUP"
-    export PROJECT_DIR="$PROJECT_DIR_BACKUP"
+    if [ -n "$PROJECT_DIR_BACKUP" ]; then
+        export PROJECT_DIR="$PROJECT_DIR_BACKUP"
+    fi
 }
 
 # =============================================================================
