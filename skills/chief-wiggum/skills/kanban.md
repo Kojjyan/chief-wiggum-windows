@@ -24,6 +24,7 @@ Each task must follow this structure:
   - Priority: HIGH|MEDIUM|LOW
   - Complexity: HIGH|MEDIUM|LOW (optional)
   - Dependencies: TASK-ID-1, TASK-ID-2 | none
+  - Agent: pr-comment-fix|task-worker|validation-review (optional)
 ```
 
 ### Optional Extended Fields
@@ -60,6 +61,16 @@ Each task must follow this structure:
 - **HIGH**: Large scope, many files, architectural changes, significant risk
 - **MEDIUM**: Moderate scope, several files, standard implementation
 - **LOW**: Small scope, few files, straightforward changes
+
+## Agent Field (Optional)
+
+Specifies which agent to load and run at the entry point for the `start` command. Must match one of the agent names in `lib/agents/`:
+
+- **pr-comment-fix**: Agent for handling PR comment fixes
+- **task-worker**: General task worker agent
+- **validation-review**: Agent for validation and review tasks
+
+When the `start` command runs a task with an Agent field, it will use the specified agent instead of the default behavior.
 
 ## Instructions
 
@@ -158,6 +169,7 @@ Would you like me to add this to your `.ralph/kanban.md` file?
   - Priority: HIGH
   - Complexity: HIGH
   - Dependencies: TASK-001, TASK-003
+  - Agent: task-worker
   - Scope:
     - Create dashboard layout component
     - Add profile information panel

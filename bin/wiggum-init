@@ -72,6 +72,7 @@ if [ ! -f "$RALPH_DIR/kanban.md" ]; then
   - Priority: HIGH
   - Complexity: MEDIUM
   - Dependencies: none
+  - Agent: task-worker
   - Scope:
     - First specific deliverable or action item
     - Second specific deliverable or action item
