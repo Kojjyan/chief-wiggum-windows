@@ -26,13 +26,20 @@ show_help() {
 wiggum start - Manually start a worker for a task
 
 Usage:
-  wiggum start <TASK-ID>    Start a new worker for the specified task
+  wiggum start <id>    Start a new worker for the specified task
+
+Task ID Resolution:
+  Task IDs can be partial as long as they match exactly one task:
+  - 030                (number only)
+  - K-030              (partial task ID)
+  - TASK-030           (full task ID)
 
 Options:
   -h, --help    Show this help message
 
 Examples:
   wiggum start TASK-030     # Start worker for TASK-030
+  wiggum start 030          # Start worker matching "030"
   wiggum start FEAT-001     # Start worker for FEAT-001
 
 Notes:
@@ -45,19 +52,12 @@ EOF
 
 # Start a new worker for a task
 do_start() {
-    local task_id="$1"
+    local input_id="$1"
 
-    if [ -z "$task_id" ]; then
+    if [ -z "$input_id" ]; then
         echo "Error: Task ID required"
         echo "Usage: wiggum start <TASK-ID>"
         exit $EXIT_WORKER_MISSING_TASK_ID
-    fi
-
-    # Validate task ID format (allow flexible format like TASK-XXX, FEAT-XXX, etc.)
-    if ! [[ "$task_id" =~ ^[A-Za-z]+-[0-9]+$ ]]; then
-        echo "Error: Invalid task ID format: $task_id"
-        echo "Expected format: PREFIX-NUMBER (e.g., TASK-030, FEAT-001)"
-        exit $EXIT_WORKER_INVALID_TASK_FORMAT
     fi
 
     # Check .ralph directory exists
@@ -66,16 +66,15 @@ do_start() {
         exit $EXIT_WORKER_NO_RALPH_DIR
     fi
 
-    # Check if task exists in kanban
+    # Check if kanban exists
     if [ ! -f "$RALPH_DIR/kanban.md" ]; then
         echo "Error: No kanban.md found at $RALPH_DIR/kanban.md"
         exit $EXIT_WORKER_NO_KANBAN
     fi
 
-    if ! grep -q "\\*\\*\\[$task_id\\]\\*\\*" "$RALPH_DIR/kanban.md" 2>/dev/null; then
-        echo "Error: Task $task_id not found in kanban.md"
-        exit $EXIT_WORKER_TASK_NOT_FOUND
-    fi
+    # Resolve partial task ID to full task ID
+    local task_id
+    task_id=$(resolve_task_id "$RALPH_DIR/kanban.md" "$input_id") || exit $EXIT_WORKER_TASK_NOT_FOUND
 
     # Check if a worker already exists for this task (using shared library)
     local existing

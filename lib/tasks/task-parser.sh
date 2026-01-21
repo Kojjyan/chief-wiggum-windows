@@ -352,6 +352,52 @@ detect_circular_dependencies() {
     return 0
 }
 
+# Resolve a partial task ID to full task ID from kanban
+# Args: <kanban_file> <partial_id>
+# Returns: full task ID on stdout, or error message on stderr
+# Exit: 0 on exact match, 1 on no match or multiple matches
+resolve_task_id() {
+    local kanban="$1"
+    local partial="$2"
+    local matches=()
+
+    if [ ! -f "$kanban" ]; then
+        echo "Error: No kanban file found at $kanban" >&2
+        return 1
+    fi
+
+    # Get all task IDs from kanban
+    local all_tasks
+    all_tasks=$(get_all_tasks_with_metadata "$kanban" | cut -d'|' -f1)
+
+    for task_id in $all_tasks; do
+        # Check if partial matches any part of task_id (case insensitive)
+        if [[ "${task_id^^}" == *"${partial^^}"* ]]; then
+            matches+=("$task_id")
+        fi
+    done
+
+    case ${#matches[@]} in
+        0)
+            echo "Error: No task matches '$partial'" >&2
+            echo "Check .ralph/kanban.md for available tasks." >&2
+            return 1
+            ;;
+        1)
+            echo "${matches[0]}"
+            return 0
+            ;;
+        *)
+            echo "Error: Multiple tasks match '$partial':" >&2
+            for m in "${matches[@]}"; do
+                echo "  - $m" >&2
+            done
+            echo "Please be more specific." >&2
+            return 1
+            ;;
+    esac
+}
+
 extract_task() {
     local task_id="$1"
     local kanban="$2"
