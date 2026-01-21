@@ -8,11 +8,18 @@
 #   - agent_run()             - Main entry point
 #   - agent_cleanup()         - Optional cleanup after completion
 #
+# Lifecycle hooks (optional, defined in agent or defaulted from agent-base.sh):
+#   - agent_on_init(worker_dir, project_dir)   - Before PID file creation
+#   - agent_on_ready(worker_dir, project_dir)  - After init, before agent_run
+#   - agent_on_error(worker_dir, exit_code, error_type) - On validation/prereq failure
+#   - agent_on_signal(signal)                  - On INT/TERM before cleanup
+#
 # Two invocation modes:
 #   - run_agent()     - Full lifecycle (PID, signals, violation monitor) for top-level agents
 #   - run_sub_agent() - Execution only, for nested agents (no lifecycle management)
 
 source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/agent-base.sh"
 source "$WIGGUM_HOME/lib/worker/agent-runner.sh"
 
 # Track currently loaded agent to prevent re-sourcing
@@ -165,24 +172,59 @@ run_agent() {
     _AGENT_REGISTRY_PROJECT_DIR="$project_dir"
     _AGENT_REGISTRY_WORKER_DIR="$worker_dir"
 
-    # Initialize agent lifecycle (PID, signals, violation monitor)
-    if ! agent_runner_init "$worker_dir" "$project_dir" "$monitor_interval"; then
-        log_error "Failed to initialize agent lifecycle"
-        return 1
-    fi
-
-    # Setup cleanup on exit
-    trap '_agent_registry_cleanup' EXIT
-
-    # Load agent
+    # Load agent first (needed for hooks)
     if ! load_agent "$agent_type"; then
         return 1
     fi
 
+    # Load agent configuration
+    load_agent_config "$agent_type"
+
+    # Call on_init hook before PID file creation
+    if type agent_on_init &>/dev/null; then
+        log_debug "Calling agent_on_init hook"
+        if ! agent_on_init "$worker_dir" "$project_dir"; then
+            log_error "agent_on_init hook failed"
+            if type agent_on_error &>/dev/null; then
+                agent_on_error "$worker_dir" 1 "init"
+            fi
+            return 1
+        fi
+    fi
+
+    # Initialize agent lifecycle (PID, signals, violation monitor)
+    if ! agent_runner_init "$worker_dir" "$project_dir" "$monitor_interval"; then
+        log_error "Failed to initialize agent lifecycle"
+        if type agent_on_error &>/dev/null; then
+            agent_on_error "$worker_dir" 1 "init"
+        fi
+        return 1
+    fi
+
+    # Setup cleanup on exit with signal handling
+    trap '_agent_registry_handle_signal INT' INT
+    trap '_agent_registry_handle_signal TERM' TERM
+    trap '_agent_registry_cleanup' EXIT
+
     # Validate prerequisites
     if ! validate_agent_prerequisites "$worker_dir"; then
         log_error "Agent prerequisites not met"
+        if type agent_on_error &>/dev/null; then
+            agent_on_error "$worker_dir" 1 "prereq"
+        fi
         return 1
+    fi
+
+    # Call on_ready hook before agent_run
+    if type agent_on_ready &>/dev/null; then
+        log_debug "Calling agent_on_ready hook"
+        if ! agent_on_ready "$worker_dir" "$project_dir"; then
+            log_error "agent_on_ready hook failed"
+            if type agent_on_error &>/dev/null; then
+                agent_on_error "$worker_dir" 1 "ready"
+            fi
+            return 1
+        fi
     fi
 
     # Run the agent
@@ -192,6 +234,9 @@ run_agent() {
     # Validate output files exist and are non-empty
     if ! validate_agent_outputs "$worker_dir"; then
         log_error "Agent output validation failed"
+        if type agent_on_error &>/dev/null; then
+            agent_on_error "$worker_dir" "$exit_code" "output"
+        fi
         if [ $exit_code -eq 0 ]; then
             exit_code=1  # Override success if outputs are missing/empty
         fi
@@ -215,6 +260,22 @@ _agent_registry_cleanup() {
         _AGENT_REGISTRY_PROJECT_DIR=""
         _AGENT_REGISTRY_WORKER_DIR=""
     fi
+}
+
+# Internal signal handler
+_agent_registry_handle_signal() {
+    local signal="$1"
+    log_debug "Received signal: $signal"
+
+    # Call agent's signal hook if defined
+    if type agent_on_signal &>/dev/null; then
+        agent_on_signal "$signal"
+    fi
+
+    # Re-raise the signal after hook completes
+    # This allows the EXIT trap to still fire
+    trap - "$signal"
+    kill -s "$signal" $$
 }
 
 # Run a nested sub-agent without lifecycle management
@@ -251,10 +312,40 @@ run_sub_agent() {
         return 1
     fi
 
+    # Load agent configuration
+    load_agent_config "$agent_type"
+
+    # Call on_init hook (lighter-weight for sub-agents)
+    if type agent_on_init &>/dev/null; then
+        log_debug "Calling sub-agent agent_on_init hook"
+        if ! agent_on_init "$worker_dir" "$project_dir"; then
+            log_error "Sub-agent agent_on_init hook failed"
+            if type agent_on_error &>/dev/null; then
+                agent_on_error "$worker_dir" 1 "init"
+            fi
+            return 1
+        fi
+    fi
+
     # Validate prerequisites
     if ! validate_agent_prerequisites "$worker_dir"; then
         log_error "Agent prerequisites not met"
+        if type agent_on_error &>/dev/null; then
+            agent_on_error "$worker_dir" 1 "prereq"
+        fi
         return 1
+    fi
+
+    # Call on_ready hook before agent_run
+    if type agent_on_ready &>/dev/null; then
+        log_debug "Calling sub-agent agent_on_ready hook"
+        if ! agent_on_ready "$worker_dir" "$project_dir"; then
+            log_error "Sub-agent agent_on_ready hook failed"
+            if type agent_on_error &>/dev/null; then
+                agent_on_error "$worker_dir" 1 "ready"
+            fi
+            return 1
+        fi
     fi
 
     # Run the agent (no lifecycle management)
@@ -264,6 +355,9 @@ run_sub_agent() {
     # Validate output files exist and are non-empty
     if ! validate_agent_outputs "$worker_dir"; then
         log_error "Sub-agent output validation failed"
+        if type agent_on_error &>/dev/null; then
+            agent_on_error "$worker_dir" "$exit_code" "output"
+        fi
         if [ $exit_code -eq 0 ]; then
             exit_code=1  # Override success if outputs are missing/empty
         fi

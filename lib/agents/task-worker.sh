@@ -15,10 +15,9 @@
 #   - worker.log : Main worker log with agent lifecycle events
 # =============================================================================
 
-AGENT_TYPE="task-worker"
-export AGENT_TYPE
-AGENT_DESCRIPTION="Main task execution agent that manages the complete task lifecycle from PRD"
-export AGENT_DESCRIPTION
+# Source base library and initialize metadata
+source "$WIGGUM_HOME/lib/core/agent-base.sh"
+agent_init_metadata "task-worker" "Main task execution agent that manages the complete task lifecycle from PRD"
 
 # Required paths before agent can run
 agent_required_paths() {
@@ -34,18 +33,16 @@ agent_output_files() {
     # Note: validation-result.txt is created by validation-review sub-agent
 }
 
-# Source dependencies
-source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
-source "$WIGGUM_HOME/lib/claude/run-claude-resume.sh"
-source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
-source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
-source "$WIGGUM_HOME/lib/core/logger.sh"
-source "$WIGGUM_HOME/lib/git/worktree-helpers.sh"
-source "$WIGGUM_HOME/lib/git/git-operations.sh"
-source "$WIGGUM_HOME/lib/core/file-lock.sh"
-source "$WIGGUM_HOME/lib/metrics/audit-logger.sh"
-source "$WIGGUM_HOME/lib/metrics/metrics-export.sh"
-source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
+# Source dependencies using base library helpers
+agent_source_core
+agent_source_ralph
+agent_source_resume
+agent_source_violations
+agent_source_tasks
+agent_source_git
+agent_source_lock
+agent_source_metrics
+agent_source_registry
 
 # Save references to sourced kanban functions before defining wrappers
 eval "_kanban_mark_done() $(declare -f update_kanban | sed '1d')"
@@ -55,8 +52,9 @@ eval "_kanban_mark_failed() $(declare -f update_kanban_failed | sed '1d')"
 agent_run() {
     local worker_dir="$1"
     local project_dir="$2"
-    local max_iterations="${WIGGUM_MAX_ITERATIONS:-20}"
-    local max_turns="${WIGGUM_MAX_TURNS:-50}"
+    # Use config values (set by load_agent_config in agent-registry)
+    local max_iterations="${WIGGUM_MAX_ITERATIONS:-${AGENT_CONFIG_MAX_ITERATIONS:-20}}"
+    local max_turns="${WIGGUM_MAX_TURNS:-${AGENT_CONFIG_MAX_TURNS:-50}}"
 
     # Resume mode support
     local resume_iteration="${WIGGUM_RESUME_ITERATION:-0}"
@@ -79,7 +77,7 @@ agent_run() {
     # Record start time
     local start_time
     start_time=$(date +%s)
-    echo "[$(date -Iseconds)] AGENT_STARTED agent=task-worker worker_id=$worker_id task_id=$task_id start_time=$start_time" >> "$worker_dir/worker.log"
+    agent_log_start "$worker_dir" "$task_id"
 
     log "Task worker agent starting for $task_id (max $max_turns turns per session)"
 
@@ -107,14 +105,12 @@ agent_run() {
         return 1
     }
 
-    # Create logs and summaries subdirectories
-    mkdir -p "$worker_dir/logs"
-    mkdir -p "$worker_dir/summaries"
+    # Create standard directories
+    agent_create_directories "$worker_dir"
 
     # === EXECUTION PHASE ===
-    # Set up callback context
-    _TASK_WORKER_DIR="$worker_dir"
-    _TASK_WORKSPACE="$workspace"
+    # Set up callback context using base library
+    agent_setup_context "$worker_dir" "$workspace" "$project_dir" "$task_id"
     _TASK_PRD_FILE="$prd_file"
     _TASK_RESUME_ITERATION="$resume_iteration"
     _TASK_RESUME_CONTEXT="$resume_context"
@@ -218,11 +214,8 @@ agent_run() {
     # === CLEANUP PHASE ===
     _task_worker_cleanup "$worker_dir" "$project_dir" "$task_id" "$final_status" "$task_desc" "$pr_url"
 
-    # Record end time
-    local end_time
-    end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    echo "[$(date -Iseconds)] AGENT_COMPLETED agent=task-worker duration_sec=$duration exit_code=$loop_result" >> "$worker_dir/worker.log"
+    # Record completion
+    agent_log_complete "$worker_dir" "$loop_result" "$start_time"
 
     log "Task worker finished: $worker_id"
     return $loop_result

@@ -203,3 +203,193 @@ When running, Chief Wiggum creates:
 ├── logs/           # Worker logs
 └── metrics/        # Cost and performance tracking
 ```
+
+## Agent Architecture
+
+Chief Wiggum uses a hierarchical agent system where **each Kanban task maps to an agent as its entry point**, and agents can recursively invoke sub-agents to complete their work.
+
+### Agent Structure
+
+Each agent is a self-contained bash script in `/lib/agents/` that implements a standard interface:
+
+```bash
+agent_required_paths()    # Returns list of prerequisite files needed
+agent_run()               # Main entry point: agent_run(worker_dir, project_dir, ...)
+agent_output_files()      # [Optional] Returns list of output files to validate
+agent_cleanup()           # [Optional] Cleanup after completion
+```
+
+**Available agents:**
+| Agent | Purpose |
+|-------|---------|
+| `task-worker` | Primary task execution - reads PRD, implements features |
+| `validation-review` | Code review against PRD requirements |
+| `pr-comment-fix` | Addresses PR review feedback iteratively |
+
+### Kanban → Agent Linking
+
+Each task in the Kanban board is linked to an agent as its entry point:
+
+```
+.ralph/kanban.md (task definition)
+       ↓
+Task Parser extracts metadata (ID, priority, dependencies)
+       ↓
+Worker directory created: worker-TASK-001-<timestamp>/
+       ↓
+PRD generated from task specification
+       ↓
+task-worker agent executes as entry point
+       ↓
+Agent may invoke sub-agents (e.g., validation-review)
+       ↓
+Kanban updated: [ ] → [=] → [x] or [*]
+```
+
+### Recursive Agent Calls (Sub-Agents)
+
+Agents can call other agents, creating a hierarchy. There are two invocation modes:
+
+**Top-Level Agents** (`run_agent`):
+- Full lifecycle management with PID recording and signal handlers
+- Started by the orchestrator for each Kanban task
+- Manages its own violation monitor
+
+**Sub-Agents** (`run_sub_agent`):
+- Lightweight nested execution within parent agent context
+- Inherits parent's `worker_dir` and `project_dir`
+- No independent PID file or violation monitor
+
+Example hierarchy:
+```
+task-worker (top-level agent)
+  └── validation-review (sub-agent)
+        └── [could call further sub-agents if needed]
+```
+
+From `task-worker.sh`:
+```bash
+# After main work completes, run validation as sub-agent
+run_sub_agent "validation-review" "$worker_dir" "$project_dir"
+```
+
+### Claude Invocation Patterns
+
+Agents invoke Claude Code in multiple ways, often combining patterns within a single agent:
+
+#### Pattern 1: Single Execution (`run_agent_once`)
+
+One-shot prompts where no session continuity is needed:
+
+```bash
+run_agent_once "$workspace" "$system_prompt" "$user_prompt" "$output_file" "$max_turns"
+```
+
+- Executes Claude with a single prompt
+- Limited to configurable turns (default: 3)
+- No session state preserved after completion
+
+#### Pattern 2: Ralph Loop (`run_ralph_loop`)
+
+Iterative work sessions with context preservation between iterations:
+
+```bash
+run_ralph_loop "$workspace" \
+    "$system_prompt" \
+    "_user_prompt_callback" \      # Function that generates each iteration's prompt
+    "_completion_check_callback" \ # Function that checks if work is done
+    "$max_iterations" \            # How many iterations before giving up
+    "$max_turns" \                 # Turns per Claude session
+    "$output_dir" \
+    "$session_prefix"
+```
+
+Each iteration:
+1. Check completion callback - exit if done
+2. Generate prompt via callback
+3. **Work phase**: Claude executes with turn limit
+4. **Summary phase**: Resume session to generate summary
+5. Save summary as context for next iteration
+
+This pattern prevents context bloat by:
+- Starting fresh sessions each iteration
+- Carrying forward only summaries (~10-15K tokens per session)
+- Allowing indefinite work across many iterations
+
+#### Pattern 3: Session Resume (`run_agent_resume`)
+
+Continue an existing session for follow-up work:
+
+```bash
+run_agent_resume "$session_id" "$prompt" "$output_file" "$max_turns"
+```
+
+- Uses `--resume <session-id>` to continue conversation
+- Preserves full context from previous session
+- Used for final summary generation after Ralph Loop
+
+### Combining Patterns
+
+Agents typically combine these patterns. Here's how `task-worker` uses all three:
+
+```
+1. RALPH LOOP (iterative work)
+   ├── Iteration 0: Read PRD, start implementation
+   ├── Iteration 1-N: Continue until complete
+   │   └── Each iteration: work phase + summary phase
+   └── Completion detected
+
+2. SESSION RESUME (final summary)
+   └── Resume last session to generate final summary
+
+3. SUB-AGENT CALL
+   └── validation-review agent (uses its own Ralph Loop internally)
+```
+
+The `validation-review` sub-agent then runs its own Ralph Loop:
+```
+RALPH LOOP (validation)
+├── Iteration 0: Read PRD + code, start review
+├── Iteration 1-N: Continue analysis
+└── Generate PASS/FAIL result
+```
+
+### Context Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         TASK-WORKER                              │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    RALPH LOOP                            │    │
+│  │  ┌──────────┐    ┌──────────┐    ┌──────────┐           │    │
+│  │  │ Iter 0   │───►│ Iter 1   │───►│ Iter N   │           │    │
+│  │  │ Work     │    │ Work     │    │ Work     │           │    │
+│  │  │ Summary  │    │ Summary  │    │ Summary  │           │    │
+│  │  └──────────┘    └──────────┘    └──────────┘           │    │
+│  │       │               │               │                  │    │
+│  │       ▼               ▼               ▼                  │    │
+│  │   [context]──────►[context]──────►[context]              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                              │                                   │
+│                              ▼                                   │
+│                    SESSION RESUME (final summary)                │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │              SUB-AGENT: validation-review                │    │
+│  │  ┌──────────────────────────────────────┐               │    │
+│  │  │           RALPH LOOP                  │               │    │
+│  │  │  Iter 0 ──► Iter 1 ──► ... ──► Done   │               │    │
+│  │  └──────────────────────────────────────┘               │    │
+│  │                      │                                   │    │
+│  │                      ▼                                   │    │
+│  │               PASS / FAIL result                         │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+This architecture enables:
+- **Unlimited work**: Ralph Loop can iterate indefinitely without context overflow
+- **Specialized agents**: Each agent focuses on one responsibility
+- **Composability**: Agents can be combined in different ways
+- **Isolation**: Each agent manages its own Claude sessions

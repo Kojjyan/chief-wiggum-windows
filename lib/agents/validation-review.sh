@@ -14,10 +14,9 @@
 #   - validation-result.txt : Contains PASS, FAIL, or UNKNOWN
 # =============================================================================
 
-AGENT_TYPE="validation-review"
-export AGENT_TYPE
-AGENT_DESCRIPTION="Code review and validation agent that reviews completed work against PRD requirements"
-export AGENT_DESCRIPTION
+# Source base library and initialize metadata
+source "$WIGGUM_HOME/lib/core/agent-base.sh"
+agent_init_metadata "validation-review" "Code review and validation agent that reviews completed work against PRD requirements"
 
 # Required paths before agent can run
 agent_required_paths() {
@@ -30,20 +29,17 @@ agent_output_files() {
     echo "validation-result.txt"
 }
 
-# Source dependencies
-source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
-source "$WIGGUM_HOME/lib/core/logger.sh"
-
-# Callback context for ralph loop
-_VALIDATION_WORKER_DIR=""
-_VALIDATION_WORKSPACE=""
+# Source dependencies using base library helpers
+agent_source_core
+agent_source_ralph
 
 # Main entry point
 agent_run() {
     local worker_dir="$1"
-    local _project_dir="$2"  # Reserved for future use
-    local max_turns="${3:-50}"
-    local max_iterations="${WIGGUM_VALIDATION_MAX_ITERATIONS:-5}"
+    local project_dir="$2"
+    # Use config values (set by load_agent_config in agent-registry, with env var override)
+    local max_turns="${WIGGUM_VALIDATION_MAX_TURNS:-${AGENT_CONFIG_MAX_TURNS:-50}}"
+    local max_iterations="${WIGGUM_VALIDATION_MAX_ITERATIONS:-${AGENT_CONFIG_MAX_ITERATIONS:-5}}"
 
     local workspace="$worker_dir/workspace"
 
@@ -53,8 +49,8 @@ agent_run() {
         return 1
     fi
 
-    mkdir -p "$worker_dir/logs"
-    mkdir -p "$worker_dir/summaries"
+    # Create standard directories
+    agent_create_directories "$worker_dir"
 
     # Clean up old validation files before re-running
     rm -f "$worker_dir/validation-result.txt" "$worker_dir/validation-review.md"
@@ -63,9 +59,8 @@ agent_run() {
 
     log "Running validation review..."
 
-    # Set callback context
-    _VALIDATION_WORKER_DIR="$worker_dir"
-    _VALIDATION_WORKSPACE="$workspace"
+    # Set up callback context using base library
+    agent_setup_context "$worker_dir" "$workspace" "$project_dir"
 
     # Run validation loop
     run_ralph_loop "$workspace" \
@@ -117,8 +112,10 @@ CONTINUE_EOF
 # Completion check callback - returns 0 if review is complete
 _validation_completion_check() {
     # Check if any validation log contains a result tag
+    local worker_dir
+    worker_dir=$(agent_get_worker_dir)
     local latest_log
-    latest_log=$(ls -t "$_VALIDATION_WORKER_DIR/logs"/validation-*.log 2>/dev/null | grep -v summary | head -1)
+    latest_log=$(ls -t "$worker_dir/logs"/validation-*.log 2>/dev/null | grep -v summary | head -1)
 
     if [ -n "$latest_log" ] && [ -f "$latest_log" ]; then
         if grep -qP '<result>(PASS|FAIL)</result>' "$latest_log" 2>/dev/null; then

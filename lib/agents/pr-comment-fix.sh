@@ -14,10 +14,9 @@
 #   - comment-status.md : Status tracking file for addressed comments
 # =============================================================================
 
-AGENT_TYPE="pr-comment-fix"
-export AGENT_TYPE
-AGENT_DESCRIPTION="PR comment fix agent that addresses pull request review feedback"
-export AGENT_DESCRIPTION
+# Source base library and initialize metadata
+source "$WIGGUM_HOME/lib/core/agent-base.sh"
+agent_init_metadata "pr-comment-fix" "PR comment fix agent that addresses pull request review feedback"
 
 # Required paths before agent can run
 agent_required_paths() {
@@ -30,26 +29,20 @@ agent_output_files() {
     echo "comment-status.md"
 }
 
-# Source dependencies
-source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
-source "$WIGGUM_HOME/lib/core/defaults.sh"
-source "$WIGGUM_HOME/lib/core/logger.sh"
+# Source dependencies using base library helpers
+agent_source_core
+agent_source_ralph
 
 # Load review config on source
 load_review_config
 
-# Global variables for callbacks (set by agent_run)
-_FIX_COMMENTS_FILE=""
-_FIX_STATUS_FILE=""
-_FIX_OUTPUT_DIR=""
-_FIX_WORKSPACE=""
-
 # Main entry point
 agent_run() {
     local worker_dir="$1"
-    local _project_dir="$2"  # Reserved for future use
-    local max_iterations="${WIGGUM_COMMENT_FIX_MAX_ITERATIONS:-10}"
-    local max_turns="${WIGGUM_COMMENT_FIX_MAX_TURNS:-30}"
+    local project_dir="$2"
+    # Use config values (set by load_agent_config in agent-registry, with env var override)
+    local max_iterations="${WIGGUM_COMMENT_FIX_MAX_ITERATIONS:-${AGENT_CONFIG_MAX_ITERATIONS:-10}}"
+    local max_turns="${WIGGUM_COMMENT_FIX_MAX_TURNS:-${AGENT_CONFIG_MAX_TURNS:-30}}"
 
     local workspace="$worker_dir/workspace"
     local comments_file="$worker_dir/task-comments.md"
@@ -81,11 +74,10 @@ agent_run() {
     # Initialize status tracking if not exists or reset
     _init_comment_status "$comments_file" "$status_file"
 
-    # Set global variables for callbacks
+    # Set up callback context using base library
+    agent_setup_context "$worker_dir" "$workspace" "$project_dir"
     _FIX_COMMENTS_FILE="$comments_file"
     _FIX_STATUS_FILE="$status_file"
-    _FIX_OUTPUT_DIR="$worker_dir"
-    _FIX_WORKSPACE="$workspace"
 
     log "Starting comment fix loop (max $max_iterations iterations, $max_turns turns/session)"
 
@@ -103,7 +95,8 @@ agent_run() {
     local loop_result=$?
 
     # Auto commit and push if configured and loop succeeded
-    if [ "$loop_result" -eq 0 ] && [ "$WIGGUM_AUTO_COMMIT_AFTER_FIX" = "true" ]; then
+    local auto_commit="${WIGGUM_AUTO_COMMIT_AFTER_FIX:-${AGENT_CONFIG_AUTO_COMMIT:-true}}"
+    if [ "$loop_result" -eq 0 ] && [ "$auto_commit" = "true" ]; then
         log "Auto-committing and pushing fixes..."
         _commit_and_push_fixes "$workspace" "$worker_dir"
     elif [ "$loop_result" -ne 0 ]; then
