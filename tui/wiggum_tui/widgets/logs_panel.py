@@ -23,20 +23,20 @@ class LogsPanel(Widget):
 
     LogsPanel .logs-header {
         height: 1;
-        background: #1e293b;
+        background: #181825;
         padding: 0 1;
     }
 
     LogsPanel .logs-controls {
         height: 3;
-        background: #1e293b;
+        background: #181825;
         padding: 0 1;
     }
 
     LogsPanel RichLog {
         height: 1fr;
-        background: #0f172a;
-        border: solid #334155;
+        background: #1e1e2e;
+        border: solid #45475a;
     }
 
     LogsPanel Select {
@@ -147,20 +147,20 @@ class LogsPanel(Widget):
         """Write a single log line with coloring."""
         if log.level:
             level_colors = {
-                LogLevel.DEBUG: "#64748b",
-                LogLevel.INFO: "#3b82f6",
-                LogLevel.WARN: "#eab308",
-                LogLevel.ERROR: "#dc2626",
+                LogLevel.DEBUG: "#7f849c",
+                LogLevel.INFO: "#89b4fa",
+                LogLevel.WARN: "#f9e2af",
+                LogLevel.ERROR: "#f38ba8",
             }
-            color = level_colors.get(log.level, "#e2e8f0")
+            color = level_colors.get(log.level, "#cdd6f4")
 
-            timestamp = f"[#64748b]{log.timestamp}[/]" if log.timestamp else ""
+            timestamp = f"[#7f849c]{log.timestamp}[/]" if log.timestamp else ""
             level = f"[{color}]{log.level.value}[/]"
-            message = f"[#e2e8f0]{log.message}[/]"
+            message = f"[#cdd6f4]{log.message}[/]"
 
             viewer.write(f"{timestamp} {level}: {message}")
         else:
-            viewer.write(f"[#64748b]{log.raw}[/]")
+            viewer.write(f"[#7f849c]{log.raw}[/]")
 
     def _check_new_logs(self) -> None:
         """Check for and display new log lines."""

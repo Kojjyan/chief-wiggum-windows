@@ -44,15 +44,15 @@ class TaskDetailModal(ModalScreen[None]):
         max-width: 90%;
         height: auto;
         max-height: 80%;
-        background: #1e293b;
-        border: solid #f59e0b;
+        background: #181825;
+        border: solid #cba6f7;
         padding: 1 2;
     }
 
     TaskDetailModal .modal-title {
         text-align: center;
         text-style: bold;
-        color: #f59e0b;
+        color: #cba6f7;
         padding: 0 0 1 0;
     }
 
@@ -61,59 +61,59 @@ class TaskDetailModal(ModalScreen[None]):
     }
 
     TaskDetailModal .detail-label {
-        color: #94a3b8;
+        color: #a6adc8;
         text-style: bold;
     }
 
     TaskDetailModal .detail-value {
-        color: #e2e8f0;
+        color: #cdd6f4;
         padding: 0 0 0 2;
     }
 
     TaskDetailModal .detail-list-item {
-        color: #e2e8f0;
+        color: #cdd6f4;
         padding: 0 0 0 4;
     }
 
     TaskDetailModal .status-pending {
-        color: #94a3b8;
+        color: #a6adc8;
     }
 
     TaskDetailModal .status-in_progress {
-        color: #f59e0b;
+        color: #fab387;
     }
 
     TaskDetailModal .status-pending_approval {
-        color: #8b5cf6;
+        color: #cba6f7;
     }
 
     TaskDetailModal .status-complete {
-        color: #22c55e;
+        color: #a6e3a1;
     }
 
     TaskDetailModal .status-not_planned {
-        color: #64748b;
+        color: #7f849c;
     }
 
     TaskDetailModal .status-failed {
-        color: #dc2626;
+        color: #f38ba8;
     }
 
     TaskDetailModal .priority-critical {
-        color: #dc2626;
+        color: #f38ba8;
         text-style: bold;
     }
 
     TaskDetailModal .priority-high {
-        color: #f59e0b;
+        color: #fab387;
     }
 
     TaskDetailModal .priority-medium {
-        color: #3b82f6;
+        color: #89b4fa;
     }
 
     TaskDetailModal .priority-low {
-        color: #64748b;
+        color: #7f849c;
     }
 
     TaskDetailModal Button {
@@ -148,30 +148,30 @@ class TaskDetailModal(ModalScreen[None]):
 
             # Description
             if task.description:
-                yield Static("[bold #94a3b8]Description[/]", classes="detail-section")
+                yield Static("[bold #a6adc8]Description[/]", classes="detail-section")
                 yield Static(f"  {task.description}", classes="detail-value")
 
             # Dependencies
             if task.dependencies:
-                yield Static("[bold #94a3b8]Dependencies[/]", classes="detail-section")
+                yield Static("[bold #a6adc8]Dependencies[/]", classes="detail-section")
                 for dep in task.dependencies:
                     yield Static(f"  • {dep}", classes="detail-list-item")
 
             # Scope
             if task.scope:
-                yield Static("[bold #94a3b8]Scope[/]", classes="detail-section")
+                yield Static("[bold #a6adc8]Scope[/]", classes="detail-section")
                 for item in task.scope:
                     yield Static(f"  • {item}", classes="detail-list-item")
 
             # Out of Scope
             if task.out_of_scope:
-                yield Static("[bold #94a3b8]Out of Scope[/]", classes="detail-section")
+                yield Static("[bold #a6adc8]Out of Scope[/]", classes="detail-section")
                 for item in task.out_of_scope:
                     yield Static(f"  • {item}", classes="detail-list-item")
 
             # Acceptance Criteria
             if task.acceptance_criteria:
-                yield Static("[bold #94a3b8]Acceptance Criteria[/]", classes="detail-section")
+                yield Static("[bold #a6adc8]Acceptance Criteria[/]", classes="detail-section")
                 for item in task.acceptance_criteria:
                     yield Static(f"  • {item}", classes="detail-list-item")
 
@@ -189,8 +189,8 @@ class TaskCard(Static):
 
     DEFAULT_CSS = """
     TaskCard {
-        background: #1e293b;
-        border: solid #334155;
+        background: #181825;
+        border: solid #45475a;
         margin: 0 0 1 0;
         padding: 0 1;
         height: auto;
@@ -198,37 +198,37 @@ class TaskCard(Static):
     }
 
     TaskCard:hover {
-        border: solid #f59e0b;
-        background: #334155;
+        border: solid #cba6f7;
+        background: #313244;
     }
 
     TaskCard:focus {
-        border: solid #f59e0b;
+        border: solid #cba6f7;
     }
 
     TaskCard .task-id {
-        color: #f59e0b;
+        color: #cba6f7;
         text-style: bold;
     }
 
     TaskCard .task-title {
-        color: #e2e8f0;
+        color: #cdd6f4;
     }
 
     TaskCard .task-priority-critical {
-        color: #dc2626;
+        color: #f38ba8;
     }
 
     TaskCard .task-priority-high {
-        color: #f59e0b;
+        color: #fab387;
     }
 
     TaskCard .task-priority-medium {
-        color: #3b82f6;
+        color: #89b4fa;
     }
 
     TaskCard .task-priority-low {
-        color: #64748b;
+        color: #7f849c;
     }
     """
 
@@ -253,7 +253,7 @@ class TaskCard(Static):
             title = title[:27] + "..."
 
         # Build the first line with task ID and priority
-        first_line = f"[bold #f59e0b]{self._task_data.id}[/] [{priority_class}]{priority_indicator}[/]"
+        first_line = f"[bold #cba6f7]{self._task_data.id}[/] [{priority_class}]{priority_indicator}[/]"
 
         # For in-progress tasks, show running status indicator and duration
         if self._task_data.status == TaskStatus.IN_PROGRESS and self._task_data.is_running is not None:
@@ -262,14 +262,14 @@ class TaskCard(Static):
                 duration = ""
                 if self._task_data.start_time:
                     duration = f" {format_duration(self._task_data.start_time)}"
-                first_line += f" [bold #22c55e]●{duration}[/]"
+                first_line += f" [bold #a6e3a1]●{duration}[/]"
             else:
                 # Red indicator for not running (stalled)
-                first_line += " [bold #dc2626]●[/]"
+                first_line += " [bold #f38ba8]●[/]"
 
         lines = [
             first_line,
-            f"[#e2e8f0]{title}[/]",
+            f"[#cdd6f4]{title}[/]",
         ]
         return "\n".join(lines)
 
@@ -289,11 +289,11 @@ class KanbanColumn(Widget):
     KanbanColumn {
         width: 1fr;
         height: 100%;
-        border: solid #334155;
+        border: solid #45475a;
     }
 
     KanbanColumn .column-header {
-        background: #1e293b;
+        background: #181825;
         text-align: center;
         text-style: bold;
         height: 1;
@@ -301,27 +301,27 @@ class KanbanColumn(Widget):
     }
 
     KanbanColumn .column-header-pending {
-        color: #94a3b8;
+        color: #a6adc8;
     }
 
     KanbanColumn .column-header-in_progress {
-        color: #f59e0b;
+        color: #fab387;
     }
 
     KanbanColumn .column-header-pending_approval {
-        color: #8b5cf6;
+        color: #cba6f7;
     }
 
     KanbanColumn .column-header-complete {
-        color: #22c55e;
+        color: #a6e3a1;
     }
 
     KanbanColumn .column-header-not_planned {
-        color: #64748b;
+        color: #7f849c;
     }
 
     KanbanColumn .column-header-failed {
-        color: #dc2626;
+        color: #f38ba8;
     }
 
     KanbanColumn .column-content {
@@ -358,7 +358,7 @@ class KanbanPanel(Widget):
 
     KanbanPanel .kanban-header {
         height: 1;
-        background: #1e293b;
+        background: #181825;
         padding: 0 1;
     }
 
@@ -369,7 +369,7 @@ class KanbanPanel(Widget):
 
     KanbanPanel .empty-message {
         text-align: center;
-        color: #64748b;
+        color: #7f849c;
         padding: 2;
     }
     """
@@ -424,11 +424,11 @@ class KanbanPanel(Widget):
 
         yield Static(
             f"[bold]Kanban[/] │ "
-            f"[#94a3b8]Pending: {len(grouped[TaskStatus.PENDING])}[/] │ "
-            f"[#f59e0b]In Progress: {len(grouped[TaskStatus.IN_PROGRESS])}[/] │ "
-            f"[#8b5cf6]Pending Approval: {len(grouped[TaskStatus.PENDING_APPROVAL])}[/] │ "
-            f"[#22c55e]Complete: {len(grouped[TaskStatus.COMPLETE])}[/] │ "
-            f"[#dc2626]Failed: {len(grouped[TaskStatus.FAILED])}[/]",
+            f"[#a6adc8]Pending: {len(grouped[TaskStatus.PENDING])}[/] │ "
+            f"[#fab387]In Progress: {len(grouped[TaskStatus.IN_PROGRESS])}[/] │ "
+            f"[#cba6f7]Pending Approval: {len(grouped[TaskStatus.PENDING_APPROVAL])}[/] │ "
+            f"[#a6e3a1]Complete: {len(grouped[TaskStatus.COMPLETE])}[/] │ "
+            f"[#f38ba8]Failed: {len(grouped[TaskStatus.FAILED])}[/]",
             classes="kanban-header",
         )
 
@@ -469,11 +469,11 @@ class KanbanPanel(Widget):
             header = self.query_one(".kanban-header", Static)
             header.update(
                 f"[bold]Kanban[/] │ "
-                f"[#94a3b8]Pending: {len(grouped[TaskStatus.PENDING])}[/] │ "
-                f"[#f59e0b]In Progress: {len(grouped[TaskStatus.IN_PROGRESS])}[/] │ "
-                f"[#8b5cf6]Pending Approval: {len(grouped[TaskStatus.PENDING_APPROVAL])}[/] │ "
-                f"[#22c55e]Complete: {len(grouped[TaskStatus.COMPLETE])}[/] │ "
-                f"[#dc2626]Failed: {len(grouped[TaskStatus.FAILED])}[/]"
+                f"[#a6adc8]Pending: {len(grouped[TaskStatus.PENDING])}[/] │ "
+                f"[#fab387]In Progress: {len(grouped[TaskStatus.IN_PROGRESS])}[/] │ "
+                f"[#cba6f7]Pending Approval: {len(grouped[TaskStatus.PENDING_APPROVAL])}[/] │ "
+                f"[#a6e3a1]Complete: {len(grouped[TaskStatus.COMPLETE])}[/] │ "
+                f"[#f38ba8]Failed: {len(grouped[TaskStatus.FAILED])}[/]"
             )
         except Exception:
             pass

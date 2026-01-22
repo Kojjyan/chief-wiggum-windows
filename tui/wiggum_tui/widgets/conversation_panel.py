@@ -85,43 +85,43 @@ class ConversationPanel(Widget):
 
     ConversationPanel .conv-controls {
         height: 3;
-        background: #1e293b;
+        background: #181825;
         padding: 0 1;
     }
 
     ConversationPanel Select {
-        width: 30;
+        width: 48;
         margin-top: -1;
     }
 
     ConversationPanel Tree {
         height: 1fr;
-        background: #0f172a;
-        border: solid #334155;
+        background: #1e1e2e;
+        border: solid #45475a;
     }
 
     ConversationPanel .empty-message {
         text-align: center;
-        color: #64748b;
+        color: #7f849c;
         padding: 2;
     }
 
     ConversationPanel .prompt-section {
         height: auto;
         max-height: 10;
-        background: #1e293b;
-        border: solid #334155;
+        background: #181825;
+        border: solid #45475a;
         padding: 1;
         margin-bottom: 1;
     }
 
     ConversationPanel .prompt-label {
-        color: #f59e0b;
+        color: #cba6f7;
         text-style: bold;
     }
 
     ConversationPanel .prompt-text {
-        color: #94a3b8;
+        color: #a6adc8;
     }
     """
 
@@ -245,9 +245,9 @@ class ConversationPanel(Widget):
 
             # Add initial prompt if available
             if self.conversation.user_prompt:
-                prompt_node = tree.root.add("[#f59e0b]Initial Prompt[/]", expand=False)
+                prompt_node = tree.root.add("[#cba6f7]Initial Prompt[/]", expand=False)
                 for line in format_content(self.conversation.user_prompt, 100):
-                    prompt_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    prompt_node.add_leaf(f"[#a6adc8]{line}[/]")
 
             # Group turns by log file
             current_log_name = ""
@@ -267,7 +267,7 @@ class ConversationPanel(Widget):
                         result_info = f" │ {result.num_turns} turns │ ${result.total_cost_usd:.2f}"
 
                     log_node = tree.root.add(
-                        f"[#f59e0b]{current_log_name}[/]{result_info}",
+                        f"[#cba6f7]{current_log_name}[/]{result_info}",
                         expand=first_log,
                     )
                     first_log = False
@@ -294,9 +294,9 @@ class ConversationPanel(Widget):
         if turn.assistant_text:
             text_preview = truncate_text(turn.assistant_text, 60)
 
-        assistant_label = f"[#3b82f6]Assistant[/]{tool_info}"
+        assistant_label = f"[#89b4fa]Assistant[/]{tool_info}"
         if text_preview:
-            assistant_label += f" [#64748b]{text_preview}[/]"
+            assistant_label += f" [#7f849c]{text_preview}[/]"
 
         assistant_node = parent.add(assistant_label, expand=False)
 
@@ -304,20 +304,20 @@ class ConversationPanel(Widget):
         if turn.assistant_text:
             if len(turn.assistant_text) > 60:
                 # Add expandable node for full text with line wrapping
-                text_node = assistant_node.add("[#3b82f6]Full message[/]", expand=False)
+                text_node = assistant_node.add("[#89b4fa]Full message[/]", expand=False)
                 for line in format_content(turn.assistant_text, 100):
-                    text_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    text_node.add_leaf(f"[#a6adc8]{line}[/]")
             else:
-                assistant_node.add_leaf(f"[#94a3b8]{turn.assistant_text}[/]")
+                assistant_node.add_leaf(f"[#a6adc8]{turn.assistant_text}[/]")
 
         # Add tool calls as children of assistant node
         for tool_call in turn.tool_calls:
             # Format tool label with input preview
             input_preview = self._format_tool_input(tool_call)
             if input_preview:
-                tool_label = f"[#22c55e]{tool_call.name}[/] [#64748b]{input_preview}[/]"
+                tool_label = f"[#a6e3a1]{tool_call.name}[/] [#7f849c]{input_preview}[/]"
             else:
-                tool_label = f"[#22c55e]{tool_call.name}[/]"
+                tool_label = f"[#a6e3a1]{tool_call.name}[/]"
 
             tool_node = assistant_node.add(tool_label, expand=False)
 
@@ -369,12 +369,12 @@ class ConversationPanel(Widget):
             # Show each todo with status
             todos = tool_call.input.get("todos", [])
             if todos:
-                input_node = tool_node.add("[#64748b]Todos[/]", expand=False)
+                input_node = tool_node.add("[#7f849c]Todos[/]", expand=False)
                 for todo in todos:
                     status = todo.get("status", "pending")
                     content = todo.get("content", "")
                     status_icon = {"pending": "○", "in_progress": "◐", "completed": "●"}.get(status, "?")
-                    status_color = {"pending": "#64748b", "in_progress": "#f59e0b", "completed": "#22c55e"}.get(status, "#64748b")
+                    status_color = {"pending": "#7f849c", "in_progress": "#fab387", "completed": "#a6e3a1"}.get(status, "#7f849c")
                     input_node.add_leaf(f"[{status_color}]{status_icon}[/] {content}")
 
         elif tool_call.name == "Edit":
@@ -382,39 +382,39 @@ class ConversationPanel(Widget):
             old_str = tool_call.input.get("old_string", "")
             new_str = tool_call.input.get("new_string", "")
             if old_str or new_str:
-                input_node = tool_node.add("[#64748b]Edit details[/]", expand=False)
+                input_node = tool_node.add("[#7f849c]Edit details[/]", expand=False)
                 if old_str:
-                    old_node = input_node.add("[#dc2626]Old string[/]", expand=False)
+                    old_node = input_node.add("[#f38ba8]Old string[/]", expand=False)
                     for line in wrap_text(old_str, 100):
-                        old_node.add_leaf(f"[#dc2626]{line}[/]")
+                        old_node.add_leaf(f"[#f38ba8]{line}[/]")
                 if new_str:
-                    new_node = input_node.add("[#22c55e]New string[/]", expand=False)
+                    new_node = input_node.add("[#a6e3a1]New string[/]", expand=False)
                     for line in wrap_text(new_str, 100):
-                        new_node.add_leaf(f"[#22c55e]{line}[/]")
+                        new_node.add_leaf(f"[#a6e3a1]{line}[/]")
 
         elif tool_call.name == "Write":
             # Show full content with wrapping
             content = tool_call.input.get("content", "")
             if content:
-                input_node = tool_node.add(f"[#64748b]Content ({len(content.splitlines())} lines)[/]", expand=False)
+                input_node = tool_node.add(f"[#7f849c]Content ({len(content.splitlines())} lines)[/]", expand=False)
                 for line in wrap_text(content, 100):
-                    input_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    input_node.add_leaf(f"[#a6adc8]{line}[/]")
 
         elif tool_call.name == "Bash":
             # Show full command with wrapping
             cmd = tool_call.input.get("command", "")
             if len(cmd) > 60:
-                input_node = tool_node.add("[#64748b]Full command[/]", expand=False)
+                input_node = tool_node.add("[#7f849c]Full command[/]", expand=False)
                 for line in wrap_text(cmd, 100):
-                    input_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    input_node.add_leaf(f"[#a6adc8]{line}[/]")
 
         elif tool_call.name == "Task":
             # Show full prompt with formatting
             prompt = tool_call.input.get("prompt", "")
             if prompt:
-                input_node = tool_node.add("[#64748b]Prompt[/]", expand=False)
+                input_node = tool_node.add("[#7f849c]Prompt[/]", expand=False)
                 for line in format_content(prompt, 100):
-                    input_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    input_node.add_leaf(f"[#a6adc8]{line}[/]")
 
     def _add_tool_result(self, tool_node: TreeNode, tool_call: ToolCall) -> None:
         """Add tool result with expandable details."""
@@ -424,24 +424,24 @@ class ConversationPanel(Widget):
         if tool_call.name == "Write":
             if isinstance(result, dict):
                 if result.get("success") or result.get("type") == "text":
-                    tool_node.add_leaf("[#22c55e]Success[/]")
+                    tool_node.add_leaf("[#a6e3a1]Success[/]")
                 elif "error" in result:
-                    tool_node.add_leaf(f"[#dc2626]Error: {result['error']}[/]")
+                    tool_node.add_leaf(f"[#f38ba8]Error: {result['error']}[/]")
                 else:
-                    tool_node.add_leaf("[#22c55e]Success[/]")
+                    tool_node.add_leaf("[#a6e3a1]Success[/]")
             else:
-                tool_node.add_leaf("[#22c55e]Success[/]")
+                tool_node.add_leaf("[#a6e3a1]Success[/]")
             return
 
         result_preview = format_tool_result(result, 80)
 
         # Determine color
         if "Error" in result_preview:
-            color = "#dc2626"
+            color = "#f38ba8"
         elif result_preview == "Success":
-            color = "#22c55e"
+            color = "#a6e3a1"
         else:
-            color = "#94a3b8"
+            color = "#a6adc8"
 
         # Check if result needs expansion
         needs_expansion = False
@@ -468,15 +468,15 @@ class ConversationPanel(Widget):
             if "stdout" in result:
                 content = str(result["stdout"])
                 for line in format_content(content, 100):
-                    result_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    result_node.add_leaf(f"[#a6adc8]{line}[/]")
             elif "content" in result:
                 content = str(result["content"])
                 for line in format_content(content, 100):
-                    result_node.add_leaf(f"[#94a3b8]{line}[/]")
+                    result_node.add_leaf(f"[#a6adc8]{line}[/]")
             elif "error" in result:
                 error = str(result["error"])
                 for line in format_content(error, 100):
-                    result_node.add_leaf(f"[#dc2626]{line}[/]")
+                    result_node.add_leaf(f"[#f38ba8]{line}[/]")
             else:
                 # Show all keys with full values
                 for key, value in result.items():
@@ -487,19 +487,19 @@ class ConversationPanel(Widget):
                         val_str = str(value)
 
                     if len(val_str) > 100 or "\n" in val_str:
-                        key_node = result_node.add(f"[#64748b]{key}[/]", expand=False)
+                        key_node = result_node.add(f"[#7f849c]{key}[/]", expand=False)
                         for line in val_str.split("\n"):
-                            key_node.add_leaf(f"[#94a3b8]{line}[/]")
+                            key_node.add_leaf(f"[#a6adc8]{line}[/]")
                     else:
-                        result_node.add_leaf(f"[#64748b]{key}:[/] [#94a3b8]{val_str}[/]")
+                        result_node.add_leaf(f"[#7f849c]{key}:[/] [#a6adc8]{val_str}[/]")
         elif isinstance(result, (dict, list)):
             # Result is a raw dict/list, format as JSON
             formatted = json.dumps(result, indent=2, ensure_ascii=False)
             for line in formatted.split("\n"):
-                result_node.add_leaf(f"[#94a3b8]{line}[/]")
+                result_node.add_leaf(f"[#a6adc8]{line}[/]")
         elif isinstance(result, str):
             for line in format_content(result, 100):
-                result_node.add_leaf(f"[#94a3b8]{line}[/]")
+                result_node.add_leaf(f"[#a6adc8]{line}[/]")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle worker selection change."""

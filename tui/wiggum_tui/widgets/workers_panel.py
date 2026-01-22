@@ -25,7 +25,7 @@ class WorkersPanel(Widget):
 
     WorkersPanel .workers-header {
         height: 1;
-        background: #1e293b;
+        background: #181825;
         padding: 0 1;
     }
 
@@ -35,7 +35,7 @@ class WorkersPanel(Widget):
 
     WorkersPanel .empty-message {
         text-align: center;
-        color: #64748b;
+        color: #7f849c;
         padding: 2;
     }
     """
@@ -79,9 +79,9 @@ class WorkersPanel(Widget):
 
         yield Static(
             f"[bold]Workers[/] │ "
-            f"[#22c55e]Running: {counts['running']}[/] │ "
-            f"[#3b82f6]Completed: {counts['completed']}[/] │ "
-            f"[#dc2626]Failed: {counts['failed']}[/] │ "
+            f"[#a6e3a1]Running: {counts['running']}[/] │ "
+            f"[#89b4fa]Completed: {counts['completed']}[/] │ "
+            f"[#f38ba8]Failed: {counts['failed']}[/] │ "
             f"Total: {counts['total']}",
             classes="workers-header",
         )
@@ -152,11 +152,11 @@ class WorkersPanel(Widget):
     def _get_status_style(self, status: WorkerStatus) -> str:
         """Get Rich style for a status."""
         return {
-            WorkerStatus.RUNNING: "#22c55e",
-            WorkerStatus.STOPPED: "#64748b",
-            WorkerStatus.COMPLETED: "#3b82f6",
-            WorkerStatus.FAILED: "#dc2626",
-        }.get(status, "#64748b")
+            WorkerStatus.RUNNING: "#a6e3a1",
+            WorkerStatus.STOPPED: "#7f849c",
+            WorkerStatus.COMPLETED: "#89b4fa",
+            WorkerStatus.FAILED: "#f38ba8",
+        }.get(status, "#7f849c")
 
     def _get_selected_worker(self) -> Worker | None:
         """Get the currently selected worker."""
@@ -288,9 +288,9 @@ class WorkersPanel(Widget):
             header = self.query_one(".workers-header", Static)
             header.update(
                 f"[bold]Workers[/] │ "
-                f"[#22c55e]Running: {counts['running']}[/] │ "
-                f"[#3b82f6]Completed: {counts['completed']}[/] │ "
-                f"[#dc2626]Failed: {counts['failed']}[/] │ "
+                f"[#a6e3a1]Running: {counts['running']}[/] │ "
+                f"[#89b4fa]Completed: {counts['completed']}[/] │ "
+                f"[#f38ba8]Failed: {counts['failed']}[/] │ "
                 f"Total: {counts['total']}"
             )
         except Exception:

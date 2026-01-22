@@ -22,8 +22,8 @@ class WiggumHeader(Static):
 
     DEFAULT_CSS = """
     WiggumHeader {
-        background: #1e293b;
-        color: #e2e8f0;
+        background: #181825;
+        color: #cdd6f4;
         height: 1;
         dock: top;
         padding: 0 1;
@@ -57,8 +57,8 @@ class WiggumApp(App):
         Binding("1", "switch_tab('kanban')", "Kanban", show=True),
         Binding("2", "switch_tab('workers')", "Workers", show=True),
         Binding("3", "switch_tab('logs')", "Logs", show=True),
-        Binding("4", "switch_tab('metrics')", "Metrics", show=True),
-        Binding("5", "switch_tab('conversations')", "Chat", show=True),
+        Binding("4", "switch_tab('conversations')", "Chat", show=True),
+        Binding("5", "switch_tab('metrics')", "Metrics", show=True),
         Binding("r", "refresh", "Refresh"),
         Binding("?", "help", "Help"),
         # Vim-style tab navigation
@@ -82,10 +82,10 @@ class WiggumApp(App):
                 yield WorkersPanel(self.ralph_dir)
             with TabPane("Logs", id="logs"):
                 yield LogsPanel(self.ralph_dir)
-            with TabPane("Metrics", id="metrics"):
-                yield MetricsPanel(self.ralph_dir)
             with TabPane("Conversations", id="conversations"):
                 yield ConversationPanel(self.ralph_dir)
+            with TabPane("Metrics", id="metrics"):
+                yield MetricsPanel(self.ralph_dir)
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -172,7 +172,7 @@ class WiggumApp(App):
         except Exception:
             pass
 
-    TAB_ORDER = ["kanban", "workers", "logs", "metrics", "conversations"]
+    TAB_ORDER = ["kanban", "workers", "logs", "conversations", "metrics"]
 
     def action_switch_tab(self, tab_id: str) -> None:
         """Switch to a specific tab."""

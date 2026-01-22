@@ -1,15 +1,26 @@
----
-name: wiggum-plan
-description: Interactively plan task implementation (planning only, no implementation)
----
+| name | description |
+|------|-------------|
+| wiggum-plan | Create implementation plans by exploring the codebase and designing an approach. Planning only - never implements. Always writes plan to `.ralph/plans/TASK-ID.md`. |
 
 # Wiggum Plan
 
-Create implementation plans by exploring the codebase and designing an approach. This skill is for **planning only** - it never implements.
+## Purpose
+
+Create implementation plans by exploring the codebase and designing an approach. This skill is for **planning only** - it never implements code.
 
 ## Input
 
 A task ID from `.ralph/kanban.md` (e.g., `TASK-015`, `FEATURE-042`).
+
+## When This Skill is Invoked
+
+**Manual invocation:**
+- Before implementing a complex task
+- When a task needs architectural analysis
+- To document approach before handing to a worker
+
+**From other skills:**
+- After `/kanban` creates tasks that need detailed planning
 
 ## Critical Rules
 
@@ -18,21 +29,22 @@ A task ID from `.ralph/kanban.md` (e.g., `TASK-015`, `FEATURE-042`).
 3. **Multiple iterations allowed** - Explore, ask questions, explore more as needed
 4. **READ-ONLY exploration** - Only modify the plan file itself
 
-## Process
+## Core Workflow
 
-### 1. Explore and Understand (iterative)
+### Phase 1: Explore and Understand (iterative)
 
 This phase may repeat multiple times until you have a complete picture.
 
 **Read the task requirements:**
 - Read `.ralph/kanban.md` and find the task entry for the given ID
 - Extract Description, Scope, Acceptance Criteria, Dependencies
+- Check dependent tasks to understand what they provide
 
 **Explore the codebase (READ-ONLY):**
-- **Glob**: Find files by pattern (`**/*.ts`, `src/components/**`)
+- **Glob**: Find files by pattern
 - **Grep**: Search for code patterns, function names, imports
 - **Read**: Examine specific files in detail
-- **Bash** (read-only only): `ls`, `git log`, `git diff`, `find`
+- **Bash** (read-only): `ls`, `git log`, `git diff`, `find`
 
 Look for:
 - Similar features as reference implementations
@@ -40,73 +52,42 @@ Look for:
 - Related code that will be affected
 - Test patterns used in the project
 
-**Ask clarifying questions:**
-- What constraints or requirements aren't clear?
-- Are there ambiguities in the task description?
-- What trade-offs should be considered?
+**Ask clarifying questions using AskUserQuestion:**
 
-**Iterate:** After getting answers, explore more if needed. Repeat until you have a complete understanding.
+**AskUserQuestion Format:**
+```
+- question: Clear, specific question ending with ?
+- header: Short label (max 12 chars)
+- multiSelect: false (unless choices aren't mutually exclusive)
+- options: 2-4 specific choices grounded in codebase findings
+  - label: Concise choice text (1-5 words)
+  - description: Context from exploration (file paths, patterns found)
+```
 
-### 2. Design the Solution
+**Question types:**
+- **Approach**: Which pattern should we follow?
+- **Trade-offs**: Performance vs simplicity?
+- **Scope clarification**: What edge cases to handle?
+- **Integration**: How should this interact with X?
+
+**Iterate:** After getting answers, explore more if needed. Repeat until complete understanding.
+
+### Phase 2: Design the Solution
 
 Consider:
 - How does this fit the existing architecture?
 - What are the trade-offs of different approaches?
 - What dependencies exist between components?
 - What could go wrong? Edge cases?
-- How does the solution impact other in progress and new tasks?
+- How does the solution impact other in-progress and pending tasks?
 
-### 3. Write the Plan (REQUIRED)
+### Phase 3: Write the Plan (REQUIRED)
 
 **You MUST write the plan to `.ralph/plans/TASK-ID.md`** - this is not optional.
 
-Use this structure:
+For plan structure and format, see references/plan-format.md.
 
-```markdown
-# Implementation Plan: [TASK-ID]
-
-## Overview
-[1-2 sentences: what will be implemented and why]
-
-## Requirements Analysis
-| Requirement | Acceptance Criteria | Complexity |
-|-------------|---------------------|------------|
-| [requirement] | [how to verify] | Low/Med/High |
-
-## Existing Patterns
-[Patterns found in codebase that implementation should follow]
-- `path/to/file.ts`: [pattern description]
-- `path/to/other.ts`: [pattern description]
-
-## Implementation Approach
-[Step-by-step strategy with specific file/function references]
-
-1. **Step 1**: [what to do]
-   - File: `path/to/file`
-   - Changes: [specific changes]
-
-2. **Step 2**: [what to do]
-   - File: `path/to/file`
-   - Changes: [specific changes]
-
-## Dependencies and Sequencing
-[Order of operations, what depends on what]
-
-## Potential Challenges
-[Technical risks, edge cases, things to watch out for]
-
-### Critical Files
-| Action | File | Reason |
-|--------|------|--------|
-| CREATE | path/file.ext | [Purpose] |
-| MODIFY | path/file.ext | [What changes] |
-| REFERENCE | path/file.ext | [Pattern to follow] |
-
-### Incompatible With (only if applicable)
-TASK-029
-```
-
-## Example Interaction
+## Example
 
 **User**: `/wiggum-plan TASK-015`
 
@@ -120,60 +101,79 @@ Found TASK-015:
   - Description: Create POST /auth/login and POST /auth/register endpoints
   - Priority: HIGH
   - Dependencies: TASK-013, TASK-014, TASK-010
-  - Scope:
-    - Create src/routes/auth.ts
-    - Implement login with password validation
-    - Implement registration with input validation
-    - Hash passwords with bcrypt
-  - Out of Scope:
-    - Password reset
-    - OAuth integration
 ```
 
-Now let me explore the codebase to understand existing patterns...
+Now exploring the codebase for existing patterns...
 
 *[Uses Glob to find route files]*
-
 *[Uses Read to examine src/routes/users.ts]*
 
-I see the route pattern. Let me check the dependencies...
+Found route pattern using Express Router with controller separation.
 
-*[Reads TASK-013 and TASK-014 entries to understand what they provide]*
+*[Uses Grep to find validation patterns]*
 
-I have some questions:
-1. Should registration require email verification, or is immediate access OK?
-2. What validation rules for passwords? (min length, complexity?)
-3. Should failed login attempts be rate-limited?
+Found validation using `express-validator` in existing routes.
 
-**User**: No email verification. Min 8 chars for password. Yes, rate limit to 5 attempts per minute.
+*[Uses AskUserQuestion]*
+```
+questions:
+  - question: Should registration require email verification?
+    header: Email verify
+    multiSelect: false
+    options:
+      - label: No verification
+        description: User gets immediate access after registration
+      - label: Email verification
+        description: User must verify email before login (requires email service)
+  - question: What password requirements?
+    header: Password
+    multiSelect: false
+    options:
+      - label: Minimum 8 chars
+        description: Simple requirement, good UX
+      - label: Complex rules
+        description: Uppercase, lowercase, number, special char
+  - question: Should failed logins be rate-limited?
+    header: Rate limit
+    multiSelect: false
+    options:
+      - label: Yes, use existing pattern
+        description: Found rate-limiter in src/middleware/rate-limit.ts
+      - label: No rate limiting
+        description: Simpler but less secure
+```
 
-**Assistant**: Good to know about rate limiting - let me check if there's an existing rate limiter...
+**User selects**: No verification, Minimum 8 chars, Yes use existing pattern
 
-*[Uses Grep to search for rate limiting patterns]*
+**Assistant**: Good. Let me verify the rate limiter integration...
 
-Found `src/middleware/rate-limit.ts`. I'll reference that pattern.
+*[Uses Read to examine src/middleware/rate-limit.ts]*
 
-Now I have a complete picture. Writing the plan. Note that this design is incompatible with TASK-029.
+Confirmed rate limiter pattern. I have a complete picture.
 
 *[Writes to .ralph/plans/TASK-015.md]*
 
 I've saved the implementation plan to `.ralph/plans/TASK-015.md`. The plan covers:
 
-- Route structure following existing patterns in `src/routes/users.ts`
-- Integration with JWT utils from TASK-013
-- Integration with auth middleware from TASK-014
-- Rate limiting using existing `src/middleware/rate-limit.ts` pattern
-- Password validation (min 8 chars)
-- Bcrypt hashing
+- Route structure following `src/routes/users.ts` pattern
+- Validation using `express-validator`
+- Rate limiting using existing middleware
+- Password hashing with bcrypt (min 8 chars)
+- Integration with TASK-013 (JWT utils) and TASK-014 (auth middleware)
 
-The plan is ready for a Chief Wiggum worker to execute. Shall I mark TASK-029 as [N] Not planned?
+The plan is ready for a Chief Wiggum worker to execute.
 
-## Output
+## Key Principles
 
-Plans are saved to: `.ralph/plans/[TASK-ID].md`
+1. **Research before questions** - Explore codebase first, ground questions in findings
+2. **Iterate freely** - Multiple rounds of explore → ask → explore is expected
+3. **Be specific** - Reference actual file paths, function names, line numbers
+4. **Always write plan** - Session must end with `.ralph/plans/TASK-ID.md`
+5. **Never implement** - Planning only, no code changes
 
-This allows:
-- Review before implementation
-- Reference during coding
-- Documentation for future maintainers
-- Input for Chief Wiggum workers
+## Progressive Disclosure
+
+This SKILL.md contains the core workflow. For detailed guidance:
+- **Plan format**: references/plan-format.md
+- **Exploration strategies**: references/exploration-strategies.md
+- **Question patterns**: references/question-patterns.md

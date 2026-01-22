@@ -13,6 +13,7 @@ RALPH_DIR="$PROJECT_DIR/.ralph"
 
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 source "$WIGGUM_HOME/lib/metrics/audit-logger.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
@@ -90,6 +91,11 @@ do_start() {
         echo "Warning: Worker already exists for $task_id: $(basename "$existing")"
         echo "Use 'wiggum resume $task_id' to resume it, or 'wiggum clean $task_id' first."
         exit $EXIT_WORKER_ALREADY_EXISTS
+    fi
+
+    # Update kanban status to in-progress (wip)
+    if ! update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" "="; then
+        echo "Warning: Failed to update kanban status to in-progress"
     fi
 
     # Create worker directory with unique timestamp
