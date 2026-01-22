@@ -166,7 +166,7 @@ emit_error() {
     local message="$3"
 
     # Escape quotes in message for JSON
-    message=$(echo "$message" | sed 's/"/\\"/g')
+    message=${message//\"/\\\"}
 
     emit_event "error" "\"worker_id\":\"$worker_id\",\"error_type\":\"$error_type\",\"message\":\"$message\""
     log_debug "Event: error worker_id=$worker_id error_type=$error_type"
@@ -254,7 +254,7 @@ emit_violation() {
     local details="$3"
 
     # Escape quotes in details for JSON
-    details=$(echo "$details" | sed 's/"/\\"/g')
+    details=${details//\"/\\\"}
 
     emit_event "violation" "\"worker_id\":\"$worker_id\",\"violation_type\":\"$violation_type\",\"details\":\"$details\""
     log_debug "Event: violation worker_id=$worker_id violation_type=$violation_type"

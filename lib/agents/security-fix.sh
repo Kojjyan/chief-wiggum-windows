@@ -346,26 +346,22 @@ _init_fix_status() {
         echo ""
     } > "$status_file"
 
-    # Extract CRITICAL findings
-    _extract_findings_by_severity "$report_file" "CRITICAL" >> "$status_file"
-
+    # Extract findings by severity
     {
+        _extract_findings_by_severity "$report_file" "CRITICAL"
+
         echo ""
         echo "### HIGH"
         echo ""
-    } >> "$status_file"
 
-    # Extract HIGH findings
-    _extract_findings_by_severity "$report_file" "HIGH" >> "$status_file"
+        _extract_findings_by_severity "$report_file" "HIGH"
 
-    {
         echo ""
         echo "### MEDIUM"
         echo ""
-    } >> "$status_file"
 
-    # Extract MEDIUM findings
-    _extract_findings_by_severity "$report_file" "MEDIUM" >> "$status_file"
+        _extract_findings_by_severity "$report_file" "MEDIUM"
+    } >> "$status_file"
 
     local total_count
     total_count=$(grep -c '^\- \[ \]' "$status_file" 2>/dev/null || echo "0")

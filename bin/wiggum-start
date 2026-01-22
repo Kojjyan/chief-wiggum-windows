@@ -119,6 +119,7 @@ do_start() {
     # run_agent writes PID to agent.pid - orchestrator can poll for it
     # Use setsid to create a new session/process group for the worker
     # This prevents SIGINT from the orchestrator from killing workers
+    # shellcheck disable=SC2016
     setsid bash -c '
         export WIGGUM_HOME="'"$WIGGUM_HOME"'"
         source "$WIGGUM_HOME/lib/worker/agent-registry.sh"

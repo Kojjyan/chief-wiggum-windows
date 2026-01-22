@@ -24,7 +24,6 @@ else
 fi
 
 # Check result tracking
-declare -a CHECK_RESULTS=()
 declare -i CHECK_PASSED=0
 declare -i CHECK_FAILED=0
 declare -i CHECK_WARNED=0
@@ -106,7 +105,7 @@ check_claude_cli() {
     version=$($claude --version 2>/dev/null | head -1 || echo "unknown")
 
     # Quick responsiveness check (just verify it doesn't hang)
-    if ! timeout 5 $claude --version &>/dev/null; then
+    if ! timeout 5 "$claude" --version &>/dev/null; then
         _print_check "fail" "$name" "CLI not responding (timeout after 5s)"
         return 1
     fi

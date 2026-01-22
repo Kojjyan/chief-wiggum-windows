@@ -114,6 +114,7 @@ ${summary}
     temp_file=$(mktemp)
     echo "$entry" > "$temp_file"
 
+    # shellcheck disable=SC2016
     with_file_lock "$changelog_file" 5 \
         bash -c 'cat "$1" >> "$2"' _ "$temp_file" "$changelog_file"
 

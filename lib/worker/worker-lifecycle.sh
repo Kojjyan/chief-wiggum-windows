@@ -213,9 +213,6 @@ scan_active_workers() {
 
     lock_file=$(_get_pid_ops_lock "$ralph_dir")
 
-    # Collect results in a variable to output after releasing lock
-    local results=""
-
     # Use flock for atomic PID operations
     (
         flock -w 5 200 || {

@@ -78,6 +78,7 @@ _gh_pr_list_with_error_handling() {
     local result exit_code
 
     # Run gh pr list with timeout
+    # shellcheck disable=SC2086
     if result=$(timeout "$timeout_sec" gh pr list --search "$search_query" --json "$json_fields" $extra_args 2>&1); then
         exit_code=$?
         if [ $exit_code -eq 0 ]; then
