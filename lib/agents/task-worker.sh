@@ -149,6 +149,44 @@ agent_run() {
         fi
     fi
 
+    # === SECURITY AUDIT PHASE ===
+    if [ -d "$workspace" ] && [ $loop_result -eq 0 ]; then
+        log "Running security audit on completed work"
+        run_sub_agent "security-audit" "$worker_dir" "$project_dir"
+
+        # Check security audit result
+        local security_result
+        security_result=$(cat "$worker_dir/security-result.txt" 2>/dev/null || echo "UNKNOWN")
+        log "Security audit result: $security_result"
+
+        case "$security_result" in
+            PASS)
+                log "Security audit passed - no issues found"
+                ;;
+            FIX)
+                log "Security audit found fixable issues - running security-fix agent"
+                run_sub_agent "security-fix" "$worker_dir" "$project_dir"
+
+                local fix_result
+                fix_result=$(cat "$worker_dir/fix-result.txt" 2>/dev/null || echo "UNKNOWN")
+                log "Security fix result: $fix_result"
+
+                if [ "$fix_result" != "FIXED" ]; then
+                    log_warn "Security fix incomplete (result: $fix_result) - continuing with validation"
+                fi
+                ;;
+            STOP)
+                log_error "Security audit found fundamental/architectural issues - cannot proceed"
+                log_error "Review security-report.md for details"
+                # Mark as failed to prevent commit/PR
+                loop_result=1
+                ;;
+            *)
+                log_warn "Security audit result unknown ($security_result) - continuing with caution"
+                ;;
+        esac
+    fi
+
     # Stop violation monitor before validation
     stop_violation_monitor "$VIOLATION_MONITOR_PID"
 
