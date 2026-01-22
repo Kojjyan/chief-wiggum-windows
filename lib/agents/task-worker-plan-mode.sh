@@ -483,7 +483,7 @@ EOF
 _task_user_prompt() {
     local iteration="$1"
     local output_dir="$2"
-    local supervisor_dir="$3"
+    local _supervisor_dir="$3"  # unused but part of callback signature
     local supervisor_feedback="$4"
     local prd_relative="../prd.md"
 
