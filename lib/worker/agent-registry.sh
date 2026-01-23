@@ -15,7 +15,7 @@
 #   - agent_on_signal(signal)                  - On INT/TERM before cleanup
 #
 # Two invocation modes:
-#   - run_agent()     - Full lifecycle (PID, signals, violation monitor) for top-level agents
+#   - run_agent()     - Full lifecycle (PID, signals) for top-level agents
 #   - run_sub_agent() - Execution only, for nested agents (no lifecycle management)
 set -euo pipefail
 
@@ -24,6 +24,7 @@ source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/agent-base.sh"
 source "$WIGGUM_HOME/lib/worker/agent-runner.sh"
 source "$WIGGUM_HOME/lib/git/git-operations.sh"
+source "$WIGGUM_HOME/lib/utils/activity-log.sh"
 
 # Track currently loaded agent to prevent re-sourcing
 _LOADED_AGENT=""
@@ -162,6 +163,12 @@ validate_agent_outputs() {
         return 1
     fi
 
+    # Validate result schema
+    if ! validate_result_schema "$result_file"; then
+        log_error "Agent result file fails schema validation: $result_file"
+        return 1
+    fi
+
     log_debug "Agent result file validated: $(basename "$result_file")"
     return 0
 }
@@ -190,9 +197,17 @@ run_agent() {
     local monitor_interval="${4:-30}"
     local max_iterations="${5:-20}"
     local max_turns="${6:-50}"
-    shift 6 2>/dev/null || shift 4 2>/dev/null || shift 3
+    local _extra_args=()
+    if [ $# -gt 6 ]; then
+        _extra_args=("${@:7}")
+    fi
 
     log "Running top-level agent: $agent_type"
+
+    # Emit activity log event
+    local _a_worker_id
+    _a_worker_id=$(basename "$worker_dir" 2>/dev/null || echo "")
+    activity_log "agent.started" "$_a_worker_id" "${WIGGUM_TASK_ID:-}" "agent=$agent_type"
 
     # Store globals for sub-agents to inherit
     _AGENT_REGISTRY_IS_TOP_LEVEL=true
@@ -202,7 +217,7 @@ run_agent() {
     # Export log directory so all Claude primitives know where to write logs
     export WIGGUM_LOG_DIR="$worker_dir/logs"
 
-    # Export agent type for violation monitor
+    # Export agent type for workspace safety hooks
     # Task-worker is exempt from destructive git command restrictions
     export WIGGUM_CURRENT_AGENT_TYPE="$agent_type"
 
@@ -226,7 +241,7 @@ run_agent() {
         fi
     fi
 
-    # Initialize agent lifecycle (PID, signals, violation monitor)
+    # Initialize agent lifecycle (PID, signals)
     if ! agent_runner_init "$worker_dir" "$project_dir" "$monitor_interval"; then
         log_error "Failed to initialize agent lifecycle"
         if type agent_on_error &>/dev/null; then
@@ -262,7 +277,7 @@ run_agent() {
     fi
 
     # Run the agent
-    agent_run "$worker_dir" "$project_dir" "$max_iterations" "$max_turns" "$@"
+    agent_run "$worker_dir" "$project_dir" "$max_iterations" "$max_turns" "${_extra_args[@]}"
     local exit_code=$?
 
     # Validate output files exist and are non-empty
@@ -282,6 +297,7 @@ run_agent() {
         agent_cleanup "$worker_dir" "$exit_code"
     fi
 
+    activity_log "agent.completed" "$_a_worker_id" "${WIGGUM_TASK_ID:-}" "agent=$agent_type" "exit_code=$exit_code"
     log "Agent $agent_type completed with exit code: $exit_code"
     return $exit_code
 }
@@ -319,7 +335,7 @@ _agent_registry_handle_signal() {
 # Sub-agents inherit the lifecycle from their parent:
 # - No PID file (parent owns the PID)
 # - No signal handlers (signals propagate naturally)
-# - No violation monitor (parent's monitor covers the workspace)
+# - Workspace safety enforced by PreToolUse hooks
 #
 # Args:
 #   agent_type  - The agent type to run
@@ -332,14 +348,22 @@ run_sub_agent() {
     local agent_type="$1"
     local worker_dir="${2:-$_AGENT_REGISTRY_WORKER_DIR}"
     local project_dir="${3:-$_AGENT_REGISTRY_PROJECT_DIR}"
-    shift 3 2>/dev/null || shift 1
+    local _extra_args=()
+    if [ $# -gt 3 ]; then
+        _extra_args=("${@:4}")
+    fi
 
     log "Running sub-agent: $agent_type"
+
+    # Emit activity log event
+    local _sa_worker_id
+    _sa_worker_id=$(basename "$worker_dir" 2>/dev/null || echo "")
+    activity_log "agent.started" "$_sa_worker_id" "${WIGGUM_TASK_ID:-}" "agent=$agent_type" "sub_agent=true"
 
     # Save parent agent type to restore after sub-agent completes
     local parent_agent_type="${WIGGUM_CURRENT_AGENT_TYPE:-}"
 
-    # Export agent type for violation monitor to detect destructive git commands
+    # Export agent type for workspace safety hooks to detect destructive git commands
     # Sub-agents are blocked from destructive git operations; task-worker is exempt
     export WIGGUM_CURRENT_AGENT_TYPE="$agent_type"
 
@@ -354,52 +378,15 @@ run_sub_agent() {
     # Ensure log directory is set for Claude primitives
     export WIGGUM_LOG_DIR="$worker_dir/logs"
 
-    # Load agent
-    if ! load_agent "$agent_type"; then
-        return 1
-    fi
-
-    # Load agent configuration
-    load_agent_config "$agent_type"
-
-    # Call on_init hook (lighter-weight for sub-agents)
-    if type agent_on_init &>/dev/null; then
-        log_debug "Calling sub-agent agent_on_init hook"
-        if ! agent_on_init "$worker_dir" "$project_dir"; then
-            log_error "Sub-agent agent_on_init hook failed"
-            if type agent_on_error &>/dev/null; then
-                agent_on_error "$worker_dir" "$EXIT_AGENT_INIT_FAILED" "init"
-            fi
-            return "$EXIT_AGENT_INIT_FAILED"
-        fi
-    fi
-
-    # Validate prerequisites
-    if ! validate_agent_prerequisites "$worker_dir"; then
-        log_error "Agent prerequisites not met"
-        if type agent_on_error &>/dev/null; then
-            agent_on_error "$worker_dir" "$EXIT_AGENT_PREREQ_FAILED" "prereq"
-        fi
-        return "$EXIT_AGENT_PREREQ_FAILED"
-    fi
-
-    # Call on_ready hook before agent_run
-    if type agent_on_ready &>/dev/null; then
-        log_debug "Calling sub-agent agent_on_ready hook"
-        if ! agent_on_ready "$worker_dir" "$project_dir"; then
-            log_error "Sub-agent agent_on_ready hook failed"
-            if type agent_on_error &>/dev/null; then
-                agent_on_error "$worker_dir" "$EXIT_AGENT_READY_FAILED" "ready"
-            fi
-            return "$EXIT_AGENT_READY_FAILED"
-        fi
-    fi
-
-    # For read-only agents, create a git checkpoint before running
+    # For read-only agents (or pipeline-declared readonly), create a git checkpoint
     # This allows us to discard any accidental changes after the agent exits
     local workspace="$worker_dir/workspace"
     local git_checkpoint=""
-    if git_is_readonly_agent "$agent_type" && [ -d "$workspace" ]; then
+    local is_readonly=false
+    if git_is_readonly_agent "$agent_type" || [ "${WIGGUM_STEP_READONLY:-}" = "true" ]; then
+        is_readonly=true
+    fi
+    if [ "$is_readonly" = true ] && [ -d "$workspace" ]; then
         log_debug "Creating git safety checkpoint for read-only agent: $agent_type"
         if git_safety_checkpoint "$workspace"; then
             git_checkpoint="$GIT_SAFETY_CHECKPOINT_SHA"
@@ -408,8 +395,61 @@ run_sub_agent() {
         fi
     fi
 
-    # Run the agent (no lifecycle management)
-    agent_run "$worker_dir" "$project_dir" "$@"
+    # Run agent in subshell to prevent function definitions from clobbering parent namespace
+    (
+        # Load agent
+        if ! load_agent "$agent_type"; then
+            exit 1
+        fi
+
+        # Load agent configuration
+        load_agent_config "$agent_type"
+
+        # Call on_init hook (lighter-weight for sub-agents)
+        if type agent_on_init &>/dev/null; then
+            log_debug "Calling sub-agent agent_on_init hook"
+            if ! agent_on_init "$worker_dir" "$project_dir"; then
+                log_error "Sub-agent agent_on_init hook failed"
+                if type agent_on_error &>/dev/null; then
+                    agent_on_error "$worker_dir" "$EXIT_AGENT_INIT_FAILED" "init"
+                fi
+                exit "$EXIT_AGENT_INIT_FAILED"
+            fi
+        fi
+
+        # Validate prerequisites
+        if ! validate_agent_prerequisites "$worker_dir"; then
+            log_error "Agent prerequisites not met"
+            if type agent_on_error &>/dev/null; then
+                agent_on_error "$worker_dir" "$EXIT_AGENT_PREREQ_FAILED" "prereq"
+            fi
+            exit "$EXIT_AGENT_PREREQ_FAILED"
+        fi
+
+        # Call on_ready hook before agent_run
+        if type agent_on_ready &>/dev/null; then
+            log_debug "Calling sub-agent agent_on_ready hook"
+            if ! agent_on_ready "$worker_dir" "$project_dir"; then
+                log_error "Sub-agent agent_on_ready hook failed"
+                if type agent_on_error &>/dev/null; then
+                    agent_on_error "$worker_dir" "$EXIT_AGENT_READY_FAILED" "ready"
+                fi
+                exit "$EXIT_AGENT_READY_FAILED"
+            fi
+        fi
+
+        # Run the agent (no lifecycle management)
+        agent_run "$worker_dir" "$project_dir" "${_extra_args[@]}"
+        local agent_exit=$?
+
+        # Call agent-specific cleanup if defined
+        if type agent_cleanup &>/dev/null; then
+            log_debug "Running agent cleanup"
+            agent_cleanup "$worker_dir" "$agent_exit"
+        fi
+
+        exit $agent_exit
+    )
     local exit_code=$?
 
     # For read-only agents, restore to checkpoint (discard any changes)
@@ -421,23 +461,15 @@ run_sub_agent() {
     # Validate output files exist and are non-empty
     if ! validate_agent_outputs "$worker_dir"; then
         log_error "Sub-agent output validation failed"
-        if type agent_on_error &>/dev/null; then
-            agent_on_error "$worker_dir" "$EXIT_AGENT_OUTPUT_MISSING" "output"
-        fi
         if [ $exit_code -eq 0 ]; then
             exit_code="$EXIT_AGENT_OUTPUT_MISSING"
         fi
     fi
 
-    # Call agent-specific cleanup if defined
-    if type agent_cleanup &>/dev/null; then
-        log_debug "Running agent cleanup"
-        agent_cleanup "$worker_dir" "$exit_code"
-    fi
-
-    # Restore parent agent type for violation monitor
+    # Restore parent agent type for workspace safety hooks
     export WIGGUM_CURRENT_AGENT_TYPE="$parent_agent_type"
 
+    activity_log "agent.completed" "$_sa_worker_id" "${WIGGUM_TASK_ID:-}" "agent=$agent_type" "sub_agent=true" "exit_code=$exit_code"
     log "Sub-agent $agent_type completed with exit code: $exit_code"
     return $exit_code
 }

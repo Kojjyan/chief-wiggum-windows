@@ -12,6 +12,7 @@ source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/utils/audit-logger.sh"
+source "$WIGGUM_HOME/lib/utils/activity-log.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
 # Default configuration
@@ -129,6 +130,7 @@ spawn_worker() {
     fi
 
     SPAWNED_WORKER_PID=$(cat "$worker_dir/agent.pid")
+    activity_log "worker.spawned" "$SPAWNED_WORKER_ID" "$task_id" "pid=$SPAWNED_WORKER_PID"
 }
 
 # Run periodic sync to update PR statuses and detect new comments
@@ -346,6 +348,9 @@ main() {
         log_error ".ralph/ directory not found. Run 'wiggum init' first."
         exit $EXIT_RUN_NO_RALPH_DIR
     fi
+
+    # Initialize activity log
+    activity_init "$PROJECT_DIR"
 
     # Ensure only one orchestrator runs at a time
     local orchestrator_lock="$RALPH_DIR/.orchestrator.pid"
@@ -583,6 +588,7 @@ main() {
         # Clean up finished workers
         for pid in "${!active_workers[@]}"; do
             if ! kill -0 "$pid" 2>/dev/null; then
+                activity_log "worker.completed" "" "${active_workers[$pid]}" "pid=$pid"
                 log "Worker for ${active_workers[$pid]} finished (PID: $pid)"
                 unset "active_workers[$pid]"
             fi

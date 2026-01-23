@@ -17,20 +17,9 @@ TEST_DIR=""
 setup() {
     TEST_DIR=$(mktemp -d)
     # Reset pipeline state
-    unset _PIPELINE_LOADER_LOADED
-    PIPELINE_STEP_IDS=()
-    PIPELINE_STEP_AGENTS=()
-    PIPELINE_STEP_BLOCKING=()
-    PIPELINE_STEP_READONLY=()
-    PIPELINE_STEP_ENABLED_BY=()
-    PIPELINE_STEP_DEPENDS_ON=()
-    PIPELINE_STEP_COMMIT_AFTER=()
-    PIPELINE_STEP_CONFIG=()
-    PIPELINE_STEP_FIX_AGENT=()
-    PIPELINE_STEP_FIX_MAX_ATTEMPTS=()
-    PIPELINE_STEP_FIX_COMMIT_AFTER=()
-    PIPELINE_STEP_HOOKS_PRE=()
-    PIPELINE_STEP_HOOKS_POST=()
+    _PIPELINE_JSON_FILE=""
+    _PIPELINE_JSON=""
+    _PIPELINE_STEP_COUNT=0
     PIPELINE_NAME=""
 }
 teardown() {
@@ -70,12 +59,12 @@ PIPE
 
     assert_equals "0" "$rc" "pipeline_load should return 0 for valid input"
     assert_equals "test-pipeline" "$PIPELINE_NAME" "Pipeline name should be set"
-    assert_equals "2" "${#PIPELINE_STEP_IDS[@]}" "Should have 2 step IDs"
-    assert_equals "step-one" "${PIPELINE_STEP_IDS[0]}" "First step ID should be step-one"
-    assert_equals "step-two" "${PIPELINE_STEP_IDS[1]}" "Second step ID should be step-two"
-    assert_equals "agent-alpha" "${PIPELINE_STEP_AGENTS[0]}" "First agent should be agent-alpha"
-    assert_equals "agent-beta" "${PIPELINE_STEP_AGENTS[1]}" "Second agent should be agent-beta"
-    assert_equals "step-one" "${PIPELINE_STEP_DEPENDS_ON[1]}" "Second step depends_on should be step-one"
+    assert_equals "2" "$(pipeline_step_count)" "Should have 2 steps"
+    assert_equals "step-one" "$(pipeline_get 0 ".id")" "First step ID should be step-one"
+    assert_equals "step-two" "$(pipeline_get 1 ".id")" "Second step ID should be step-two"
+    assert_equals "agent-alpha" "$(pipeline_get 0 ".agent")" "First agent should be agent-alpha"
+    assert_equals "agent-beta" "$(pipeline_get 1 ".agent")" "Second agent should be agent-beta"
+    assert_equals "step-one" "$(pipeline_get 1 ".depends_on")" "Second step depends_on should be step-one"
 }
 
 # =============================================================================
@@ -212,14 +201,14 @@ PIPE
     local rc=$?
 
     assert_equals "0" "$rc" "pipeline_load should succeed"
-    assert_equals "true" "${PIPELINE_STEP_BLOCKING[0]}" "First step blocking should be true"
-    assert_equals "true" "${PIPELINE_STEP_BLOCKING[1]}" "Second step blocking should default to true"
-    assert_equals "true" "${PIPELINE_STEP_READONLY[0]}" "First step readonly should be true"
-    assert_equals "false" "${PIPELINE_STEP_READONLY[1]}" "Second step readonly should be false"
-    assert_equals "FEATURE_FLAG_X" "${PIPELINE_STEP_ENABLED_BY[0]}" "First step enabled_by should be FEATURE_FLAG_X"
-    assert_equals "" "${PIPELINE_STEP_ENABLED_BY[1]}" "Second step enabled_by should be empty"
-    assert_equals "true" "${PIPELINE_STEP_COMMIT_AFTER[0]}" "First step commit_after should be true"
-    assert_equals "false" "${PIPELINE_STEP_COMMIT_AFTER[1]}" "Second step commit_after should be false"
+    assert_equals "true" "$(pipeline_get 0 ".blocking" "true")" "First step blocking should be true"
+    assert_equals "true" "$(pipeline_get 1 ".blocking" "true")" "Second step blocking should default to true"
+    assert_equals "true" "$(pipeline_get 0 ".readonly" "false")" "First step readonly should be true"
+    assert_equals "false" "$(pipeline_get 1 ".readonly" "false")" "Second step readonly should be false"
+    assert_equals "FEATURE_FLAG_X" "$(pipeline_get 0 ".enabled_by")" "First step enabled_by should be FEATURE_FLAG_X"
+    assert_equals "" "$(pipeline_get 1 ".enabled_by")" "Second step enabled_by should be empty"
+    assert_equals "true" "$(pipeline_get 0 ".commit_after" "false")" "First step commit_after should be true"
+    assert_equals "false" "$(pipeline_get 1 ".commit_after" "false")" "Second step commit_after should be false"
 }
 
 test_load_fix_config() {
@@ -248,12 +237,12 @@ PIPE
     local rc=$?
 
     assert_equals "0" "$rc" "pipeline_load should succeed"
-    assert_equals "security-fix" "${PIPELINE_STEP_FIX_AGENT[0]}" "First step fix agent should be security-fix"
-    assert_equals "5" "${PIPELINE_STEP_FIX_MAX_ATTEMPTS[0]}" "First step fix max_attempts should be 5"
-    assert_equals "true" "${PIPELINE_STEP_FIX_COMMIT_AFTER[0]}" "First step fix commit_after should be true"
-    assert_equals "" "${PIPELINE_STEP_FIX_AGENT[1]}" "Second step fix agent should be empty"
-    assert_equals "2" "${PIPELINE_STEP_FIX_MAX_ATTEMPTS[1]}" "Second step fix max_attempts should default to 2"
-    assert_equals "true" "${PIPELINE_STEP_FIX_COMMIT_AFTER[1]}" "Second step fix commit_after should default to true"
+    assert_equals "security-fix" "$(pipeline_get_fix 0 ".agent")" "First step fix agent should be security-fix"
+    assert_equals "5" "$(pipeline_get_fix 0 ".max_attempts" "2")" "First step fix max_attempts should be 5"
+    assert_equals "true" "$(pipeline_get_fix 0 ".commit_after" "true")" "First step fix commit_after should be true"
+    assert_equals "" "$(pipeline_get_fix 1 ".agent")" "Second step fix agent should be empty"
+    assert_equals "2" "$(pipeline_get_fix 1 ".max_attempts" "2")" "Second step fix max_attempts should default to 2"
+    assert_equals "true" "$(pipeline_get_fix 1 ".commit_after" "true")" "Second step fix commit_after should default to true"
 }
 
 test_load_hooks() {
@@ -281,12 +270,16 @@ PIPE
     local rc=$?
 
     assert_equals "0" "$rc" "pipeline_load should succeed"
-    # The hooks are stored as JSON array strings
-    assert_output_contains "${PIPELINE_STEP_HOOKS_PRE[0]}" "pre-hook-1" "First step pre hooks should contain pre-hook-1"
-    assert_output_contains "${PIPELINE_STEP_HOOKS_PRE[0]}" "pre-hook-2" "First step pre hooks should contain pre-hook-2"
-    assert_output_contains "${PIPELINE_STEP_HOOKS_POST[0]}" "post-hook-1" "First step post hooks should contain post-hook-1"
-    assert_equals "[]" "${PIPELINE_STEP_HOOKS_PRE[1]}" "Second step pre hooks should be empty array"
-    assert_equals "[]" "${PIPELINE_STEP_HOOKS_POST[1]}" "Second step post hooks should be empty array"
+    # The hooks are queried as JSON arrays
+    local pre_hooks
+    pre_hooks=$(pipeline_get_json 0 ".hooks.pre" "[]")
+    assert_output_contains "$pre_hooks" "pre-hook-1" "First step pre hooks should contain pre-hook-1"
+    assert_output_contains "$pre_hooks" "pre-hook-2" "First step pre hooks should contain pre-hook-2"
+    local post_hooks
+    post_hooks=$(pipeline_get_json 0 ".hooks.post" "[]")
+    assert_output_contains "$post_hooks" "post-hook-1" "First step post hooks should contain post-hook-1"
+    assert_equals "[]" "$(pipeline_get_json 1 ".hooks.pre" "[]")" "Second step pre hooks should be empty array"
+    assert_equals "[]" "$(pipeline_get_json 1 ".hooks.post" "[]")" "Second step post hooks should be empty array"
 }
 
 # =============================================================================
@@ -296,20 +289,19 @@ PIPE
 test_builtin_defaults_populates_seven_steps() {
     pipeline_load_builtin_defaults
 
-    local count=${#PIPELINE_STEP_IDS[@]}
-    assert_equals "7" "$count" "Built-in defaults should have 7 steps"
+    assert_equals "7" "$(pipeline_step_count)" "Built-in defaults should have 7 steps"
 }
 
 test_builtin_defaults_correct_step_ids() {
     pipeline_load_builtin_defaults
 
-    assert_equals "planning" "${PIPELINE_STEP_IDS[0]}" "Step 0 ID should be planning"
-    assert_equals "execution" "${PIPELINE_STEP_IDS[1]}" "Step 1 ID should be execution"
-    assert_equals "summary" "${PIPELINE_STEP_IDS[2]}" "Step 2 ID should be summary"
-    assert_equals "audit" "${PIPELINE_STEP_IDS[3]}" "Step 3 ID should be audit"
-    assert_equals "test" "${PIPELINE_STEP_IDS[4]}" "Step 4 ID should be test"
-    assert_equals "docs" "${PIPELINE_STEP_IDS[5]}" "Step 5 ID should be docs"
-    assert_equals "validation" "${PIPELINE_STEP_IDS[6]}" "Step 6 ID should be validation"
+    assert_equals "planning" "$(pipeline_get 0 ".id")" "Step 0 ID should be planning"
+    assert_equals "execution" "$(pipeline_get 1 ".id")" "Step 1 ID should be execution"
+    assert_equals "summary" "$(pipeline_get 2 ".id")" "Step 2 ID should be summary"
+    assert_equals "audit" "$(pipeline_get 3 ".id")" "Step 3 ID should be audit"
+    assert_equals "test" "$(pipeline_get 4 ".id")" "Step 4 ID should be test"
+    assert_equals "docs" "$(pipeline_get 5 ".id")" "Step 5 ID should be docs"
+    assert_equals "validation" "$(pipeline_get 6 ".id")" "Step 6 ID should be validation"
     assert_equals "builtin-default" "$PIPELINE_NAME" "Pipeline name should be builtin-default"
 }
 
@@ -408,7 +400,10 @@ test_resolve_returns_empty_for_builtin_fallback() {
 
 test_find_step_index_returns_correct_index() {
     # Load a known pipeline first
-    PIPELINE_STEP_IDS=(alpha beta gamma delta)
+    cat > "$TEST_DIR/idx.json" << 'PIPE'
+{"name":"idx","steps":[{"id":"alpha","agent":"a"},{"id":"beta","agent":"b"},{"id":"gamma","agent":"c"},{"id":"delta","agent":"d"}]}
+PIPE
+    pipeline_load "$TEST_DIR/idx.json"
 
     local idx
     idx=$(pipeline_find_step_index "gamma")
@@ -417,7 +412,10 @@ test_find_step_index_returns_correct_index() {
 }
 
 test_find_step_index_returns_negative_one_for_unknown() {
-    PIPELINE_STEP_IDS=(alpha beta gamma)
+    cat > "$TEST_DIR/idx2.json" << 'PIPE'
+{"name":"idx2","steps":[{"id":"alpha","agent":"a"},{"id":"beta","agent":"b"},{"id":"gamma","agent":"c"}]}
+PIPE
+    pipeline_load "$TEST_DIR/idx2.json"
 
     local idx
     idx=$(pipeline_find_step_index "nonexistent")
@@ -430,12 +428,42 @@ test_find_step_index_returns_negative_one_for_unknown() {
 # =============================================================================
 
 test_step_count_returns_correct_count() {
-    PIPELINE_STEP_IDS=(one two three four five)
+    cat > "$TEST_DIR/count.json" << 'PIPE'
+{"name":"cnt","steps":[{"id":"one","agent":"a"},{"id":"two","agent":"b"},{"id":"three","agent":"c"},{"id":"four","agent":"d"},{"id":"five","agent":"e"}]}
+PIPE
+    pipeline_load "$TEST_DIR/count.json"
 
     local count
     count=$(pipeline_step_count)
 
     assert_equals "5" "$count" "Step count should be 5"
+}
+
+# =============================================================================
+# pipeline_get / pipeline_get_json / pipeline_get_fix Tests
+# =============================================================================
+
+test_pipeline_get_returns_default_for_missing_field() {
+    cat > "$TEST_DIR/get.json" << 'PIPE'
+{"name":"get","steps":[{"id":"s1","agent":"a1"}]}
+PIPE
+    pipeline_load "$TEST_DIR/get.json"
+
+    assert_equals "mydefault" "$(pipeline_get 0 ".nonexistent" "mydefault")" \
+        "pipeline_get should return default for missing field"
+}
+
+test_pipeline_get_json_returns_config_object() {
+    cat > "$TEST_DIR/getjson.json" << 'PIPE'
+{"name":"getjson","steps":[{"id":"s1","agent":"a1","config":{"max_turns":99}}]}
+PIPE
+    pipeline_load "$TEST_DIR/getjson.json"
+
+    local config
+    config=$(pipeline_get_json 0 ".config")
+
+    assert_output_contains "$config" "max_turns" "Config should contain max_turns"
+    assert_output_contains "$config" "99" "Config should contain value 99"
 }
 
 # =============================================================================
@@ -475,6 +503,10 @@ run_test test_find_step_index_returns_negative_one_for_unknown
 
 # pipeline_step_count
 run_test test_step_count_returns_correct_count
+
+# pipeline_get
+run_test test_pipeline_get_returns_default_for_missing_field
+run_test test_pipeline_get_json_returns_config_object
 
 print_test_summary
 exit_with_test_result

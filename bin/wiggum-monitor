@@ -53,6 +53,7 @@ Modes:
   tui                 Interactive TUI dashboard (default if available)
   combined            Show all workers in one stream
   split               Show each worker separately
+  activity            Tail the JSONL activity log with jq formatting
   status              Continuous status updates
 
 Options:
@@ -141,6 +142,18 @@ case "$mode" in
             done
             sleep 2
         done
+        ;;
+
+    activity)
+        echo "=== Activity Log ==="
+        echo "Press Ctrl+C to stop"
+        echo
+        local activity_file="$RALPH_DIR/logs/activity.jsonl"
+        if [ ! -f "$activity_file" ]; then
+            echo "No activity log found yet. Run 'wiggum run' to generate events."
+            exit 0
+        fi
+        tail -f "$activity_file" | jq '.'
         ;;
 
     status)

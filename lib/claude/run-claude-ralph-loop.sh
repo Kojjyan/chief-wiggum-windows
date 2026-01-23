@@ -13,6 +13,7 @@ set -euo pipefail
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/core/checkpoint.sh"
+source "$WIGGUM_HOME/lib/utils/work-log.sh"
 
 # Extract clean text from Claude CLI stream-JSON output
 # Filters out JSON and returns only assistant text responses
@@ -93,6 +94,9 @@ run_ralph_loop() {
     # Create logs and summaries subdirectories
     mkdir -p "$output_dir/logs"
     mkdir -p "$output_dir/summaries"
+
+    # Initialize work log
+    work_log_init "$output_dir"
 
     # Track the last session ID for potential final summary
     while [ $iteration -lt "$max_iterations" ]; do
@@ -239,6 +243,9 @@ Please provide your summary based on the conversation so far, following this str
 
         # Save plain text summary
         echo "$summary" > "$summary_txt"
+
+        # Write structured work log entry
+        work_log_write_iteration "$output_dir" "$iteration" "$session_id" "$exit_code" "$summary" "$log_file"
 
         log "Summary generated for iteration $iteration"
 

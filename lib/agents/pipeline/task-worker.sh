@@ -37,7 +37,6 @@ agent_output_files() {
 
 # Source dependencies using base library helpers
 agent_source_core
-agent_source_violations
 agent_source_tasks
 agent_source_git
 agent_source_lock
@@ -67,7 +66,12 @@ _phase_end() {
 _build_phase_timings_json() {
     local json="{"
     local first=true
-    for phase in "${PIPELINE_STEP_IDS[@]}" "finalization"; do
+    local count
+    count=$(pipeline_step_count)
+    local p=0
+    while [ "$p" -lt "$count" ]; do
+        local phase
+        phase=$(pipeline_get "$p" ".id")
         local start="${PHASE_TIMINGS[${phase}_start]:-0}"
         local end="${PHASE_TIMINGS[${phase}_end]:-0}"
         if [ "$start" -gt 0 ]; then
@@ -76,7 +80,16 @@ _build_phase_timings_json() {
             json+="\"$phase\":{\"start\":$start,\"end\":$end,\"duration_s\":$duration}"
             first=false
         fi
+        ((p++))
     done
+    # Also include finalization phase
+    local start="${PHASE_TIMINGS[finalization_start]:-0}"
+    local end="${PHASE_TIMINGS[finalization_end]:-0}"
+    if [ "$start" -gt 0 ]; then
+        local duration=$((end - start))
+        [ "$first" = true ] || json+=","
+        json+="\"finalization\":{\"start\":$start,\"end\":$end,\"duration_s\":$duration}"
+    fi
     json+="}"
     echo "$json"
 }
@@ -173,11 +186,6 @@ agent_run() {
         return 1
     fi
     local workspace="$WORKTREE_PATH"
-
-    # Start violation monitoring (log-based, 100ms interval)
-    # Pass: workspace, worker_dir, agent_pid ($$), project_dir
-    start_violation_monitor "$workspace" "$worker_dir" "$$" "$project_dir"
-    trap '_task_worker_stop_monitor' EXIT
 
     # Change to workspace
     cd "$workspace" || {
@@ -329,11 +337,6 @@ agent_run() {
 
     log "Task worker finished: $worker_id"
     return $loop_result
-}
-
-# Internal cleanup function for violation monitor
-_task_worker_stop_monitor() {
-    stop_violation_monitor "$VIOLATION_MONITOR_PID" 2>/dev/null || true
 }
 
 # Determine final task status

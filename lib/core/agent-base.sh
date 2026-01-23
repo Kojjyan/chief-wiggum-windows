@@ -114,11 +114,6 @@ agent_source_metrics() {
     source "$WIGGUM_HOME/lib/utils/metrics-export.sh"
 }
 
-# Source violation monitoring
-agent_source_violations() {
-    source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
-}
-
 # Source agent registry (for sub-agent spawning)
 agent_source_registry() {
     source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
@@ -344,6 +339,71 @@ agent_log_complete() {
 #   "errors": [],
 #   "metadata": {}
 # }
+
+# Validate agent result file against expected schema
+#
+# Checks:
+#   - agent_type is non-empty string
+#   - status is one of: success, failure, partial, unknown
+#   - exit_code is integer
+#   - outputs.gate_result (if present) is one of: PASS, FAIL, FIX, STOP
+#
+# Args:
+#   result_file - Path to the result JSON file
+#
+# Returns: 0 if valid, 1 if invalid (logs specific errors)
+validate_result_schema() {
+    local result_file="$1"
+
+    if [ ! -f "$result_file" ]; then
+        log_error "Result schema validation: file not found: $result_file"
+        return 1
+    fi
+
+    local errors=0
+
+    # Check agent_type is non-empty
+    local agent_type
+    agent_type=$(jq -r '.agent_type // ""' "$result_file" 2>/dev/null)
+    if [ -z "$agent_type" ] || [ "$agent_type" = "null" ]; then
+        log_error "Result schema: 'agent_type' is missing or empty in $(basename "$result_file")"
+        errors=1
+    fi
+
+    # Check status is valid enum
+    local status
+    status=$(jq -r '.status // ""' "$result_file" 2>/dev/null)
+    case "$status" in
+        success|failure|partial|unknown) ;;
+        *)
+            log_error "Result schema: 'status' is invalid ('$status') in $(basename "$result_file") - expected success|failure|partial|unknown"
+            errors=1
+            ;;
+    esac
+
+    # Check exit_code is integer
+    local exit_code
+    exit_code=$(jq -r '.exit_code // ""' "$result_file" 2>/dev/null)
+    if ! [[ "$exit_code" =~ ^[0-9]+$ ]]; then
+        log_error "Result schema: 'exit_code' is not an integer ('$exit_code') in $(basename "$result_file")"
+        errors=1
+    fi
+
+    # Check outputs.gate_result if present
+    local gate_result
+    gate_result=$(jq -r '.outputs.gate_result // empty' "$result_file" 2>/dev/null)
+    if [ -n "$gate_result" ]; then
+        case "$gate_result" in
+            PASS|FAIL|FIX|STOP) ;;
+            *)
+                log_error "Result schema: 'outputs.gate_result' is invalid ('$gate_result') in $(basename "$result_file") - expected PASS|FAIL|FIX|STOP"
+                errors=1
+                ;;
+        esac
+    fi
+
+    return $errors
+}
 
 # Get the epoch-named result file path for the current agent
 #

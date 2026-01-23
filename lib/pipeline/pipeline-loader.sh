@@ -1,52 +1,118 @@
 #!/usr/bin/env bash
 # =============================================================================
-# pipeline-loader.sh - Load pipeline JSON into parallel bash arrays
+# pipeline-loader.sh - Load and query pipeline JSON on-demand via jq
 #
 # Provides:
-#   pipeline_load(file)              - Parse JSON, populate arrays, validate IDs
+#   pipeline_load(file)              - Validate JSON, set source, count steps
+#   pipeline_load_builtin_defaults() - Store inline JSON for builtin pipeline
 #   pipeline_resolve(project_dir, task_id, cli_pipeline_name) - Resolve config path
-#   pipeline_find_step_index(step_id) - Return array index for a step ID
+#   pipeline_find_step_index(step_id) - Return index for a step ID
 #   pipeline_step_count()            - Return number of steps
-#
-# After pipeline_load(), the following arrays are populated:
-#   PIPELINE_STEP_IDS[i]
-#   PIPELINE_STEP_AGENTS[i]
-#   PIPELINE_STEP_BLOCKING[i]
-#   PIPELINE_STEP_READONLY[i]
-#   PIPELINE_STEP_ENABLED_BY[i]
-#   PIPELINE_STEP_DEPENDS_ON[i]
-#   PIPELINE_STEP_COMMIT_AFTER[i]
-#   PIPELINE_STEP_CONFIG[i]        (JSON string)
-#   PIPELINE_STEP_FIX_AGENT[i]
-#   PIPELINE_STEP_FIX_MAX_ATTEMPTS[i]
-#   PIPELINE_STEP_FIX_COMMIT_AFTER[i]
-#   PIPELINE_STEP_HOOKS_PRE[i]     (JSON array string)
-#   PIPELINE_STEP_HOOKS_POST[i]    (JSON array string)
+#   pipeline_get(idx, field, default) - Get scalar field from step
+#   pipeline_get_json(idx, field, default) - Get compact JSON from step
+#   pipeline_get_fix(idx, field, default) - Get .fix sub-field
 # =============================================================================
 
 # Prevent double-sourcing
 [ -n "${_PIPELINE_LOADER_LOADED:-}" ] && return 0
 _PIPELINE_LOADER_LOADED=1
 
-# Pipeline arrays (global)
-declare -a PIPELINE_STEP_IDS=()
-declare -a PIPELINE_STEP_AGENTS=()
-declare -a PIPELINE_STEP_BLOCKING=()
-declare -a PIPELINE_STEP_READONLY=()
-declare -a PIPELINE_STEP_ENABLED_BY=()
-declare -a PIPELINE_STEP_DEPENDS_ON=()
-declare -a PIPELINE_STEP_COMMIT_AFTER=()
-declare -a PIPELINE_STEP_CONFIG=()
-declare -a PIPELINE_STEP_FIX_AGENT=()
-declare -a PIPELINE_STEP_FIX_MAX_ATTEMPTS=()
-declare -a PIPELINE_STEP_FIX_COMMIT_AFTER=()
-declare -a PIPELINE_STEP_HOOKS_PRE=()
-declare -a PIPELINE_STEP_HOOKS_POST=()
+# Pipeline state
+_PIPELINE_JSON_FILE=""   # Path to loaded JSON file (empty if using inline)
+_PIPELINE_JSON=""        # Inline JSON string (for builtin defaults)
+_PIPELINE_STEP_COUNT=0
 
 # Pipeline metadata
 PIPELINE_NAME=""
 
-# Load pipeline configuration from a JSON file into parallel arrays
+# Internal: run jq against the pipeline source (file or inline string)
+_pipeline_jq() {
+    local filter="$1"
+    shift
+
+    if [ -n "$_PIPELINE_JSON_FILE" ]; then
+        jq "$@" "$filter" "$_PIPELINE_JSON_FILE"
+    else
+        echo "$_PIPELINE_JSON" | jq "$@" "$filter"
+    fi
+}
+
+# Get a scalar field from a pipeline step
+#
+# Args:
+#   idx     - Step index (0-based)
+#   field   - jq field path (e.g., ".agent", ".blocking", ".enabled_by")
+#   default - Default value if field is null/missing (default: "")
+#
+# Returns: Field value via stdout
+pipeline_get() {
+    local idx="$1"
+    local field="$2"
+    local default="${3:-}"
+
+    local result
+    result=$(_pipeline_jq ".steps[$idx]${field} // null" -r)
+
+    if [ "$result" = "null" ] || [ -z "$result" ]; then
+        echo "$default"
+    else
+        echo "$result"
+    fi
+}
+
+# Get compact JSON from a pipeline step field
+#
+# Useful for hooks arrays, config objects, etc.
+#
+# Args:
+#   idx     - Step index (0-based)
+#   field   - jq field path (e.g., ".hooks.pre", ".config")
+#   default - Default JSON value if null (default: "{}")
+#
+# Returns: Compact JSON string via stdout
+pipeline_get_json() {
+    local idx="$1"
+    local field="$2"
+    local default="${3-}"
+    if [ -z "$default" ]; then default="{}"; fi
+
+    local result
+    result=$(_pipeline_jq ".steps[$idx]${field} // null" -c)
+
+    if [ "$result" = "null" ]; then
+        echo "$default"
+    else
+        echo "$result"
+    fi
+}
+
+# Get a .fix sub-field from a pipeline step
+#
+# Args:
+#   idx     - Step index (0-based)
+#   field   - Field name under .fix (e.g., ".agent", ".max_attempts")
+#   default - Default value if null/missing
+#
+# Returns: Field value via stdout
+pipeline_get_fix() {
+    local idx="$1"
+    local field="$2"
+    local default="${3:-}"
+
+    local result
+    result=$(_pipeline_jq ".steps[$idx].fix${field} // null" -r)
+
+    if [ "$result" = "null" ] || [ -z "$result" ]; then
+        echo "$default"
+    else
+        echo "$result"
+    fi
+}
+
+# Load pipeline configuration from a JSON file
+#
+# Validates JSON structure, checks for unique IDs, valid agents, and
+# valid depends_on references.
 #
 # Args:
 #   file - Path to pipeline JSON file
@@ -78,73 +144,46 @@ pipeline_load() {
         return 1
     fi
 
-    # Clear arrays
-    PIPELINE_STEP_IDS=()
-    PIPELINE_STEP_AGENTS=()
-    PIPELINE_STEP_BLOCKING=()
-    PIPELINE_STEP_READONLY=()
-    PIPELINE_STEP_ENABLED_BY=()
-    PIPELINE_STEP_DEPENDS_ON=()
-    PIPELINE_STEP_COMMIT_AFTER=()
-    PIPELINE_STEP_CONFIG=()
-    PIPELINE_STEP_FIX_AGENT=()
-    PIPELINE_STEP_FIX_MAX_ATTEMPTS=()
-    PIPELINE_STEP_FIX_COMMIT_AFTER=()
-    PIPELINE_STEP_HOOKS_PRE=()
-    PIPELINE_STEP_HOOKS_POST=()
-
-    # Parse each step
-    local i=0
-    while [ "$i" -lt "$step_count" ]; do
-        local step_json
-        step_json=$(jq ".steps[$i]" "$file")
-
-        PIPELINE_STEP_IDS+=("$(echo "$step_json" | jq -r '.id')")
-        PIPELINE_STEP_AGENTS+=("$(echo "$step_json" | jq -r '.agent')")
-        PIPELINE_STEP_BLOCKING+=("$(echo "$step_json" | jq -r '.blocking // true')")
-        PIPELINE_STEP_READONLY+=("$(echo "$step_json" | jq -r '.readonly // false')")
-        PIPELINE_STEP_ENABLED_BY+=("$(echo "$step_json" | jq -r '.enabled_by // ""')")
-        PIPELINE_STEP_DEPENDS_ON+=("$(echo "$step_json" | jq -r '.depends_on // ""')")
-        PIPELINE_STEP_COMMIT_AFTER+=("$(echo "$step_json" | jq -r '.commit_after // false')")
-        PIPELINE_STEP_CONFIG+=("$(echo "$step_json" | jq -c '.config // {}')")
-        PIPELINE_STEP_FIX_AGENT+=("$(echo "$step_json" | jq -r '.fix.agent // ""')")
-        PIPELINE_STEP_FIX_MAX_ATTEMPTS+=("$(echo "$step_json" | jq -r '.fix.max_attempts // 2')")
-        PIPELINE_STEP_FIX_COMMIT_AFTER+=("$(echo "$step_json" | jq -r '.fix.commit_after // true')")
-        PIPELINE_STEP_HOOKS_PRE+=("$(echo "$step_json" | jq -c '.hooks.pre // []')")
-        PIPELINE_STEP_HOOKS_POST+=("$(echo "$step_json" | jq -c '.hooks.post // []')")
-
-        ((i++))
-    done
-
     # Validate unique IDs
-    local -A seen_ids
-    for id in "${PIPELINE_STEP_IDS[@]}"; do
-        if [ -z "$id" ] || [ "$id" = "null" ]; then
-            log_error "Pipeline step missing required 'id' field"
-            return 1
-        fi
-        if [ -n "${seen_ids[$id]:-}" ]; then
-            log_error "Duplicate pipeline step ID: $id"
-            return 1
-        fi
-        seen_ids["$id"]=1
-    done
+    local dup_check
+    dup_check=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' "$file")
+    if [ -n "$dup_check" ]; then
+        log_error "Duplicate pipeline step ID: $dup_check"
+        return 1
+    fi
 
-    # Validate agents are non-empty
-    for agent in "${PIPELINE_STEP_AGENTS[@]}"; do
-        if [ -z "$agent" ] || [ "$agent" = "null" ]; then
-            log_error "Pipeline step missing required 'agent' field"
-            return 1
-        fi
-    done
+    # Validate all steps have id and agent
+    local missing_id
+    missing_id=$(jq -r '.steps | to_entries[] | select(.value.id == null or .value.id == "") | .key' "$file" | head -1)
+    if [ -n "$missing_id" ]; then
+        log_error "Pipeline step missing required 'id' field (index $missing_id)"
+        return 1
+    fi
+
+    local missing_agent
+    missing_agent=$(jq -r '.steps | to_entries[] | select(.value.agent == null or .value.agent == "") | .key' "$file" | head -1)
+    if [ -n "$missing_agent" ]; then
+        log_error "Pipeline step missing required 'agent' field (index $missing_agent)"
+        return 1
+    fi
 
     # Validate depends_on references exist
-    for dep in "${PIPELINE_STEP_DEPENDS_ON[@]}"; do
-        if [ -n "$dep" ] && [ -z "${seen_ids[$dep]:-}" ]; then
-            log_error "Pipeline step depends_on references unknown step: $dep"
-            return 1
-        fi
-    done
+    local bad_dep
+    bad_dep=$(jq -r '
+        [.steps[].id] as $ids |
+        .steps[] | select(.depends_on != null and .depends_on != "") |
+        select([.depends_on] | inside($ids) | not) |
+        .depends_on
+    ' "$file" | head -1)
+    if [ -n "$bad_dep" ]; then
+        log_error "Pipeline step depends_on references unknown step: $bad_dep"
+        return 1
+    fi
+
+    # Store source
+    _PIPELINE_JSON_FILE="$file"
+    _PIPELINE_JSON=""
+    _PIPELINE_STEP_COUNT="$step_count"
 
     log "Loaded pipeline '$PIPELINE_NAME' with $step_count steps"
     return 0
@@ -155,21 +194,22 @@ pipeline_load() {
 pipeline_load_builtin_defaults() {
     PIPELINE_NAME="builtin-default"
 
-    PIPELINE_STEP_IDS=(planning execution summary audit test docs validation)
-    PIPELINE_STEP_AGENTS=(plan-mode task-executor task-summarizer security-audit test-coverage documentation-writer validation-review)
-    PIPELINE_STEP_BLOCKING=(false true false true true false true)
-    PIPELINE_STEP_READONLY=(true false true true false false true)
-    PIPELINE_STEP_ENABLED_BY=(WIGGUM_PLAN_MODE "" "" "" "" "" "")
-    PIPELINE_STEP_DEPENDS_ON=("" "" execution "" "" "" "")
-    PIPELINE_STEP_COMMIT_AFTER=(false false false false true true false)
-    PIPELINE_STEP_CONFIG=('{}' '{"max_iterations":20,"max_turns":50,"supervisor_interval":2}' '{}' '{}' '{}' '{}' '{}')
-    PIPELINE_STEP_FIX_AGENT=("" "" "" security-fix "" "" "")
-    PIPELINE_STEP_FIX_MAX_ATTEMPTS=(2 2 2 2 2 2 2)
-    PIPELINE_STEP_FIX_COMMIT_AFTER=(true true true true true true true)
-    PIPELINE_STEP_HOOKS_PRE=('[]' '[]' '[]' '[]' '[]' '[]' '["stop_violation_monitor \"$VIOLATION_MONITOR_PID\""]')
-    PIPELINE_STEP_HOOKS_POST=('[]' '[]' '[]' '[]' '[]' '[]' '[]')
+    _PIPELINE_JSON_FILE=""
+    _PIPELINE_JSON='{
+  "name": "builtin-default",
+  "steps": [
+    {"id":"planning","agent":"plan-mode","blocking":false,"readonly":true,"enabled_by":"WIGGUM_PLAN_MODE"},
+    {"id":"execution","agent":"task-executor","blocking":true,"config":{"max_iterations":20,"max_turns":50,"supervisor_interval":2}},
+    {"id":"summary","agent":"task-summarizer","blocking":false,"readonly":true,"depends_on":"execution"},
+    {"id":"audit","agent":"security-audit","blocking":true,"readonly":true,"fix":{"agent":"security-fix","max_attempts":2,"commit_after":true}},
+    {"id":"test","agent":"test-coverage","blocking":true,"commit_after":true},
+    {"id":"docs","agent":"documentation-writer","blocking":false,"commit_after":true},
+    {"id":"validation","agent":"validation-review","blocking":true,"readonly":true}
+  ]
+}'
+    _PIPELINE_STEP_COUNT=7
 
-    log "Loaded built-in default pipeline with ${#PIPELINE_STEP_IDS[@]} steps"
+    log "Loaded built-in default pipeline with $_PIPELINE_STEP_COUNT steps"
 }
 
 # Resolve the pipeline config file path using priority order:
@@ -225,23 +265,22 @@ pipeline_resolve() {
     return 0
 }
 
-# Find the array index for a given step ID
+# Find the index for a given step ID
 #
 # Args:
 #   step_id - The step ID to find
 #
-# Returns: Array index (0-based) via stdout, or -1 if not found
+# Returns: Index (0-based) via stdout, or -1 if not found
 pipeline_find_step_index() {
     local step_id="$1"
-    local i=0
 
-    for id in "${PIPELINE_STEP_IDS[@]}"; do
-        if [ "$id" = "$step_id" ]; then
-            echo "$i"
-            return 0
-        fi
-        ((i++))
-    done
+    local result
+    result=$(_pipeline_jq '.steps | to_entries[] | select(.value.id == "'"$step_id"'") | .key' -r | head -1)
+
+    if [ -n "$result" ]; then
+        echo "$result"
+        return 0
+    fi
 
     echo "-1"
     return 1
@@ -249,5 +288,5 @@ pipeline_find_step_index() {
 
 # Get the number of steps in the loaded pipeline
 pipeline_step_count() {
-    echo "${#PIPELINE_STEP_IDS[@]}"
+    echo "$_PIPELINE_STEP_COUNT"
 }

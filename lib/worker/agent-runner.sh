@@ -3,8 +3,8 @@
 #
 # Provides common functionality for all agent types:
 # - PID recording in agent.pid
-# - Workspace violation detection
 # - Signal handling for graceful shutdown
+# - Workspace violation flag detection
 # - Logging setup
 #
 # Usage:
@@ -16,7 +16,6 @@ set -euo pipefail
 
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
-source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
 
 # Global state for agent runner
 _AGENT_RUNNER_DIR=""
@@ -156,18 +155,15 @@ agent_runner_detect_violations() {
 #
 # Returns: 0 if violation detected, 1 otherwise
 agent_runner_has_violation_flag() {
-    has_violation "$_AGENT_RUNNER_DIR"
+    [[ -f "$_AGENT_RUNNER_DIR/violation_flag.txt" ]]
 }
 
 # Cleanup agent runner
 #
-# Stops violation monitor and removes PID file.
+# Removes PID file and clears state.
 # Should be called when agent completes or on exit.
 agent_runner_cleanup() {
     log_debug "Agent runner cleanup"
-
-    # Stop violation monitor
-    stop_violation_monitor
 
     # Remove PID file
     if [ -n "$_AGENT_RUNNER_DIR" ] && [ -f "$_AGENT_RUNNER_DIR/agent.pid" ]; then

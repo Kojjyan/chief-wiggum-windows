@@ -44,10 +44,7 @@
       "id": "validation",
       "agent": "validation-review",
       "blocking": true,
-      "readonly": true,
-      "hooks": {
-        "pre": ["stop_violation_monitor \"$VIOLATION_MONITOR_PID\""]
-      }
+      "readonly": true
     }
   ]
 }

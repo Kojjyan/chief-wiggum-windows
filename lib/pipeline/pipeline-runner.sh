@@ -16,6 +16,8 @@
 [ -n "${_PIPELINE_RUNNER_LOADED:-}" ] && return 0
 _PIPELINE_RUNNER_LOADED=1
 
+source "$WIGGUM_HOME/lib/utils/activity-log.sh"
+
 # Run all pipeline steps from start_from_step onward
 #
 # Args:
@@ -48,10 +50,12 @@ pipeline_run_all() {
 
     local i="$start_idx"
     while [ "$i" -lt "$step_count" ]; do
-        local step_id="${PIPELINE_STEP_IDS[$i]}"
+        local step_id
+        step_id=$(pipeline_get "$i" ".id")
 
         # Check enabled_by condition
-        local enabled_by="${PIPELINE_STEP_ENABLED_BY[$i]}"
+        local enabled_by
+        enabled_by=$(pipeline_get "$i" ".enabled_by")
         if [ -n "$enabled_by" ]; then
             local env_val="${!enabled_by:-}"
             if [ "$env_val" != "true" ]; then
@@ -62,7 +66,8 @@ pipeline_run_all() {
         fi
 
         # Check depends_on condition
-        local depends_on="${PIPELINE_STEP_DEPENDS_ON[$i]}"
+        local depends_on
+        depends_on=$(pipeline_get "$i" ".depends_on")
         if [ -n "$depends_on" ]; then
             local dep_result
             dep_result=$(agent_read_step_result "$worker_dir" "$depends_on")
@@ -81,7 +86,8 @@ pipeline_run_all() {
 
         # Run the step
         if ! _pipeline_run_step "$i" "$worker_dir" "$project_dir" "$workspace"; then
-            local blocking="${PIPELINE_STEP_BLOCKING[$i]}"
+            local blocking
+            blocking=$(pipeline_get "$i" ".blocking" "true")
             if [ "$blocking" = "true" ]; then
                 log_error "Blocking step '$step_id' failed - halting pipeline"
                 return 1
@@ -109,13 +115,19 @@ _pipeline_run_step() {
     local project_dir="$3"
     local workspace="$4"
 
-    local step_id="${PIPELINE_STEP_IDS[$idx]}"
-    local step_agent="${PIPELINE_STEP_AGENTS[$idx]}"
-    local blocking="${PIPELINE_STEP_BLOCKING[$idx]}"
-    local readonly="${PIPELINE_STEP_READONLY[$idx]}"
-    local commit_after="${PIPELINE_STEP_COMMIT_AFTER[$idx]}"
+    local step_id step_agent blocking readonly commit_after
+    step_id=$(pipeline_get "$idx" ".id")
+    step_agent=$(pipeline_get "$idx" ".agent")
+    blocking=$(pipeline_get "$idx" ".blocking" "true")
+    readonly=$(pipeline_get "$idx" ".readonly" "false")
+    commit_after=$(pipeline_get "$idx" ".commit_after" "false")
 
     log "Running pipeline step: $step_id (agent=$step_agent, blocking=$blocking, readonly=$readonly)"
+
+    # Emit activity log event
+    local _worker_id
+    _worker_id=$(basename "$worker_dir" 2>/dev/null || echo "")
+    activity_log "step.started" "$_worker_id" "${WIGGUM_TASK_ID:-}" "step_id=$step_id" "agent=$step_agent"
 
     # Track phase timing
     _phase_start "$step_id"
@@ -134,19 +146,14 @@ _pipeline_run_step() {
     # Run pre-hooks
     _run_step_hooks "pre" "$idx" "$worker_dir" "$project_dir" "$workspace"
 
-    # Readonly stash
-    if [ "$readonly" = "true" ]; then
-        _readonly_stash "$workspace" "$step_id"
-    fi
+    # Export readonly flag for agent-registry's git checkpoint logic
+    export WIGGUM_STEP_READONLY="$readonly"
 
     # Run the agent
     run_sub_agent "$step_agent" "$worker_dir" "$project_dir"
     local agent_exit=$?
 
-    # Readonly pop
-    if [ "$readonly" = "true" ]; then
-        _readonly_pop "$workspace" "$step_id"
-    fi
+    unset WIGGUM_STEP_READONLY
 
     # Read the step result
     local gate_result
@@ -158,7 +165,8 @@ _pipeline_run_step() {
 
     # Handle FIX result
     if [ "$gate_result" = "FIX" ]; then
-        local fix_agent="${PIPELINE_STEP_FIX_AGENT[$idx]}"
+        local fix_agent
+        fix_agent=$(pipeline_get_fix "$idx" ".agent")
         if [ -n "$fix_agent" ]; then
             if _handle_fix_retry "$idx" "$worker_dir" "$project_dir" "$workspace"; then
                 gate_result="PASS"
@@ -196,6 +204,7 @@ _pipeline_run_step() {
     fi
 
     _phase_end "$step_id"
+    activity_log "step.completed" "$_worker_id" "${WIGGUM_TASK_ID:-}" "step_id=$step_id" "agent=$step_agent" "result=${gate_result:-UNKNOWN}"
     unset WIGGUM_STEP_ID
     return 0
 }
@@ -215,12 +224,13 @@ _handle_fix_retry() {
     local project_dir="$3"
     local workspace="$4"
 
-    local step_id="${PIPELINE_STEP_IDS[$idx]}"
-    local step_agent="${PIPELINE_STEP_AGENTS[$idx]}"
-    local readonly="${PIPELINE_STEP_READONLY[$idx]}"
-    local fix_agent="${PIPELINE_STEP_FIX_AGENT[$idx]}"
-    local max_attempts="${PIPELINE_STEP_FIX_MAX_ATTEMPTS[$idx]}"
-    local fix_commit="${PIPELINE_STEP_FIX_COMMIT_AFTER[$idx]}"
+    local step_id step_agent readonly fix_agent max_attempts fix_commit
+    step_id=$(pipeline_get "$idx" ".id")
+    step_agent=$(pipeline_get "$idx" ".agent")
+    readonly=$(pipeline_get "$idx" ".readonly" "false")
+    fix_agent=$(pipeline_get_fix "$idx" ".agent")
+    max_attempts=$(pipeline_get_fix "$idx" ".max_attempts" "2")
+    fix_commit=$(pipeline_get_fix "$idx" ".commit_after" "true")
 
     local attempt=1
     while [ $attempt -le "$max_attempts" ]; do
@@ -239,16 +249,10 @@ _handle_fix_retry() {
         local verify_id="${step_id}-verify-${attempt}"
         export WIGGUM_STEP_ID="$verify_id"
 
-        # Apply readonly for verification if the step is readonly
-        if [ "$readonly" = "true" ]; then
-            _readonly_stash "$workspace" "$verify_id"
-        fi
-
+        # Set readonly flag for verification if the step is readonly
+        export WIGGUM_STEP_READONLY="$readonly"
         run_sub_agent "$step_agent" "$worker_dir" "$project_dir"
-
-        if [ "$readonly" = "true" ]; then
-            _readonly_pop "$workspace" "$verify_id"
-        fi
+        unset WIGGUM_STEP_READONLY
 
         # Check verification result
         local verify_result
@@ -292,9 +296,9 @@ _run_step_hooks() {
 
     local hooks_json
     if [ "$phase" = "pre" ]; then
-        hooks_json="${PIPELINE_STEP_HOOKS_PRE[$idx]}"
+        hooks_json=$(pipeline_get_json "$idx" ".hooks.pre" "[]")
     else
-        hooks_json="${PIPELINE_STEP_HOOKS_POST[$idx]}"
+        hooks_json=$(pipeline_get_json "$idx" ".hooks.post" "[]")
     fi
 
     # Skip if empty array
@@ -305,22 +309,35 @@ _run_step_hooks() {
     local hook_count
     hook_count=$(echo "$hooks_json" | jq 'length')
 
+    local step_id
+    step_id=$(pipeline_get "$idx" ".id")
+
     local h=0
     while [ "$h" -lt "$hook_count" ]; do
         local cmd
         cmd=$(echo "$hooks_json" | jq -r ".[$h]")
 
-        log_debug "Running $phase hook for step '${PIPELINE_STEP_IDS[$idx]}': $cmd"
+        log_debug "Running $phase hook for step '$step_id': $cmd"
 
-        # Execute hook in subshell with context variables available
+        # Execute hook via function dispatch (no eval)
         (
             export PIPELINE_WORKER_DIR="$worker_dir"
             export PIPELINE_PROJECT_DIR="$project_dir"
             export PIPELINE_WORKSPACE="$workspace"
-            export PIPELINE_STEP_ID="${PIPELINE_STEP_IDS[$idx]}"
+            export PIPELINE_STEP_ID="$step_id"
             cd "$workspace" 2>/dev/null || true
-            eval "$cmd"
-        ) || log_warn "$phase hook failed for step '${PIPELINE_STEP_IDS[$idx]}': $cmd"
+
+            # Split into function name + args
+            local func_name="${cmd%% *}"
+            local func_args="${cmd#* }"
+            [ "$func_args" = "$func_name" ] && func_args=""
+            # Validate and call
+            if declare -F "$func_name" > /dev/null 2>&1; then
+                $func_name $func_args
+            else
+                log_warn "Hook function not found: $func_name"
+            fi
+        ) || log_warn "$phase hook failed for step '$step_id': $cmd"
 
         ((h++))
     done
@@ -335,7 +352,8 @@ _write_step_config() {
     local worker_dir="$1"
     local idx="$2"
 
-    local config_json="${PIPELINE_STEP_CONFIG[$idx]}"
+    local config_json
+    config_json=$(pipeline_get_json "$idx" ".config")
     echo "$config_json" > "$worker_dir/step-config.json"
 }
 
@@ -349,7 +367,8 @@ _prepare_executor_config() {
     local worker_dir="$1"
     local idx="$2"
 
-    local config_json="${PIPELINE_STEP_CONFIG[$idx]}"
+    local config_json
+    config_json=$(pipeline_get_json "$idx" ".config")
 
     # Extract values from step config with defaults
     local max_iterations max_turns supervisor_interval
@@ -375,28 +394,3 @@ _prepare_executor_config() {
         }' > "$worker_dir/executor-config.json"
 }
 
-# Stash workspace changes before a readonly agent
-#
-# Args:
-#   workspace - Workspace directory
-#   step_id   - Step ID (for stash message)
-_readonly_stash() {
-    local workspace="$1"
-    local step_id="$2"
-
-    cd "$workspace" 2>/dev/null || return 0
-    git stash --include-untracked -m "pipeline-readonly-$step_id" 2>/dev/null || true
-}
-
-# Pop stashed changes after a readonly agent
-#
-# Args:
-#   workspace - Workspace directory
-#   step_id   - Step ID (for logging)
-_readonly_pop() {
-    local workspace="$1"
-    local step_id="$2"
-
-    cd "$workspace" 2>/dev/null || return 0
-    git stash pop 2>/dev/null || true
-}

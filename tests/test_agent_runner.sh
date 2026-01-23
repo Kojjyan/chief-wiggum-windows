@@ -9,7 +9,6 @@ source "$TESTS_DIR/test-framework.sh"
 export LOG_FILE="/dev/null"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
-source "$WIGGUM_HOME/lib/worker/violation-monitor.sh"
 
 # We source agent-runner in each test to reset global state
 # because agent_runner_cleanup clears the globals
