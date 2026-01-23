@@ -37,9 +37,9 @@ teardown() {
 
 test_ralph_loop_supervised_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop-supervised.sh" 2>/dev/null; then
-        assert_success "true" "run-claude-ralph-loop-supervised.sh should have valid bash syntax"
+        assert_success "run-claude-ralph-loop-supervised.sh should have valid bash syntax" true
     else
-        assert_failure "true" "run-claude-ralph-loop-supervised.sh should have valid bash syntax"
+        assert_failure "run-claude-ralph-loop-supervised.sh should have valid bash syntax" true
     fi
 }
 
@@ -143,9 +143,9 @@ test_extract_supervisor_review_missing_tag() {
     echo "No review tag here" > "$TEST_TMP_DIR/test.log"
 
     if _extract_supervisor_review "$TEST_TMP_DIR/test.log" "$TEST_TMP_DIR/review.md" 2>/dev/null; then
-        assert_failure "true" "Should return failure when no review tag"
+        assert_failure "Should return failure when no review tag" true
     else
-        assert_success "true" "Should return failure when no review tag"
+        assert_success "Should return failure when no review tag" true
     fi
 }
 
@@ -190,9 +190,9 @@ test_extract_supervisor_guidance_missing_tag() {
     echo "No guidance tag here" > "$TEST_TMP_DIR/test.log"
 
     if _extract_supervisor_guidance "$TEST_TMP_DIR/test.log" "$TEST_TMP_DIR/guidance.md" 2>/dev/null; then
-        assert_failure "true" "Should return failure when no guidance tag"
+        assert_failure "Should return failure when no guidance tag" true
     else
-        assert_success "true" "Should return failure when no guidance tag"
+        assert_success "Should return failure when no guidance tag" true
     fi
 }
 
@@ -326,9 +326,9 @@ test_agent_source_ralph_supervised_exists() {
     source "$WIGGUM_HOME/lib/core/agent-base.sh"
 
     if type agent_source_ralph_supervised &>/dev/null; then
-        assert_success "true" "agent_source_ralph_supervised function should exist"
+        assert_success "agent_source_ralph_supervised function should exist" true
     else
-        assert_failure "true" "agent_source_ralph_supervised function should exist"
+        assert_failure "agent_source_ralph_supervised function should exist" true
     fi
 }
 
@@ -338,9 +338,9 @@ test_agent_source_ralph_supervised_sources_file() {
 
     # After sourcing, the run_ralph_loop_supervised function should exist
     if type run_ralph_loop_supervised &>/dev/null; then
-        assert_success "true" "run_ralph_loop_supervised function should exist after sourcing"
+        assert_success "run_ralph_loop_supervised function should exist after sourcing" true
     else
-        assert_failure "true" "run_ralph_loop_supervised function should exist after sourcing"
+        assert_failure "run_ralph_loop_supervised function should exist after sourcing" true
     fi
 }
 
@@ -350,21 +350,21 @@ test_agent_source_ralph_supervised_provides_extraction_helpers() {
 
     # Check extraction helpers are available
     if type _extract_supervisor_decision &>/dev/null; then
-        assert_success "true" "_extract_supervisor_decision should exist"
+        assert_success "_extract_supervisor_decision should exist" true
     else
-        assert_failure "true" "_extract_supervisor_decision should exist"
+        assert_failure "_extract_supervisor_decision should exist" true
     fi
 
     if type _extract_supervisor_review &>/dev/null; then
-        assert_success "true" "_extract_supervisor_review should exist"
+        assert_success "_extract_supervisor_review should exist" true
     else
-        assert_failure "true" "_extract_supervisor_review should exist"
+        assert_failure "_extract_supervisor_review should exist" true
     fi
 
     if type _extract_supervisor_guidance &>/dev/null; then
-        assert_success "true" "_extract_supervisor_guidance should exist"
+        assert_success "_extract_supervisor_guidance should exist" true
     else
-        assert_failure "true" "_extract_supervisor_guidance should exist"
+        assert_failure "_extract_supervisor_guidance should exist" true
     fi
 }
 
@@ -376,9 +376,9 @@ test_default_supervisor_prompt_exists() {
     source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop-supervised.sh"
 
     if type _default_supervisor_prompt &>/dev/null; then
-        assert_success "true" "_default_supervisor_prompt function should exist"
+        assert_success "_default_supervisor_prompt function should exist" true
     else
-        assert_failure "true" "_default_supervisor_prompt function should exist"
+        assert_failure "_default_supervisor_prompt function should exist" true
     fi
 }
 

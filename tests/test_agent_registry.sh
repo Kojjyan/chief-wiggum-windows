@@ -101,14 +101,14 @@ test_load_agent_with_valid_agent_succeeds() {
     cp "$MOCK_AGENTS_DIR/test-valid.sh" "$TEST_DIR/fake-home/lib/agents/test-valid.sh"
     WIGGUM_HOME="$TEST_DIR/fake-home"
 
-    assert_success "load_agent 'test-valid'" "load_agent should succeed for valid agent"
+    assert_success "load_agent should succeed for valid agent" load_agent 'test-valid'
 
     WIGGUM_HOME="$orig_home"
 }
 
 test_load_agent_with_nonexistent_agent_fails() {
-    assert_failure "load_agent 'nonexistent-agent-xyz'" \
-        "load_agent should fail for non-existent agent"
+    assert_failure "load_agent should fail for non-existent agent" \
+        load_agent 'nonexistent-agent-xyz'
 }
 
 test_load_agent_validates_required_paths_function() {
@@ -119,8 +119,8 @@ test_load_agent_validates_required_paths_function() {
     cp "$MOCK_AGENTS_DIR/missing-paths.sh" "$TEST_DIR/fake-home/lib/agents/missing-paths.sh"
     WIGGUM_HOME="$TEST_DIR/fake-home"
 
-    assert_failure "load_agent 'missing-paths'" \
-        "load_agent should fail when agent_required_paths is missing"
+    assert_failure "load_agent should fail when agent_required_paths is missing" \
+        load_agent 'missing-paths'
 
     WIGGUM_HOME="$orig_home"
 }
@@ -133,8 +133,8 @@ test_load_agent_validates_run_function() {
     cp "$MOCK_AGENTS_DIR/no-run.sh" "$TEST_DIR/fake-home/lib/agents/no-run.sh"
     WIGGUM_HOME="$TEST_DIR/fake-home"
 
-    assert_failure "load_agent 'no-run'" \
-        "load_agent should fail when agent_run is missing"
+    assert_failure "load_agent should fail when agent_run is missing" \
+        load_agent 'no-run'
 
     WIGGUM_HOME="$orig_home"
 }
@@ -158,8 +158,8 @@ test_validate_prerequisites_passes_when_paths_exist() {
     mkdir -p "$worker_dir/workspace"
     echo "test" > "$worker_dir/prd.md"
 
-    assert_success "validate_agent_prerequisites '$worker_dir'" \
-        "Should pass when all required paths exist"
+    assert_success "Should pass when all required paths exist" \
+        validate_agent_prerequisites "$worker_dir"
 
     WIGGUM_HOME="$orig_home"
 }
@@ -178,8 +178,8 @@ test_validate_prerequisites_fails_when_paths_missing() {
     local worker_dir="$TEST_DIR/worker-empty"
     mkdir -p "$worker_dir"
 
-    assert_failure "validate_agent_prerequisites '$worker_dir'" \
-        "Should fail when required paths are missing"
+    assert_failure "Should fail when required paths are missing" \
+        validate_agent_prerequisites "$worker_dir"
 
     WIGGUM_HOME="$orig_home"
 }
@@ -203,8 +203,8 @@ test_validate_outputs_passes_with_valid_result() {
     mkdir -p "$worker_dir/results"
     echo '{"status": "success", "exit_code": 0}' > "$worker_dir/results/result.json"
 
-    assert_success "validate_agent_outputs '$worker_dir'" \
-        "Should pass when output files exist and are non-empty"
+    assert_success "Should pass when output files exist and are non-empty" \
+        validate_agent_outputs "$worker_dir"
 
     WIGGUM_HOME="$orig_home"
 }
@@ -223,8 +223,8 @@ test_validate_outputs_fails_with_missing_result() {
     local worker_dir="$TEST_DIR/worker-no-output"
     mkdir -p "$worker_dir/results"
 
-    assert_failure "validate_agent_outputs '$worker_dir'" \
-        "Should fail when output files are missing"
+    assert_failure "Should fail when output files are missing" \
+        validate_agent_outputs "$worker_dir"
 
     WIGGUM_HOME="$orig_home"
 }

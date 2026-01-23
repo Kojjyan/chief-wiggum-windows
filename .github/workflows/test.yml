@@ -24,12 +24,11 @@ jobs:
 
       - name: Run shellcheck on test scripts
         run: |
-          shellcheck --severity=warning tests/test-framework.sh tests/test-runner.sh
-          find tests -name "test_*.sh" -type f -exec shellcheck --severity=warning {} +
+          find tests -name "*.sh" -type f -exec shellcheck --severity=warning {} +
 
-      - name: Run shellcheck on install script
+      - name: Run shellcheck on root scripts
         run: |
-          shellcheck --severity=warning install.sh
+          shellcheck --severity=warning install.sh install-symlink.sh
 
   test:
     name: Test Suite
@@ -39,15 +38,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Make test scripts executable
-        run: |
-          chmod +x tests/test-runner.sh
-          chmod +x tests/test-framework.sh
-          find tests -name "test_*.sh" -exec chmod +x {} \;
-
       - name: Run test suite
         run: |
-          bash tests/test-runner.sh
+          chmod +x tests/test-runner.sh
+          ./tests/test-runner.sh
 
       - name: Upload test logs
         uses: actions/upload-artifact@v4

@@ -47,9 +47,9 @@ test_exit_codes_under_64() {
 
     for code in "${codes[@]}"; do
         if [ "$code" -lt 64 ]; then
-            assert_success "true" "Exit code $code is under 64"
+            assert_success "Exit code $code is under 64" true
         else
-            assert_failure "true" "Exit code $code should be under 64"
+            assert_failure "Exit code $code should be under 64" true
         fi
     done
 }
@@ -195,9 +195,9 @@ test_agent_write_result_creates_epoch_file() {
     local result_file
     result_file=$(ls "$tmpdir/results/"*"-test-agent-result.json" 2>/dev/null | head -1)
     if [ -n "$result_file" ] && [ -f "$result_file" ]; then
-        assert_success "true" "epoch-named result file should be created in results/"
+        assert_success "epoch-named result file should be created in results/" true
     else
-        assert_failure "true" "epoch-named result file should be created in results/"
+        assert_failure "epoch-named result file should be created in results/" true
     fi
 
     rm -rf "$tmpdir"
@@ -219,9 +219,9 @@ test_agent_write_result_valid_json() {
     result_file=$(agent_find_latest_result "$tmpdir" "test-agent")
 
     if [ -n "$result_file" ] && jq '.' "$result_file" > /dev/null 2>&1; then
-        assert_success "true" "result file should be valid JSON"
+        assert_success "result file should be valid JSON" true
     else
-        assert_failure "true" "result file should be valid JSON"
+        assert_failure "result file should be valid JSON" true
     fi
 
     rm -rf "$tmpdir"
@@ -260,9 +260,9 @@ test_agent_result_is_success() {
     agent_write_result "$tmpdir" "success" 0 '{}' '[]' '{}'
 
     if agent_result_is_success "$tmpdir"; then
-        assert_success "true" "agent_result_is_success should return true for success"
+        assert_success "agent_result_is_success should return true for success" true
     else
-        assert_failure "true" "agent_result_is_success should return true for success"
+        assert_failure "agent_result_is_success should return true for success" true
     fi
 
     rm -rf "$tmpdir"
@@ -281,9 +281,9 @@ test_agent_result_is_success_failure() {
     agent_write_result "$tmpdir" "failure" 1 '{}' '[]' '{}'
 
     if agent_result_is_success "$tmpdir"; then
-        assert_failure "true" "agent_result_is_success should return false for failure"
+        assert_failure "agent_result_is_success should return false for failure" true
     else
-        assert_success "true" "agent_result_is_success should return false for failure"
+        assert_success "agent_result_is_success should return false for failure" true
     fi
 
     rm -rf "$tmpdir"
@@ -383,16 +383,16 @@ test_agent_write_report() {
     report_path=$(agent_write_report "$tmpdir" "# Test Report\n\nSome content")
 
     if [ -f "$report_path" ]; then
-        assert_success "true" "Report file should be created"
+        assert_success "Report file should be created" true
     else
-        assert_failure "true" "Report file should be created"
+        assert_failure "Report file should be created" true
     fi
 
     # Verify it's in reports/ with epoch naming
     if echo "$report_path" | grep -q "reports/.*-test-agent-report.md"; then
-        assert_success "true" "Report should have epoch-named path"
+        assert_success "Report should have epoch-named path" true
     else
-        assert_failure "true" "Report should have epoch-named path"
+        assert_failure "Report should have epoch-named path" true
     fi
 
     rm -rf "$tmpdir"
@@ -457,27 +457,27 @@ test_default_hooks_return_success() {
     source "$WIGGUM_HOME/lib/core/agent-base.sh"
 
     if agent_on_init "/tmp/worker" "/tmp/project"; then
-        assert_success "true" "agent_on_init should return 0 by default"
+        assert_success "agent_on_init should return 0 by default" true
     else
-        assert_failure "true" "agent_on_init should return 0 by default"
+        assert_failure "agent_on_init should return 0 by default" true
     fi
 
     if agent_on_ready "/tmp/worker" "/tmp/project"; then
-        assert_success "true" "agent_on_ready should return 0 by default"
+        assert_success "agent_on_ready should return 0 by default" true
     else
-        assert_failure "true" "agent_on_ready should return 0 by default"
+        assert_failure "agent_on_ready should return 0 by default" true
     fi
 
     if agent_on_error "/tmp/worker" 1 "prereq"; then
-        assert_success "true" "agent_on_error should return 0 by default"
+        assert_success "agent_on_error should return 0 by default" true
     else
-        assert_failure "true" "agent_on_error should return 0 by default"
+        assert_failure "agent_on_error should return 0 by default" true
     fi
 
     if agent_on_signal "INT"; then
-        assert_success "true" "agent_on_signal should return 0 by default"
+        assert_success "agent_on_signal should return 0 by default" true
     else
-        assert_failure "true" "agent_on_signal should return 0 by default"
+        assert_failure "agent_on_signal should return 0 by default" true
     fi
 }
 
@@ -487,9 +487,9 @@ test_default_hooks_return_success() {
 
 test_agents_json_is_valid() {
     if jq '.' "$WIGGUM_HOME/config/agents.json" > /dev/null 2>&1; then
-        assert_success "true" "config/agents.json should be valid JSON"
+        assert_success "config/agents.json should be valid JSON" true
     else
-        assert_failure "true" "config/agents.json should be valid JSON"
+        assert_failure "config/agents.json should be valid JSON" true
     fi
 }
 
@@ -515,65 +515,65 @@ test_agents_json_has_defaults() {
 
 test_agent_base_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/core/agent-base.sh" 2>/dev/null; then
-        assert_success "true" "agent-base.sh should have valid bash syntax"
+        assert_success "agent-base.sh should have valid bash syntax" true
     else
-        assert_failure "true" "agent-base.sh should have valid bash syntax"
+        assert_failure "agent-base.sh should have valid bash syntax" true
     fi
 }
 
 test_exit_codes_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/core/exit-codes.sh" 2>/dev/null; then
-        assert_success "true" "exit-codes.sh should have valid bash syntax"
+        assert_success "exit-codes.sh should have valid bash syntax" true
     else
-        assert_failure "true" "exit-codes.sh should have valid bash syntax"
+        assert_failure "exit-codes.sh should have valid bash syntax" true
     fi
 }
 
 test_agent_registry_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>/dev/null; then
-        assert_success "true" "agent-registry.sh should have valid bash syntax"
+        assert_success "agent-registry.sh should have valid bash syntax" true
     else
-        assert_failure "true" "agent-registry.sh should have valid bash syntax"
+        assert_failure "agent-registry.sh should have valid bash syntax" true
     fi
 }
 
 test_task_worker_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/agents/pipeline/task-worker.sh" 2>/dev/null; then
-        assert_success "true" "task-worker.sh should have valid bash syntax"
+        assert_success "task-worker.sh should have valid bash syntax" true
     else
-        assert_failure "true" "task-worker.sh should have valid bash syntax"
+        assert_failure "task-worker.sh should have valid bash syntax" true
     fi
 }
 
 test_pr_comment_fix_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/agents/pr-comment-fix.sh" 2>/dev/null; then
-        assert_success "true" "pr-comment-fix.sh should have valid bash syntax"
+        assert_success "pr-comment-fix.sh should have valid bash syntax" true
     else
-        assert_failure "true" "pr-comment-fix.sh should have valid bash syntax"
+        assert_failure "pr-comment-fix.sh should have valid bash syntax" true
     fi
 }
 
 test_validation_review_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/agents/validation-review.sh" 2>/dev/null; then
-        assert_success "true" "validation-review.sh should have valid bash syntax"
+        assert_success "validation-review.sh should have valid bash syntax" true
     else
-        assert_failure "true" "validation-review.sh should have valid bash syntax"
+        assert_failure "validation-review.sh should have valid bash syntax" true
     fi
 }
 
 test_task_executor_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/agents/task-executor.sh" 2>/dev/null; then
-        assert_success "true" "task-executor.sh should have valid bash syntax"
+        assert_success "task-executor.sh should have valid bash syntax" true
     else
-        assert_failure "true" "task-executor.sh should have valid bash syntax"
+        assert_failure "task-executor.sh should have valid bash syntax" true
     fi
 }
 
 test_task_summarizer_sh_syntax() {
     if bash -n "$WIGGUM_HOME/lib/agents/task-summarizer.sh" 2>/dev/null; then
-        assert_success "true" "task-summarizer.sh should have valid bash syntax"
+        assert_success "task-summarizer.sh should have valid bash syntax" true
     else
-        assert_failure "true" "task-summarizer.sh should have valid bash syntax"
+        assert_failure "task-summarizer.sh should have valid bash syntax" true
     fi
 }
 

@@ -24,10 +24,10 @@ test_assertions() {
     assert_not_equals "hello" "world" "Different strings should pass"
 
     # Test assert_success
-    assert_success "true" "True command should succeed"
+    assert_success "True command should succeed" true
 
     # Test assert_failure
-    assert_failure "false" "False command should fail"
+    assert_failure "False command should fail" false
 }
 
 # Test: File operations

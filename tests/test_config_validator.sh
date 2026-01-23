@@ -28,16 +28,16 @@ test_valid_json_file_passes() {
     "number": 42
 }
 JSON
-    assert_success "validate_json_file '$TEST_DIR/valid.json'" \
-        "Valid JSON file should pass validation"
+    assert_success "Valid JSON file should pass validation" \
+        validate_json_file "$TEST_DIR/valid.json"
 }
 
 # ===========================================================================
 # Test: Non-existent file fails
 # ===========================================================================
 test_nonexistent_file_fails() {
-    assert_failure "validate_json_file '$TEST_DIR/nonexistent.json'" \
-        "Non-existent file should fail validation"
+    assert_failure "Non-existent file should fail validation" \
+        validate_json_file "$TEST_DIR/nonexistent.json"
 }
 
 # ===========================================================================
@@ -49,8 +49,8 @@ test_invalid_json_syntax_fails() {
     "key": "value",
     "missing_closing_brace": true
 JSON
-    assert_failure "validate_json_file '$TEST_DIR/bad.json'" \
-        "Invalid JSON syntax should fail validation"
+    assert_failure "Invalid JSON syntax should fail validation" \
+        validate_json_file "$TEST_DIR/bad.json"
 }
 
 # ===========================================================================
@@ -76,8 +76,8 @@ test_valid_config_passes() {
     }
 }
 JSON
-    assert_success "validate_config '$TEST_DIR/config.json'" \
-        "Valid config.json with all sections should pass"
+    assert_success "Valid config.json with all sections should pass" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -95,8 +95,8 @@ test_config_max_iterations_out_of_range() {
     "review": {}
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "workers.max_iterations=200 should fail (max 100)"
+    assert_failure "workers.max_iterations=200 should fail (max 100)" \
+        validate_config "$TEST_DIR/config.json"
 
     cat > "$TEST_DIR/config2.json" << 'JSON'
 {
@@ -109,8 +109,8 @@ JSON
     "review": {}
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config2.json'" \
-        "workers.max_iterations=0 should fail (min 1)"
+    assert_failure "workers.max_iterations=0 should fail (min 1)" \
+        validate_config "$TEST_DIR/config2.json"
 }
 
 # ===========================================================================
@@ -128,8 +128,8 @@ test_config_sleep_seconds_out_of_range() {
     "review": {}
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "workers.sleep_seconds=100 should fail (max 60)"
+    assert_failure "workers.sleep_seconds=100 should fail (max 60)" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -146,8 +146,8 @@ test_config_hooks_enabled_non_boolean() {
     "review": {}
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "hooks.enabled='yes' (non-boolean) should fail"
+    assert_failure "hooks.enabled='yes' (non-boolean) should fail" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -165,8 +165,8 @@ test_config_fix_max_iterations_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "review.fix_max_iterations=100 should fail (max 50)"
+    assert_failure "review.fix_max_iterations=100 should fail (max 50)" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -184,8 +184,8 @@ test_config_fix_max_turns_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "review.fix_max_turns=200 should fail (max 100)"
+    assert_failure "review.fix_max_turns=200 should fail (max 100)" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -204,8 +204,8 @@ test_config_approved_authors_non_array() {
     }
 }
 JSON
-    assert_failure "validate_config '$TEST_DIR/config.json'" \
-        "review.approved_authors as string should fail (must be array)"
+    assert_failure "review.approved_authors as string should fail (must be array)" \
+        validate_config "$TEST_DIR/config.json"
 }
 
 # ===========================================================================
@@ -221,8 +221,8 @@ test_config_unknown_keys_warn_but_pass() {
     "unknown_section": { "foo": "bar" }
 }
 JSON
-    assert_success "validate_config '$TEST_DIR/config.json'" \
-        "Unknown top-level key should warn but still pass"
+    assert_success "Unknown top-level key should warn but still pass" \
+        validate_config "$TEST_DIR/config.json"
 
     assert_file_contains "$TEST_DIR/test.log" "Unknown config key: unknown_section" \
         "Log should contain warning about unknown key"
@@ -260,8 +260,8 @@ test_valid_agents_config_passes() {
     }
 }
 JSON
-    assert_success "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Valid agents.json should pass validation"
+    assert_success "Valid agents.json should pass validation" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -275,8 +275,8 @@ test_agents_missing_agents_section() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Missing agents section should fail"
+    assert_failure "Missing agents section should fail" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -292,8 +292,8 @@ test_agents_missing_defaults_section() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Missing defaults section should fail"
+    assert_failure "Missing defaults section should fail" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -312,8 +312,8 @@ test_agents_invalid_name_uppercase() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Uppercase agent name should fail"
+    assert_failure "Uppercase agent name should fail" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -332,8 +332,8 @@ test_agents_invalid_name_special_chars() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent name with special chars should fail"
+    assert_failure "Agent name with special chars should fail" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -352,8 +352,8 @@ test_agents_max_iterations_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent max_iterations=150 should fail (max 100)"
+    assert_failure "Agent max_iterations=150 should fail (max 100)" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -372,8 +372,8 @@ test_agents_max_turns_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent max_turns=300 should fail (max 200)"
+    assert_failure "Agent max_turns=300 should fail (max 200)" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -392,8 +392,8 @@ test_agents_timeout_seconds_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent timeout_seconds=10 should fail (min 60)"
+    assert_failure "Agent timeout_seconds=10 should fail (min 60)" \
+        validate_agents_config "$TEST_DIR/agents.json"
 
     cat > "$TEST_DIR/agents2.json" << 'JSON'
 {
@@ -407,8 +407,8 @@ JSON
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents2.json'" \
-        "Agent timeout_seconds=100000 should fail (max 86400)"
+    assert_failure "Agent timeout_seconds=100000 should fail (max 86400)" \
+        validate_agents_config "$TEST_DIR/agents2.json"
 }
 
 # ===========================================================================
@@ -427,8 +427,8 @@ test_agents_supervisor_interval_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent supervisor_interval=25 should fail (max 20)"
+    assert_failure "Agent supervisor_interval=25 should fail (max 20)" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -447,8 +447,8 @@ test_agents_max_restarts_out_of_range() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent max_restarts=50 should fail (max 10)"
+    assert_failure "Agent max_restarts=50 should fail (max 10)" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================
@@ -467,8 +467,8 @@ test_agents_auto_commit_non_boolean() {
     }
 }
 JSON
-    assert_failure "validate_agents_config '$TEST_DIR/agents.json'" \
-        "Agent auto_commit='yes' (non-boolean) should fail"
+    assert_failure "Agent auto_commit='yes' (non-boolean) should fail" \
+        validate_agents_config "$TEST_DIR/agents.json"
 }
 
 # ===========================================================================

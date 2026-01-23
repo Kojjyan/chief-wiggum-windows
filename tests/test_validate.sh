@@ -13,15 +13,13 @@ source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 # =============================================================================
 
 test_valid_simple_kanban() {
-    assert_success \
-        "$WIGGUM_HOME/bin/wiggum-validate -f $WIGGUM_HOME/config/examples/simple-kanban.md" \
-        "Simple kanban file should be valid"
+    assert_success "Simple kanban file should be valid" \
+        "$WIGGUM_HOME/bin/wiggum-validate" -f "$WIGGUM_HOME/config/examples/simple-kanban.md"
 }
 
 test_valid_webapp_kanban() {
-    assert_success \
-        "$WIGGUM_HOME/bin/wiggum-validate -f $WIGGUM_HOME/config/examples/web-app-kanban.md" \
-        "Web app kanban file should be valid"
+    assert_success "Web app kanban file should be valid" \
+        "$WIGGUM_HOME/bin/wiggum-validate" -f "$WIGGUM_HOME/config/examples/web-app-kanban.md"
 }
 
 # =============================================================================

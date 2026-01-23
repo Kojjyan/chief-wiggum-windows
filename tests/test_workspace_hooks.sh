@@ -36,12 +36,14 @@ run_validate_hook() {
     local cpd="${3:-}"
 
     HOOK_STDOUT=""
+    # shellcheck disable=SC2034
     HOOK_STDERR=""
     local rc=0
 
     HOOK_STDOUT=$(echo "$json" | \
         WORKER_WORKSPACE="$ws" CLAUDE_PROJECT_DIR="$cpd" WORKER_DIR="" \
         bash "$VALIDATE_HOOK" 2>"$TEST_WORKSPACE/hook_stderr.tmp") || rc=$?
+    # shellcheck disable=SC2034
     HOOK_STDERR=$(cat "$TEST_WORKSPACE/hook_stderr.tmp" 2>/dev/null || true)
     return $rc
 }
@@ -54,12 +56,14 @@ run_inject_hook() {
     local cpd="${3:-}"
 
     HOOK_STDOUT=""
+    # shellcheck disable=SC2034
     HOOK_STDERR=""
     local rc=0
 
     HOOK_STDOUT=$(echo "$json" | \
         WORKER_WORKSPACE="$ws" CLAUDE_PROJECT_DIR="$cpd" WORKER_DIR="" \
         bash "$INJECT_HOOK" 2>"$TEST_WORKSPACE/hook_stderr.tmp") || rc=$?
+    # shellcheck disable=SC2034
     HOOK_STDERR=$(cat "$TEST_WORKSPACE/hook_stderr.tmp" 2>/dev/null || true)
     return $rc
 }

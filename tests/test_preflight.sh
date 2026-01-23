@@ -17,9 +17,12 @@ source "$WIGGUM_HOME/lib/core/preflight.sh"
 TEST_DIR=""
 setup() {
     TEST_DIR=$(mktemp -d)
-    # Reset check counters
+    # Reset check counters (used by sourced preflight.sh functions)
+    # shellcheck disable=SC2034
     CHECK_PASSED=0
+    # shellcheck disable=SC2034
     CHECK_FAILED=0
+    # shellcheck disable=SC2034
     CHECK_WARNED=0
 }
 teardown() {
@@ -31,13 +34,13 @@ teardown() {
 # =============================================================================
 
 test_check_command_exists_with_existing_command() {
-    assert_success "check_command_exists bash" \
-        "check_command_exists should pass for 'bash'"
+    assert_success "check_command_exists should pass for 'bash'" \
+        check_command_exists bash
 }
 
 test_check_command_exists_with_nonexistent_command() {
-    assert_failure "check_command_exists this_command_does_not_exist_xyz_abc_123" \
-        "check_command_exists should fail for a non-existent command"
+    assert_failure "check_command_exists should fail for a non-existent command" \
+        check_command_exists this_command_does_not_exist_xyz_abc_123
 }
 
 # =============================================================================

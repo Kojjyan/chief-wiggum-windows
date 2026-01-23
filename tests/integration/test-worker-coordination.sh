@@ -71,7 +71,6 @@ test_start "Find worker by task ID"
     # Create test worker directory
     mkdir -p "$RALPH_DIR/workers/worker-TASK-001-12345678"
 
-    local result
     result=$(find_worker_by_task_id "$RALPH_DIR" "TASK-001")
     [ -n "$result" ] && [[ "$result" == *"worker-TASK-001-12345678"* ]]
 ) && test_pass || test_fail "Worker not found"
@@ -85,7 +84,6 @@ test_start "Find any worker by task ID"
     mkdir -p "$RALPH_DIR/workers/worker-TASK-002-11111111"
     mkdir -p "$RALPH_DIR/workers/worker-TASK-002-22222222"
 
-    local result
     result=$(find_any_worker_by_task_id "$RALPH_DIR" "TASK-002")
     [ -n "$result" ] && [[ "$result" == *"TASK-002"* ]]
 ) && test_pass || test_fail "Worker not found"
@@ -98,7 +96,6 @@ test_start "Resolve worker ID - exact match"
 
     mkdir -p "$RALPH_DIR/workers/worker-TASK-001-12345678"
 
-    local result
     result=$(resolve_worker_id "$RALPH_DIR" "12345678")
     [ -n "$result" ] && [[ "$result" == *"12345678"* ]]
 ) && test_pass || test_fail "Worker not resolved"
@@ -108,7 +105,6 @@ test_start "Get task ID from worker"
 (
     source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
-    local task_id
     task_id=$(get_task_id_from_worker "worker-TASK-001-12345678")
     [ "$task_id" = "TASK-001" ]
 ) && test_pass || test_fail "Task ID not extracted"
@@ -159,7 +155,6 @@ test_start "Scan active workers - empty"
     setup_test_env
     source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
-    local result
     result=$(scan_active_workers "$RALPH_DIR")
     [ -z "$result" ]
 ) && test_pass || test_fail "Should find no active workers"
@@ -183,7 +178,7 @@ test_start "Write and remove PID file with locking"
     source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
     mkdir -p "$RALPH_DIR/workers/worker-TASK-001-12345"
-    local pid_file="$RALPH_DIR/workers/worker-TASK-001-12345/agent.pid"
+    pid_file="$RALPH_DIR/workers/worker-TASK-001-12345/agent.pid"
 
     # Write PID
     write_pid_file "$pid_file" "12345"

@@ -277,7 +277,7 @@ events_query_by_type() {
         return 0
     fi
 
-    jq -c "select(.event_type == \"$event_type\")" "$events_log" 2>/dev/null
+    jq -c --arg t "$event_type" 'select(.event_type == $t)' "$events_log" 2>/dev/null
 }
 
 # Query events for a specific task
@@ -297,7 +297,7 @@ events_query_by_task() {
         return 0
     fi
 
-    jq -c "select(.task_id == \"$task_id\")" "$events_log" 2>/dev/null
+    jq -c --arg t "$task_id" 'select(.task_id == $t)' "$events_log" 2>/dev/null
 }
 
 # Query events for a specific worker
@@ -317,7 +317,7 @@ events_query_by_worker() {
         return 0
     fi
 
-    jq -c "select(.worker_id == \"$worker_id\")" "$events_log" 2>/dev/null
+    jq -c --arg w "$worker_id" 'select(.worker_id == $w)' "$events_log" 2>/dev/null
 }
 
 # Get event count by type

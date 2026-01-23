@@ -48,7 +48,7 @@ test_truncate_long_string_truncates() {
     result=$(_truncate "$long_str" 50)
 
     # Should contain the truncation message
-    assert_output_contains "$result" "\[... truncated 150 characters ...\]" \
+    assert_output_contains "$result" "[... truncated 150 characters ...]" \
         "Long string should include truncation message"
 
     # Should NOT contain the full original string

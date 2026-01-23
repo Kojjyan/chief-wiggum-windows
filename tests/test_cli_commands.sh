@@ -16,7 +16,7 @@ TEST_DIR=""
 
 setup() {
     TEST_DIR=$(mktemp -d)
-    cd "$TEST_DIR"
+    cd "$TEST_DIR" || exit 1
     # Initialize a minimal git repo for commands that need it
     git init -q
     git config user.email "test@test.com"

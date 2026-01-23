@@ -843,7 +843,7 @@ agent_extract_and_write_result() {
         "$gate_outputs"
 
     # Set global variable for the calling agent
-    eval "${agent_name}_RESULT=\"$result\""
+    printf -v "${agent_name}_RESULT" '%s' "$result"
 
     log "${agent_name} result: $result"
 }

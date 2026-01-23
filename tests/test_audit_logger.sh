@@ -65,7 +65,7 @@ test_audit_log_writes_event_with_timestamp_and_type() {
 
     # Check that the event line has a timestamp and event type
     assert_file_contains "$AUDIT_LOG" "TEST_EVENT" "Should contain event type"
-    assert_file_contains "$AUDIT_LOG" "\[.*\] TEST_EVENT" "Should have timestamp prefix with event type"
+    assert_file_contains "$AUDIT_LOG" "] TEST_EVENT" "Should have timestamp prefix with event type"
 }
 
 test_audit_log_writes_multiple_kvps() {

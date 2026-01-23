@@ -7,41 +7,39 @@ TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WIGGUM_HOME="$(dirname "$TESTS_DIR")"
 export WIGGUM_HOME
 
-# Source the file-lock utilities
+source "$TESTS_DIR/test-framework.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 
-# Create a test directory
-TEST_DIR=$(mktemp -d)
-trap 'rm -rf "$TEST_DIR"' EXIT
-
-echo "Testing file-lock.sh with edge cases..."
+TEST_DIR=""
+setup() {
+    TEST_DIR=$(mktemp -d)
+}
+teardown() {
+    rm -rf "$TEST_DIR"
+}
 
 # Test 1: Basic locking with simple command
-echo "Test 1: Basic file lock with simple command"
-TEST_FILE="$TEST_DIR/test1.txt"
-with_file_lock "$TEST_FILE" 5 echo "Hello World" > "$TEST_FILE"
-if [ -f "$TEST_FILE" ] && grep -q "Hello World" "$TEST_FILE"; then
-    echo "✓ Test 1 passed"
-else
-    echo "✗ Test 1 failed"
-    exit 1
-fi
+test_basic_file_lock() {
+    local test_file="$TEST_DIR/test1.txt"
+    with_file_lock "$test_file" 5 echo "Hello World" > "$test_file"
+
+    assert_file_exists "$test_file" "Lock file should be created"
+    assert_file_contains "$test_file" "Hello World" "File should contain the echoed text"
+}
 
 # Test 2: Special characters in file content
-echo "Test 2: File lock with special characters"
-TEST_FILE2="$TEST_DIR/test2.txt"
-with_file_lock "$TEST_FILE2" 5 bash -c 'echo "Special chars: $ \" \` \\ ; | & > <" > "$1"' _ "$TEST_FILE2"
-if [ -f "$TEST_FILE2" ] && grep -q 'Special chars:' "$TEST_FILE2"; then
-    echo "✓ Test 2 passed"
-else
-    echo "✗ Test 2 failed"
-    exit 1
-fi
+test_special_characters() {
+    local test_file="$TEST_DIR/test2.txt"
+    with_file_lock "$test_file" 5 bash -c 'echo "Special chars: $ \" \` \\ ; | & > <" > "$1"' _ "$test_file"
+
+    assert_file_exists "$test_file" "File with special chars should exist"
+    assert_file_contains "$test_file" 'Special chars:' "File should contain special character content"
+}
 
 # Test 3: Update kanban status with special task ID
-echo "Test 3: Update kanban status"
-KANBAN_FILE="$TEST_DIR/kanban.md"
-cat > "$KANBAN_FILE" << 'EOF'
+test_update_kanban_status() {
+    local kanban_file="$TEST_DIR/kanban.md"
+    cat > "$kanban_file" << 'EOF'
 # Kanban Board
 
 - [ ] **[TASK-001]** Test task one
@@ -49,57 +47,55 @@ cat > "$KANBAN_FILE" << 'EOF'
 - [ ] **[TASK-003]** Another task
 EOF
 
-update_kanban_status "$KANBAN_FILE" "TASK-002" "x"
-if grep -q '\- \[x\] \*\*\[TASK-002\]\*\*' "$KANBAN_FILE"; then
-    echo "✓ Test 3 passed"
-else
-    echo "✗ Test 3 failed"
-    cat "$KANBAN_FILE"
-    exit 1
-fi
+    update_kanban_status "$kanban_file" "TASK-002" "x"
+    assert_file_contains "$kanban_file" '- [x] **[TASK-002]**' \
+        "TASK-002 should be marked as completed"
+}
 
 # Test 4: Concurrent access (spawn multiple processes)
-echo "Test 4: Concurrent file access"
-CONCURRENT_FILE="$TEST_DIR/concurrent.txt"
-echo "0" > "$CONCURRENT_FILE"
+test_concurrent_file_access() {
+    local concurrent_file="$TEST_DIR/concurrent.txt"
+    echo "0" > "$concurrent_file"
 
-for _ in {1..5}; do
-    (
-        with_file_lock "$CONCURRENT_FILE" 10 bash -c '
-            current=$(cat "$1")
-            new=$((current + 1))
-            echo "$new" > "$1"
-        ' _ "$CONCURRENT_FILE"
-    ) &
-done
+    for _ in {1..5}; do
+        (
+            with_file_lock "$concurrent_file" 10 bash -c '
+                current=$(cat "$1")
+                new=$((current + 1))
+                echo "$new" > "$1"
+            ' _ "$concurrent_file"
+        ) &
+    done
 
-wait
+    wait
 
-FINAL_COUNT=$(cat "$CONCURRENT_FILE")
-if [ "$FINAL_COUNT" -eq 5 ]; then
-    echo "✓ Test 4 passed (final count: $FINAL_COUNT)"
-else
-    echo "✗ Test 4 failed (expected 5, got $FINAL_COUNT)"
-    exit 1
-fi
+    local final_count
+    final_count=$(cat "$concurrent_file")
+    assert_equals "5" "$final_count" "Concurrent lock should serialize to exactly 5"
+}
 
 # Test 5: Changelog append with special characters
-echo "Test 5: Append changelog with special characters"
-CHANGELOG_FILE="$TEST_DIR/changelog.md"
-touch "$CHANGELOG_FILE"
+test_changelog_append_special_chars() {
+    local changelog_file="$TEST_DIR/changelog.md"
+    touch "$changelog_file"
 
-append_changelog "$CHANGELOG_FILE" "TASK-999" "worker-1" \
-    'Fix bug with special chars: $ " ` \' \
-    "https://github.com/test/pr/1" \
-    'Summary with special chars: & | > < ;'
+    append_changelog "$changelog_file" "TASK-999" "worker-1" \
+        'Fix bug with special chars: $ " ` \' \
+        "https://github.com/test/pr/1" \
+        'Summary with special chars: & | > < ;'
 
-if [ -f "$CHANGELOG_FILE" ] && grep -q 'TASK-999' "$CHANGELOG_FILE"; then
-    echo "✓ Test 5 passed"
-else
-    echo "✗ Test 5 failed"
-    exit 1
-fi
+    assert_file_exists "$changelog_file" "Changelog file should exist"
+    assert_file_contains "$changelog_file" 'TASK-999' "Changelog should contain task ID"
+}
 
-echo ""
-echo "All tests passed! ✓"
-echo "No eval() usage detected - safe command execution verified"
+# =============================================================================
+# Run all tests
+# =============================================================================
+run_test test_basic_file_lock
+run_test test_special_characters
+run_test test_update_kanban_status
+run_test test_concurrent_file_access
+run_test test_changelog_append_special_chars
+
+print_test_summary
+exit_with_test_result

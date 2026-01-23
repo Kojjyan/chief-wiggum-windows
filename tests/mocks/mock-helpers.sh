@@ -274,7 +274,7 @@ assert_mock_output_has_tool_use() {
         pattern='"name":"'"$tool_name"'"'
     fi
 
-    if echo "$output" | grep -q "$pattern"; then
+    if echo "$output" | grep -qF -- "$pattern"; then
         echo -e "  ${GREEN}✓${NC} $message"
         return 0
     else

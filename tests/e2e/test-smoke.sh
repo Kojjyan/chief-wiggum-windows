@@ -80,7 +80,7 @@ test_start "wiggum validate with tasks"
     cat > .ralph/kanban.md << 'EOF'
 # Kanban
 
-## TODO
+## TASKS
 
 - [ ] **[TASK-001]** Implement user authentication
   - Priority: HIGH
@@ -97,18 +97,16 @@ EOF
 # Test 4: wiggum status (no workers)
 test_start "wiggum status shows no active workers"
 (
-    local output
     output=$("$WIGGUM_HOME/bin/wiggum-status" 2>&1)
-    echo "$output" | grep -qi "no active\|No workers\|0 active" || \
-    [ -z "$(echo "$output" | grep -i "running")" ]
+    echo "$output" | grep -qiF "no wiggum"
 ) && test_pass || test_fail "Status not showing empty state"
 
 # Test 5: wiggum doctor (check prerequisites)
 test_start "wiggum doctor runs checks"
 (
-    # Doctor should run without error (may have warnings)
-    "$WIGGUM_HOME/bin/wiggum-doctor" > /dev/null 2>&1 || \
-    "$WIGGUM_HOME/bin/wiggum-doctor" 2>&1 | grep -q "FAIL\|PASS"
+    # Doctor should run without error (may have warnings/failures)
+    output=$("$WIGGUM_HOME/bin/wiggum-doctor" 2>&1 || true)
+    echo "$output" | grep -qE "FAIL|PASS"
 ) && test_pass || test_fail "Doctor failed to run"
 
 # Test 6: Config validation
@@ -130,7 +128,6 @@ test_start "Task parser extracts tasks"
 (
     source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 
-    local tasks
     tasks=$(get_todo_tasks ".ralph/kanban.md")
     echo "$tasks" | grep -q "TASK-001"
 ) && test_pass || test_fail "Task parser failed"
@@ -140,7 +137,7 @@ test_start "Checkpoint creation"
 (
     source "$WIGGUM_HOME/lib/core/checkpoint.sh"
 
-    local worker_dir=".ralph/workers/worker-TASK-001-12345"
+    worker_dir=".ralph/workers/worker-TASK-001-12345"
     mkdir -p "$worker_dir"
 
     checkpoint_write "$worker_dir" 0 "test-session" "in_progress" '["file1.txt"]' '["task1"]' '["step1"]' "Test summary"
@@ -189,7 +186,6 @@ test_start "File locking works"
 test_start "Mock Claude CLI responds"
 (
     export MOCK_CLAUDE_RESPONSE="Test response from mock"
-    local output
     output=$("$CLAUDE" --version 2>&1)
     echo "$output" | grep -q "mock"
 ) && test_pass || test_fail "Mock Claude not working"
@@ -208,7 +204,7 @@ test_start "Preflight check functions"
 test_start "wiggum clean handles missing workers"
 (
     # Should not fail when no workers exist
-    "$WIGGUM_HOME/bin/wiggum-clean" all > /dev/null 2>&1 || true
+    "$WIGGUM_HOME/bin/wiggum-clean" -y all > /dev/null 2>&1 || true
     true
 ) && test_pass || test_fail "Clean command failed"
 

@@ -115,14 +115,14 @@ _pipeline_run_step() {
     local project_dir="$3"
     local workspace="$4"
 
-    local step_id step_agent blocking readonly commit_after
+    local step_id step_agent blocking step_readonly commit_after
     step_id=$(pipeline_get "$idx" ".id")
     step_agent=$(pipeline_get "$idx" ".agent")
     blocking=$(pipeline_get "$idx" ".blocking" "true")
-    readonly=$(pipeline_get "$idx" ".readonly" "false")
+    step_readonly=$(pipeline_get "$idx" ".readonly" "false")
     commit_after=$(pipeline_get "$idx" ".commit_after" "false")
 
-    log "Running pipeline step: $step_id (agent=$step_agent, blocking=$blocking, readonly=$readonly)"
+    log "Running pipeline step: $step_id (agent=$step_agent, blocking=$blocking, readonly=$step_readonly)"
 
     # Emit activity log event
     local _worker_id
@@ -147,7 +147,7 @@ _pipeline_run_step() {
     _run_step_hooks "pre" "$idx" "$worker_dir" "$project_dir" "$workspace"
 
     # Export readonly flag for agent-registry's git checkpoint logic
-    export WIGGUM_STEP_READONLY="$readonly"
+    export WIGGUM_STEP_READONLY="$step_readonly"
 
     # Run the agent
     run_sub_agent "$step_agent" "$worker_dir" "$project_dir"
@@ -199,7 +199,7 @@ _pipeline_run_step() {
     fi
 
     # Commit changes if configured (and not readonly)
-    if [ "$commit_after" = "true" ] && [ "$readonly" != "true" ]; then
+    if [ "$commit_after" = "true" ] && [ "$step_readonly" != "true" ]; then
         _commit_subagent_changes "$workspace" "$step_agent"
     fi
 
@@ -224,10 +224,10 @@ _handle_fix_retry() {
     local project_dir="$3"
     local workspace="$4"
 
-    local step_id step_agent readonly fix_agent max_attempts fix_commit
+    local step_id step_agent step_readonly fix_agent max_attempts fix_commit
     step_id=$(pipeline_get "$idx" ".id")
     step_agent=$(pipeline_get "$idx" ".agent")
-    readonly=$(pipeline_get "$idx" ".readonly" "false")
+    step_readonly=$(pipeline_get "$idx" ".readonly" "false")
     fix_agent=$(pipeline_get_fix "$idx" ".agent")
     max_attempts=$(pipeline_get_fix "$idx" ".max_attempts" "2")
     fix_commit=$(pipeline_get_fix "$idx" ".commit_after" "true")
@@ -250,7 +250,7 @@ _handle_fix_retry() {
         export WIGGUM_STEP_ID="$verify_id"
 
         # Set readonly flag for verification if the step is readonly
-        export WIGGUM_STEP_READONLY="$readonly"
+        export WIGGUM_STEP_READONLY="$step_readonly"
         run_sub_agent "$step_agent" "$worker_dir" "$project_dir"
         unset WIGGUM_STEP_READONLY
 

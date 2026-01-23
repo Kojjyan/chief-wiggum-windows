@@ -13,6 +13,9 @@ with_file_lock() {
 
     while [ $retry -lt "$max_retries" ]; do
         # Try to acquire lock with flock
+        # Note: lock file is intentionally NOT removed after use.
+        # Removing it creates a TOCTOU race where concurrent processes
+        # can hold locks on different inodes simultaneously.
         (
             flock -w 10 200 || exit 1
 
@@ -24,8 +27,6 @@ with_file_lock() {
         local result=$?
 
         if [ $result -eq 0 ]; then
-            # Success - clean up lock file
-            rm -f "$lock_file"
             return 0
         fi
 
@@ -36,8 +37,6 @@ with_file_lock() {
         fi
     done
 
-    # All retries failed
-    rm -f "$lock_file"
     return 1
 }
 
@@ -50,9 +49,13 @@ update_kanban_status() {
     local task_id="$2"
     local new_status="$3"
 
+    # Escape sed special characters in task_id
+    local escaped_task_id
+    escaped_task_id=$(printf '%s' "$task_id" | sed 's/[&/\]/\\&/g')
+
     # Match any status and replace with new status
     with_file_lock "$kanban_file" 5 \
-        sed -i "s/- \[[^\]]*\] \*\*\[$task_id\]\*\*/- [$new_status] **[$task_id]**/" "$kanban_file"
+        sed -i "s/- \[[^\]]*\] \*\*\[$escaped_task_id\]\*\*/- [$new_status] **[$escaped_task_id]**/" "$kanban_file"
 }
 
 # Update kanban.md to mark complete with locking (convenience function)

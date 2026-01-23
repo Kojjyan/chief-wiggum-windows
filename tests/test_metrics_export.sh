@@ -99,8 +99,7 @@ test_export_metrics_empty_workers_dir_writes_valid_json() {
     assert_file_exists "$output_file" "metrics.json should be created"
 
     # Validate JSON structure
-    local valid
-    valid=$(jq '.' "$output_file" 2>&1)
+    jq '.' "$output_file" > /dev/null 2>&1
     local exit_code=$?
     assert_equals "0" "$exit_code" "Output should be valid JSON"
 

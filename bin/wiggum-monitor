@@ -148,7 +148,7 @@ case "$mode" in
         echo "=== Activity Log ==="
         echo "Press Ctrl+C to stop"
         echo
-        local activity_file="$RALPH_DIR/logs/activity.jsonl"
+        activity_file="$RALPH_DIR/logs/activity.jsonl"
         if [ ! -f "$activity_file" ]; then
             echo "No activity log found yet. Run 'wiggum run' to generate events."
             exit 0

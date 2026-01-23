@@ -22,35 +22,37 @@ FIXTURES_DIR="$TESTS_DIR/fixtures"
 # =============================================================================
 
 # Assert that a command succeeds (exit code 0)
+# Usage: assert_success "message" command arg1 arg2...
 assert_success() {
-    local command="$1"
-    local message="${2:-Command should succeed}"
+    local message="${1:-Command should succeed}"
+    shift
 
     ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
 
-    if eval "$command" >/dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} $message"
         return 0
     else
         echo -e "  ${RED}✗${NC} $message"
         echo -e "    ${RED}Expected: success (exit 0)${NC}"
-        echo -e "    ${RED}Command: $command${NC}"
+        echo -e "    ${RED}Command: $*${NC}"
         FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
         return 1
     fi
 }
 
 # Assert that a command fails (non-zero exit code)
+# Usage: assert_failure "message" command arg1 arg2...
 assert_failure() {
-    local command="$1"
-    local message="${2:-Command should fail}"
+    local message="${1:-Command should fail}"
+    shift
 
     ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
 
-    if eval "$command" >/dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         echo -e "  ${RED}✗${NC} $message"
         echo -e "    ${RED}Expected: failure (non-zero exit)${NC}"
-        echo -e "    ${RED}Command: $command${NC}"
+        echo -e "    ${RED}Command: $*${NC}"
         FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
         return 1
     else
@@ -168,7 +170,7 @@ assert_file_contains() {
         return 1
     fi
 
-    if grep -q "$pattern" "$file_path"; then
+    if grep -qF -- "$pattern" "$file_path"; then
         echo -e "  ${GREEN}✓${NC} $message"
         return 0
     else
@@ -195,7 +197,7 @@ assert_file_not_contains() {
         return 1
     fi
 
-    if grep -q "$pattern" "$file_path"; then
+    if grep -qF -- "$pattern" "$file_path"; then
         echo -e "  ${RED}✗${NC} $message"
         echo -e "    ${RED}Pattern found (should not be): $pattern${NC}"
         echo -e "    ${RED}In file: $file_path${NC}"
@@ -215,13 +217,58 @@ assert_output_contains() {
 
     ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
 
-    if echo "$output" | grep -q "$pattern"; then
+    if echo "$output" | grep -qF -- "$pattern"; then
         echo -e "  ${GREEN}✓${NC} $message"
         return 0
     else
         echo -e "  ${RED}✗${NC} $message"
         echo -e "    ${RED}Pattern not found: $pattern${NC}"
         echo -e "    ${RED}In output: $output${NC}"
+        FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
+        return 1
+    fi
+}
+
+# Assert that output does not contain a pattern
+assert_output_not_contains() {
+    local output="$1"
+    local pattern="$2"
+    local message="${3:-Output should not contain pattern: $pattern}"
+
+    ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
+
+    if echo "$output" | grep -qF -- "$pattern"; then
+        echo -e "  ${RED}✗${NC} $message"
+        echo -e "    ${RED}Pattern found (should not be): $pattern${NC}"
+        echo -e "    ${RED}In output: $output${NC}"
+        FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
+        return 1
+    else
+        echo -e "  ${GREEN}✓${NC} $message"
+        return 0
+    fi
+}
+
+# Assert that a command exits with a specific code
+# Usage: assert_exit_code expected_code "message" command arg1 arg2...
+assert_exit_code() {
+    local expected_code="$1"
+    local message="${2:-Command should exit with code $expected_code}"
+    shift 2
+
+    ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
+
+    local actual_code=0
+    "$@" >/dev/null 2>&1 || actual_code=$?
+
+    if [ "$actual_code" -eq "$expected_code" ]; then
+        echo -e "  ${GREEN}✓${NC} $message"
+        return 0
+    else
+        echo -e "  ${RED}✗${NC} $message"
+        echo -e "    ${RED}Expected exit code: $expected_code${NC}"
+        echo -e "    ${RED}Actual exit code:   $actual_code${NC}"
+        echo -e "    ${RED}Command: $*${NC}"
         FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
         return 1
     fi
@@ -310,15 +357,28 @@ run_test() {
     # Run setup
     setup
 
+    # Time the test
+    local _test_start _test_end _test_ms
+    _test_start=$(date +%s%N 2>/dev/null || date +%s)
+
     # Run the test
     local test_result=0
     "$test_name" || test_result=$?
+
+    _test_end=$(date +%s%N 2>/dev/null || date +%s)
+    _test_ms=$(( (_test_end - _test_start) / 1000000 ))
+    if [ $_test_ms -gt 0 ]; then
+        echo -e "  ${DIM}(${_test_ms}ms)${NC}"
+    fi
 
     # Run teardown
     teardown
 
     return $test_result
 }
+
+# Dim color for timing output
+DIM='\033[2m'
 
 # =============================================================================
 # Test Result Functions

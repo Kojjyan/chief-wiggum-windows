@@ -49,10 +49,8 @@ test_emit_event_writes_valid_json() {
     assert_file_contains "$events_file" '"key":"value"' "Should contain data fields"
 
     # Validate JSON with jq
-    local valid
-    valid=$(jq -c '.' "$events_file" 2>&1)
-    local exit_code=$?
-    assert_equals "0" "$exit_code" "Output should be valid JSON"
+    jq -c '.' "$events_file" > /dev/null 2>&1
+    assert_equals "0" "$?" "Output should be valid JSON"
 }
 
 test_emit_event_without_data_creates_minimal_event() {
@@ -149,8 +147,7 @@ test_emit_error_escapes_quotes_in_message() {
     assert_file_contains "$events_file" '"worker_id":"worker-ERR-500"' "Should include worker_id"
 
     # Verify the line is still valid JSON despite quotes in message
-    local valid
-    valid=$(jq -c '.' "$events_file" 2>&1)
+    jq -c '.' "$events_file" > /dev/null 2>&1
     local exit_code=$?
     assert_equals "0" "$exit_code" "Should produce valid JSON even with quotes in message"
 }
@@ -209,8 +206,7 @@ test_emit_violation_escapes_quotes_in_details() {
     assert_file_contains "$events_file" '"worker_id":"worker-VIO-800"' "Should include worker_id"
 
     # Verify valid JSON despite quotes in details
-    local valid
-    valid=$(jq -c '.' "$events_file" 2>&1)
+    jq -c '.' "$events_file" > /dev/null 2>&1
     local exit_code=$?
     assert_equals "0" "$exit_code" "Should produce valid JSON even with quotes in details"
 }

@@ -116,7 +116,7 @@ get_valid_worker_pid() {
 
     # Verify it's the expected process type (bash for agent subshells)
     if [ -n "$process_pattern" ]; then
-        if ! ps -p "$pid" -o args= 2>/dev/null | grep -q "$process_pattern"; then
+        if ! ps -p "$pid" -o args= 2>/dev/null | grep -qF -- "$process_pattern"; then
             return 1
         fi
     fi

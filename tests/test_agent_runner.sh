@@ -60,7 +60,7 @@ test_init_creates_agent_directory() {
     mkdir -p "$project_dir"
 
     # Agent dir does not exist yet
-    assert_failure "[ -d '$agent_dir' ]" "Agent dir should not exist before init"
+    assert_failure "Agent dir should not exist before init" test -d "$agent_dir"
 
     agent_runner_init "$agent_dir" "$project_dir" 0
 
@@ -155,7 +155,7 @@ test_interrupted_returns_1_when_not_interrupted() {
 
     agent_runner_init "$agent_dir" "$project_dir" 0
 
-    assert_failure "agent_runner_interrupted" "Should return 1 (false) when not interrupted"
+    assert_failure "Should return 1 (false) when not interrupted" agent_runner_interrupted
 
     agent_runner_cleanup
 }
@@ -175,8 +175,8 @@ test_detect_violations_returns_0_when_no_flag() {
     local workspace="$TEST_DIR/workspace"
     mkdir -p "$workspace"
 
-    assert_success "agent_runner_detect_violations '$workspace' '$project_dir'" \
-        "Should return 0 when no violation flag exists"
+    assert_success "Should return 0 when no violation flag exists" \
+        agent_runner_detect_violations "$workspace" "$project_dir"
 
     agent_runner_cleanup
 }
@@ -196,8 +196,8 @@ test_detect_violations_returns_1_when_flag_exists() {
     local workspace="$TEST_DIR/workspace"
     mkdir -p "$workspace"
 
-    assert_failure "agent_runner_detect_violations '$workspace' '$project_dir'" \
-        "Should return 1 when violation flag exists"
+    assert_failure "Should return 1 when violation flag exists" \
+        agent_runner_detect_violations "$workspace" "$project_dir"
 
     agent_runner_cleanup
 }

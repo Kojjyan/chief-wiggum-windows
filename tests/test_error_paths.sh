@@ -100,7 +100,7 @@ test_file_lock_concurrent_serialization() {
     }
 
     # Run 5 sequential locked increments - should serialize perfectly
-    for i in $(seq 1 5); do
+    for _i in $(seq 1 5); do
         with_file_lock "$shared_file" 5 _test_increment "$shared_file"
     done
 
@@ -113,7 +113,7 @@ test_file_lock_concurrent_serialization() {
     echo "0" > "$shared_file"
 
     local pids=()
-    for i in $(seq 1 5); do
+    for _i in $(seq 1 5); do
         (
             source "$WIGGUM_HOME/lib/core/file-lock.sh"
             _bg_increment() {
@@ -122,7 +122,7 @@ test_file_lock_concurrent_serialization() {
                 v=$(cat "$f")
                 echo $((v + 1)) > "$f"
             }
-            for j in $(seq 1 10); do
+            for _j in $(seq 1 10); do
                 with_file_lock "$shared_file" 10 _bg_increment "$shared_file"
             done
         ) &
@@ -135,14 +135,8 @@ test_file_lock_concurrent_serialization() {
 
     final_val=$(cat "$shared_file")
 
-    # Verify the result is a valid positive integer (no file corruption)
-    ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
-    if [[ "$final_val" =~ ^[0-9]+$ ]] && [ "$final_val" -gt 0 ]; then
-        echo -e "  ${GREEN}✓${NC} Concurrent result is a valid positive number: $final_val"
-    else
-        echo -e "  ${RED}✗${NC} Concurrent result is corrupted: '$final_val'"
-        FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
-    fi
+    # Verify the result is exactly 50 (5 processes x 10 increments each)
+    assert_equals "50" "$final_val" "5 processes x 10 increments should yield exactly 50"
 }
 
 # =============================================================================
