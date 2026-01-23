@@ -24,7 +24,7 @@ source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
 _extract_supervisor_decision() {
     local log_file="$1"
     local decision
-    decision=$(grep -oP '(?<=<decision>)(CONTINUE|STOP|RESTART)(?=</decision>)' "$log_file" 2>/dev/null | head -1)
+    decision=$(grep -oP '(?<=<decision>)(CONTINUE|STOP|RESTART)(?=</decision>)' "$log_file" 2>/dev/null | head -1) || true
 
     # Default to CONTINUE if not found or invalid
     if [ -z "$decision" ]; then

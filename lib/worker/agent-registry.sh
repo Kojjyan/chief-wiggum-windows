@@ -204,6 +204,9 @@ run_agent() {
 
     log "Running top-level agent: $agent_type"
 
+    # Initialize activity log for this project
+    activity_init "$project_dir"
+
     # Emit activity log event
     local _a_worker_id
     _a_worker_id=$(basename "$worker_dir" 2>/dev/null || echo "")

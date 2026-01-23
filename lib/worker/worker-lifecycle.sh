@@ -232,7 +232,7 @@ scan_active_workers() {
             task_id=$(get_task_id_from_worker "$worker_id")
 
             local pid
-            pid=$(get_valid_worker_pid "$pid_file" "bash")
+            pid=$(get_valid_worker_pid "$pid_file" "bash") || true
             if [ -n "$pid" ]; then
                 echo "$pid $task_id $worker_id"
             else

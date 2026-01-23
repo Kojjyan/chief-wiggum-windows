@@ -183,7 +183,7 @@ calculate_latest_context_usage() {
 
     # Get the latest result entry
     local result
-    result=$(grep '"type":"result"' "$latest_log" | tail -1)
+    result=$(grep '"type":"result"' "$latest_log" | tail -1) || true
 
     if [ -z "$result" ]; then
         return 1

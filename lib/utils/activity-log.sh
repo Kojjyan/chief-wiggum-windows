@@ -52,7 +52,7 @@ activity_log() {
 
     # Skip if not initialized
     if [ -z "$_ACTIVITY_LOG_FILE" ]; then
-        return 1
+        return 0
     fi
 
     local ts

@@ -36,6 +36,7 @@ validate_json_file() {
 #   config_file - Path to config.json (defaults to $WIGGUM_HOME/config/config.json)
 #
 # Returns: 0 if valid, 1 if invalid
+# shellcheck disable=SC2120
 validate_config() {
     local config_file="${1:-$WIGGUM_HOME/config/config.json}"
     local errors=0
@@ -140,6 +141,7 @@ validate_config() {
 #   agents_file - Path to agents.json (defaults to $WIGGUM_HOME/config/agents.json)
 #
 # Returns: 0 if valid, 1 if invalid
+# shellcheck disable=SC2120
 validate_agents_config() {
     local agents_file="${1:-$WIGGUM_HOME/config/agents.json}"
     local errors=0

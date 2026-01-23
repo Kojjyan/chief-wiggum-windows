@@ -110,7 +110,7 @@ for i in "${!worker_pids[@]}"; do
     # Get context usage if available
     context_info=""
     if [ -d "$worker_dir/logs" ]; then
-        context_result=$(calculate_latest_context_usage "$worker_dir/logs" 2>/dev/null)
+        context_result=$(calculate_latest_context_usage "$worker_dir/logs" 2>/dev/null) || true
         if [ -n "$context_result" ]; then
             read -r model_name _context_tokens _context_size context_percent <<< "$context_result"
             context_info=" - [$model_name] Context: ${context_percent}%"

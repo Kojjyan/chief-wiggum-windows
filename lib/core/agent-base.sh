@@ -727,7 +727,8 @@ _extract_text_from_stream_json() {
     fi
 
     grep '"type":"assistant"' "$log_file" 2>/dev/null | \
-        jq -r 'select(.message.content[]? | .type == "text") | .message.content[] | select(.type == "text") | .text' 2>/dev/null
+        jq -r 'select(.message.content[]? | .type == "text") | .message.content[] | select(.type == "text") | .text' 2>/dev/null \
+        || true
 }
 
 # Extract the LAST occurrence of a result value from stream-JSON
@@ -749,7 +750,8 @@ _extract_result_value_from_stream_json() {
     # Extract text, find all <result>VALUE</result> matches, take LAST one
     _extract_text_from_stream_json "$log_file" | \
         grep -oP "(?<=<result>)(${valid_values})(?=</result>)" 2>/dev/null | \
-        tail -1
+        tail -1 \
+        || true
 }
 
 # Extract content between the LAST occurrence of XML-style tags from stream-JSON
@@ -771,7 +773,7 @@ _extract_tag_content_from_stream_json() {
     # Extract text content first, then find the last occurrence of the tag
     # Use tac to reverse lines, find first match (which is last in original), reverse back
     local extracted_text
-    extracted_text=$(_extract_text_from_stream_json "$log_file")
+    extracted_text=$(_extract_text_from_stream_json "$log_file") || true
 
     if [ -z "$extracted_text" ]; then
         return 1
@@ -819,7 +821,7 @@ agent_extract_and_write_result() {
     if [ -n "$log_file" ] && [ -f "$log_file" ]; then
         # Extract report content and save using agent_write_report
         local report_content
-        report_content=$(_extract_tag_content_from_stream_json "$log_file" "$report_tag")
+        report_content=$(_extract_tag_content_from_stream_json "$log_file" "$report_tag") || true
 
         if [ -n "$report_content" ]; then
             local report_path
@@ -828,7 +830,7 @@ agent_extract_and_write_result() {
         fi
 
         # Extract result value (LAST occurrence to avoid matching examples in prompts)
-        result=$(_extract_result_value_from_stream_json "$log_file" "$valid_values")
+        result=$(_extract_result_value_from_stream_json "$log_file" "$valid_values") || true
         if [ -z "$result" ]; then
             result="UNKNOWN"
         fi

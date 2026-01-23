@@ -60,7 +60,7 @@ pipeline_run_all() {
             local env_val="${!enabled_by:-}"
             if [ "$env_val" != "true" ]; then
                 log_debug "Skipping step '$step_id' (enabled_by=$enabled_by is not 'true')"
-                ((i++))
+                ((++i))
                 continue
             fi
         fi
@@ -73,7 +73,7 @@ pipeline_run_all() {
             dep_result=$(agent_read_step_result "$worker_dir" "$depends_on")
             if [ "$dep_result" = "FAIL" ] || [ "$dep_result" = "UNKNOWN" ]; then
                 log "Skipping step '$step_id' (depends_on '$depends_on' result: $dep_result)"
-                ((i++))
+                ((++i))
                 continue
             fi
         fi
@@ -94,7 +94,7 @@ pipeline_run_all() {
             fi
         fi
 
-        ((i++))
+        ((++i))
     done
 
     return 0
@@ -271,7 +271,7 @@ _handle_fix_retry() {
         fi
 
         # Still FIX - try again
-        ((attempt++))
+        ((++attempt))
     done
 
     log_error "Fix retry exhausted ($max_attempts attempts) for step '$step_id'"
@@ -339,7 +339,7 @@ _run_step_hooks() {
             fi
         ) || log_warn "$phase hook failed for step '$step_id': $cmd"
 
-        ((h++))
+        ((++h))
     done
 }
 

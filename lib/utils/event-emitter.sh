@@ -26,6 +26,7 @@ _get_events_log() {
 #
 # Args:
 #   project_dir - Project directory (optional)
+# shellcheck disable=SC2120
 events_init() {
     local project_dir="${1:-${PROJECT_DIR:-.}}"
     local events_log

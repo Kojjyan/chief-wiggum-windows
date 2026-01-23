@@ -51,7 +51,7 @@ source "$WIGGUM_HOME/lib/pipeline/pipeline-loader.sh"
 source "$WIGGUM_HOME/lib/pipeline/pipeline-runner.sh"
 
 # Phase timing tracking
-declare -A PHASE_TIMINGS
+declare -gA PHASE_TIMINGS
 
 _phase_start() {
     local phase="$1"
@@ -80,7 +80,7 @@ _build_phase_timings_json() {
             json+="\"$phase\":{\"start\":$start,\"end\":$end,\"duration_s\":$duration}"
             first=false
         fi
-        ((p++))
+        ((++p))
     done
     # Also include finalization phase
     local start="${PHASE_TIMINGS[finalization_start]:-0}"
@@ -256,12 +256,12 @@ agent_run() {
             cd "$workspace" || return 1
 
             # Get task description from kanban for commit message
-            task_desc=$(grep -F "**[$task_id]**" "$project_dir/.ralph/kanban.md" | sed 's/.*\*\*\[.*\]\*\* //' | head -1)
+            task_desc=$(grep -F "**[$task_id]**" "$project_dir/.ralph/kanban.md" | sed 's/.*\*\*\[.*\]\*\* //' | head -1) || true
             log_debug "Task description: ${task_desc:-<empty>}"
 
             # Get task priority
             local task_priority
-            task_priority=$(grep -F -A2 "**[$task_id]**" "$project_dir/.ralph/kanban.md" | grep "Priority:" | sed 's/.*Priority: //')
+            task_priority=$(grep -F -A2 "**[$task_id]**" "$project_dir/.ralph/kanban.md" | grep "Priority:" | sed 's/.*Priority: //') || true
             log_debug "Task priority: ${task_priority:-<empty>}"
 
             # Create commit using shared library

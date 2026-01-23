@@ -450,7 +450,7 @@ _extract_decision() {
 
     # Extract assistant text from stream-JSON (shared utility)
     local full_text
-    full_text=$(_extract_text_from_stream_json "$log_file")
+    full_text=$(_extract_text_from_stream_json "$log_file") || true
 
     if [ -z "$full_text" ]; then
         log_error "No assistant text found in resume-decide log"
@@ -463,7 +463,7 @@ _extract_decision() {
     local step
     step=$(echo "$full_text" | \
         grep -oP '(?<=<step>)(execution|audit|test|docs|validation|finalization|ABORT)(?=</step>)' 2>/dev/null | \
-        tail -1)
+        tail -1) || true
 
     if [ -z "$step" ]; then
         log_error "No valid <step> tag found in resume-decide output"
@@ -476,7 +476,7 @@ _extract_decision() {
 
     # Extract instructions from <instructions>...</instructions> (shared utility)
     local instructions
-    instructions=$(_extract_tag_content_from_stream_json "$log_file" "instructions")
+    instructions=$(_extract_tag_content_from_stream_json "$log_file" "instructions") || true
 
     if [ -z "$instructions" ]; then
         instructions="Resuming from step: $step. No detailed instructions available."

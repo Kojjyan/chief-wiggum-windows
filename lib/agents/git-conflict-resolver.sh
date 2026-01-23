@@ -253,7 +253,7 @@ _extract_resolution_summary() {
     if [ -n "$log_file" ] && [ -f "$log_file" ]; then
         # Extract summary content between <summary> tags
         local extracted
-        extracted=$(_extract_tag_content_from_stream_json "$log_file" "summary")
+        extracted=$(_extract_tag_content_from_stream_json "$log_file" "summary") || true
         if [ -n "$extracted" ]; then
             report_content="$extracted"
         fi
