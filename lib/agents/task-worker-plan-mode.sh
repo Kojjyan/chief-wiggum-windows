@@ -46,29 +46,58 @@ agent_source_registry
 # Source exit codes for standardized returns
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 
-# Step ordering for resume support
-_step_order() {
-    case "$1" in
-        execution)    echo 0 ;;
-        audit)        echo 1 ;;
-        test)         echo 2 ;;
-        docs)         echo 3 ;;
-        validation)   echo 4 ;;
-        finalization) echo 5 ;;
-        *)            echo 0 ;;
-    esac
+# Ordered pipeline phases
+TASK_PIPELINE=(execution audit test docs validation finalization)
+
+_index_of() {
+    local target="$1"
+    shift
+    local i=0
+    for item in "$@"; do
+        [ "$item" = "$target" ] && { echo $i; return 0; }
+        ((i++))
+    done
+    echo 0  # default to first
 }
 
 _should_run_step() {
-    local current_step="$1"
-    local start_step="$2"
-    [ "$(_step_order "$current_step")" -ge "$(_step_order "$start_step")" ]
+    local current="$1"
+    local start="$2"
+    local current_idx start_idx
+    current_idx=$(_index_of "$current" "${TASK_PIPELINE[@]}")
+    start_idx=$(_index_of "$start" "${TASK_PIPELINE[@]}")
+    [ "$current_idx" -ge "$start_idx" ]
 }
 
-# Save references to sourced kanban functions before defining wrappers
-eval "_kanban_mark_done() $(declare -f update_kanban | sed '1d')"
-eval "_kanban_mark_failed() $(declare -f update_kanban_failed | sed '1d')"
-eval "_kanban_mark_pending_approval() $(declare -f update_kanban_pending_approval | sed '1d')"
+# Phase timing tracking
+declare -A PHASE_TIMINGS
+
+_phase_start() {
+    local phase="$1"
+    PHASE_TIMINGS["${phase}_start"]=$(date +%s)
+}
+
+_phase_end() {
+    local phase="$1"
+    PHASE_TIMINGS["${phase}_end"]=$(date +%s)
+}
+
+_build_phase_timings_json() {
+    local json="{"
+    local first=true
+    for phase in "${TASK_PIPELINE[@]}"; do
+        local start="${PHASE_TIMINGS[${phase}_start]:-0}"
+        local end="${PHASE_TIMINGS[${phase}_end]:-0}"
+        if [ "$start" -gt 0 ]; then
+            local duration=$((end - start))
+            [ "$first" = true ] || json+=","
+            json+="\"$phase\":{\"start\":$start,\"end\":$end,\"duration_s\":$duration}"
+            first=false
+        fi
+    done
+    json+="}"
+    echo "$json"
+}
 
 # Track plan file path for user prompt callback
 _TASK_PLAN_FILE=""
@@ -119,6 +148,58 @@ Co-Authored-By: Ralph Wiggum <ralph@wiggum.local>"
         log_warn "Failed to commit $agent_name changes"
         return 1
     fi
+}
+
+# Run a quality gate sub-agent with standardized result handling
+#
+# Args:
+#   agent_name   - Sub-agent to run (e.g., "security-audit")
+#   result_key   - Key for agent_read_subagent_result (e.g., "SECURITY_result")
+#   result_file  - Fallback result file name (e.g., "security-result.txt")
+#   blocking     - "true" if FAIL/STOP should fail the task (default: true)
+#   workspace    - Workspace directory for committing changes
+#
+# Sets:
+#   GATE_RESULT  - The result string (PASS/FAIL/STOP/SKIP/UNKNOWN)
+#
+# Returns: 0 if gate passed/skipped, 1 if gate blocked (only when blocking=true)
+_run_quality_gate() {
+    local agent_name="$1"
+    local result_key="$2"
+    local result_file="$3"
+    local blocking="${4:-true}"
+    local workspace="$5"
+
+    log "Running $agent_name on completed work"
+    run_sub_agent "$agent_name" "$worker_dir" "$project_dir"
+
+    GATE_RESULT=$(agent_read_subagent_result "$worker_dir" "$result_key" "$result_file")
+    log "$agent_name result: $GATE_RESULT"
+
+    case "$GATE_RESULT" in
+        PASS)
+            log "$agent_name passed"
+            _commit_subagent_changes "$workspace" "$agent_name"
+            return 0
+            ;;
+        SKIP)
+            log "$agent_name skipped (not applicable)"
+            return 0
+            ;;
+        FAIL|STOP|FIX)
+            if [ "$blocking" = "true" ]; then
+                log_error "$agent_name failed - blocking task completion"
+                return 1
+            fi
+            _commit_subagent_changes "$workspace" "$agent_name"
+            return 0
+            ;;
+        *)
+            log_warn "$agent_name result unknown ($GATE_RESULT) - continuing"
+            _commit_subagent_changes "$workspace" "$agent_name"
+            return 0
+            ;;
+    esac
 }
 
 # Main entry point - manages complete task lifecycle with planning
@@ -217,6 +298,8 @@ agent_run() {
     local loop_result=0
 
     if _should_run_step "execution" "$start_from_step"; then
+        _phase_start "execution"
+
         # Supervisor interval (run supervisor every N iterations)
         local supervisor_interval="${WIGGUM_SUPERVISOR_INTERVAL:-2}"
 
@@ -229,6 +312,7 @@ agent_run() {
             "$supervisor_interval"
 
         loop_result=$?
+        _phase_end "execution"
     else
         log "Skipping execution phase (resuming from $start_from_step)"
     fi
@@ -253,103 +337,41 @@ agent_run() {
 
     # === SECURITY AUDIT PHASE ===
     if [ -d "$workspace" ] && [ $loop_result -eq 0 ] && _should_run_step "audit" "$start_from_step"; then
-        log "Running security audit on completed work"
-        run_sub_agent "security-audit" "$worker_dir" "$project_dir"
-
-        # Check security audit result
-        local security_result
-        security_result=$(cat "$worker_dir/security-result.txt" 2>/dev/null || echo "UNKNOWN")
-        log "Security audit result: $security_result"
-
-        case "$security_result" in
-            PASS)
-                log "Security audit passed - no issues found"
-                ;;
-            FIX)
+        _phase_start "audit"
+        if ! _run_quality_gate "security-audit" "SECURITY_result" "security-result.txt" "true" "$workspace"; then
+            if [ "$GATE_RESULT" = "FIX" ]; then
                 log "Security audit found fixable issues - running security-fix agent"
                 run_sub_agent "security-fix" "$worker_dir" "$project_dir"
 
                 local fix_result
                 fix_result=$(cat "$worker_dir/fix-result.txt" 2>/dev/null || echo "UNKNOWN")
                 log "Security fix result: $fix_result"
-
-                # Commit security fix changes to isolate work
                 _commit_subagent_changes "$workspace" "security-fix"
 
                 if [ "$fix_result" != "FIXED" ]; then
                     log_warn "Security fix incomplete (result: $fix_result) - continuing with validation"
                 fi
-                ;;
-            STOP)
-                log_error "Security audit found fundamental/architectural issues - cannot proceed"
-                log_error "Review security-report.md for details"
-                # Mark as failed to prevent commit/PR
+            else
                 loop_result=1
-                ;;
-            *)
-                log_warn "Security audit result unknown ($security_result) - continuing with caution"
-                ;;
-        esac
+            fi
+        fi
+        _phase_end "audit"
     fi
 
     # === TEST COVERAGE PHASE ===
     if [ -d "$workspace" ] && [ $loop_result -eq 0 ] && _should_run_step "test" "$start_from_step"; then
-        log "Running test generation and execution on completed work"
-        run_sub_agent "test-coverage" "$worker_dir" "$project_dir"
-
-        # Check test result
-        local test_result
-        test_result=$(cat "$worker_dir/test-result.txt" 2>/dev/null || echo "UNKNOWN")
-        log "Test coverage result: $test_result"
-
-        case "$test_result" in
-            PASS)
-                log "Tests generated and all passed"
-                # Commit test changes to isolate work
-                _commit_subagent_changes "$workspace" "test-coverage"
-                ;;
-            FAIL)
-                log_error "Tests failed - marking task as failed"
-                log_error "Review test-report.md for details"
-                loop_result=1
-                ;;
-            SKIP)
-                log "Test generation skipped (no testable changes or no test infrastructure)"
-                ;;
-            *)
-                log_warn "Test result unknown ($test_result) - continuing with caution"
-                # Still try to commit any test changes made
-                _commit_subagent_changes "$workspace" "test-coverage"
-                ;;
-        esac
+        _phase_start "test"
+        if ! _run_quality_gate "test-coverage" "TEST_result" "test-result.txt" "true" "$workspace"; then
+            loop_result=1
+        fi
+        _phase_end "test"
     fi
 
     # === DOCUMENTATION WRITER PHASE ===
-    # Note: documentation-writer is non-blocking and never fails
     if [ -d "$workspace" ] && [ $loop_result -eq 0 ] && _should_run_step "docs" "$start_from_step"; then
-        log "Running documentation update on completed work"
-        run_sub_agent "documentation-writer" "$worker_dir" "$project_dir"
-
-        # Check docs result (informational only - never blocks)
-        local docs_result
-        docs_result=$(cat "$worker_dir/docs-result.txt" 2>/dev/null || echo "SKIP")
-        log "Documentation writer result: $docs_result"
-
-        case "$docs_result" in
-            PASS)
-                log "Documentation updated successfully"
-                # Commit documentation changes to isolate work
-                _commit_subagent_changes "$workspace" "documentation"
-                ;;
-            SKIP)
-                log "Documentation update skipped (no updates needed)"
-                ;;
-            *)
-                log "Documentation completed with result: $docs_result"
-                # Still try to commit any doc changes made
-                _commit_subagent_changes "$workspace" "documentation"
-                ;;
-        esac
+        _phase_start "docs"
+        _run_quality_gate "documentation-writer" "DOCS_result" "docs-result.txt" "false" "$workspace"
+        _phase_end "docs"
     fi
 
     # === VALIDATION PHASE ===
@@ -357,11 +379,13 @@ agent_run() {
     stop_violation_monitor "$VIOLATION_MONITOR_PID"
 
     if _should_run_step "validation" "$start_from_step"; then
+        _phase_start "validation"
         # Run validation-review as a nested sub-agent
         if [ -d "$workspace" ]; then
             log "Running validation review on completed work"
             run_sub_agent "validation-review" "$worker_dir" "$project_dir"
         fi
+        _phase_end "validation"
     else
         log "Skipping validation phase (resuming from $start_from_step)"
     fi
@@ -372,6 +396,7 @@ agent_run() {
         agent_log_complete "$worker_dir" "$loop_result" "$start_time"
         return $loop_result
     fi
+    _phase_start "finalization"
 
     _determine_finality "$worker_dir" "$workspace" "$project_dir" "$prd_file"
     local has_violations="$FINALITY_HAS_VIOLATIONS"
@@ -429,6 +454,8 @@ agent_run() {
         log "Skipping commit and PR creation - has_violations=$has_violations, final_status=$final_status"
     fi
 
+    _phase_end "finalization"
+
     # === CLEANUP PHASE ===
     _task_worker_cleanup "$worker_dir" "$project_dir" "$task_id" "$final_status" "$task_desc" "$pr_url"
 
@@ -444,20 +471,36 @@ agent_run() {
         result_status="partial"
     fi
 
+    # Read violation details if present
+    local violation_type="" violation_details=""
+    if [ -f "$worker_dir/violation_flag.txt" ]; then
+        violation_type=$(sed -n '3s/^Type: //p' "$worker_dir/violation_flag.txt")
+        violation_details=$(sed -n '4s/^Details: //p' "$worker_dir/violation_flag.txt")
+    fi
+
     # Build outputs JSON
+    local phase_timings_json
+    phase_timings_json=$(_build_phase_timings_json)
+
     local outputs_json
     outputs_json=$(jq -n \
         --arg pr_url "$pr_url" \
         --arg branch "${GIT_COMMIT_BRANCH:-}" \
         --arg commit_sha "$(cd "$workspace" 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "")" \
         --arg validation_result "$validation_result" \
+        --arg violation_type "$violation_type" \
+        --arg violation_details "$violation_details" \
         --arg plan_file "${_TASK_PLAN_FILE:-}" \
+        --argjson phases "$phase_timings_json" \
         '{
             pr_url: $pr_url,
             branch: $branch,
             commit_sha: $commit_sha,
             validation_result: $validation_result,
-            plan_file: $plan_file
+            violation_type: $violation_type,
+            violation_details: $violation_details,
+            plan_file: $plan_file,
+            phases: $phases
         }')
 
     agent_write_result "$worker_dir" "$result_status" "$result_exit_code" "$outputs_json"
@@ -557,12 +600,12 @@ _update_kanban_status() {
         # If no PR (gh CLI unavailable), mark as complete [x] directly
         if [ -n "$pr_url" ] && [ "$pr_url" != "N/A" ]; then
             log "Marking task $task_id as pending approval [P] in kanban (PR: $pr_url)"
-            if ! _kanban_mark_pending_approval "$project_dir/.ralph/kanban.md" "$task_id"; then
+            if ! update_kanban_pending_approval "$project_dir/.ralph/kanban.md" "$task_id"; then
                 log_error "Failed to update kanban.md after retries"
             fi
         else
             log "Marking task $task_id as complete [x] in kanban (no PR created)"
-            if ! _kanban_mark_done "$project_dir/.ralph/kanban.md" "$task_id"; then
+            if ! update_kanban "$project_dir/.ralph/kanban.md" "$task_id"; then
                 log_error "Failed to update kanban.md after retries"
             fi
         fi
@@ -584,7 +627,7 @@ _update_kanban_status() {
         log "Task worker $worker_id completed task $task_id"
     else
         log_error "Marking task $task_id as FAILED [*] in kanban"
-        if ! _kanban_mark_failed "$project_dir/.ralph/kanban.md" "$task_id"; then
+        if ! update_kanban_failed "$project_dir/.ralph/kanban.md" "$task_id"; then
             log_error "Failed to update kanban.md after retries"
         fi
         log_error "Task worker $worker_id failed task $task_id"
@@ -642,27 +685,22 @@ For subagent prompts, prepend:
 EOF
 }
 
-# User prompt callback for supervised ralph loop
-# Args: iteration, output_dir, supervisor_dir, supervisor_feedback
-_task_user_prompt() {
-    local iteration="$1"
-    local output_dir="$2"
-    local _supervisor_dir="$3"  # unused but part of callback signature
-    local supervisor_feedback="$4"
-    local prd_relative="../prd.md"
+# --- User prompt composable segments ---
 
-    # Include supervisor feedback if provided
-    if [ -n "$supervisor_feedback" ]; then
-        cat << SUPERVISOR_EOF
+_emit_supervisor_section() {
+    local feedback="$1"
+    [ -z "$feedback" ] && return
+    cat << EOF
 SUPERVISOR GUIDANCE:
 
-$supervisor_feedback
+$feedback
 
 ---
 
-SUPERVISOR_EOF
-    fi
+EOF
+}
 
+_emit_protocol_section() {
     cat << 'PROMPT_EOF'
 TASK EXECUTION PROTOCOL:
 
@@ -747,15 +785,17 @@ Before marking complete, verify:
 - Don't over-engineer or add unrequested features
 - Stay within the workspace directory
 PROMPT_EOF
+}
 
-    # Add plan guidance if plan file exists
-    if [ -n "$_TASK_PLAN_FILE" ] && [ -f "$_TASK_PLAN_FILE" ]; then
-        cat << PLAN_EOF
+_emit_plan_section() {
+    local plan_file="$1"
+    [ -z "$plan_file" ] || [ ! -f "$plan_file" ] && return
+    cat << PLAN_EOF
 
 IMPLEMENTATION PLAN AVAILABLE:
 
 An implementation plan has been created for this task. Before starting:
-1. Read the plan at: @$_TASK_PLAN_FILE
+1. Read the plan at: @$plan_file
 2. Follow the implementation approach described in the plan
 3. Pay attention to the Critical Files section
 4. Consider the potential challenges identified
@@ -766,13 +806,16 @@ The plan provides guidance on:
 - Dependencies and sequencing
 - Potential challenges to watch for
 PLAN_EOF
-    fi
+}
 
-    # Add resume instructions at iteration 0 if resuming
-    if [ "$iteration" -eq 0 ] && [ -n "$_TASK_RESUME_INSTRUCTIONS" ] && [ -f "$_TASK_RESUME_INSTRUCTIONS" ] && [ -s "$_TASK_RESUME_INSTRUCTIONS" ]; then
-        local resume_content
-        resume_content=$(cat "$_TASK_RESUME_INSTRUCTIONS")
-        cat << RESUME_EOF
+_emit_resume_section() {
+    local iteration="$1"
+    local resume_file="$2"
+    [ "$iteration" -ne 0 ] && return
+    [ -z "$resume_file" ] || [ ! -f "$resume_file" ] || [ ! -s "$resume_file" ] && return
+    local resume_content
+    resume_content=$(cat "$resume_file")
+    cat << RESUME_EOF
 
 CONTEXT FROM PREVIOUS SESSION (RESUMED):
 
@@ -789,13 +832,15 @@ Continue from where the previous session left off:
 
 CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window.
 RESUME_EOF
-    fi
+}
 
-    # Add context from previous iterations if available
-    if [ "$iteration" -gt 0 ]; then
-        local prev_iter=$((iteration - 1))
-        if [ -f "$output_dir/summaries/iteration-$prev_iter-summary.txt" ]; then
-            cat << CONTEXT_EOF
+_emit_context_section() {
+    local iteration="$1"
+    local output_dir="$2"
+    [ "$iteration" -le 0 ] && return
+    local prev_iter=$((iteration - 1))
+    [ -f "$output_dir/summaries/iteration-$prev_iter-summary.txt" ] || return
+    cat << CONTEXT_EOF
 
 CONTEXT FROM PREVIOUS ITERATION:
 
@@ -809,8 +854,21 @@ To understand what has already been accomplished and maintain continuity:
 
 CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window. Only read the summaries/iteration-X-summary.txt files for context.
 CONTEXT_EOF
-        fi
-    fi
+}
+
+# User prompt callback for supervised ralph loop
+# Args: iteration, output_dir, supervisor_dir, supervisor_feedback
+_task_user_prompt() {
+    local iteration="$1"
+    local output_dir="$2"
+    local _supervisor_dir="$3"  # unused but part of callback signature
+    local supervisor_feedback="$4"
+
+    _emit_supervisor_section "$supervisor_feedback"
+    _emit_protocol_section
+    _emit_plan_section "$_TASK_PLAN_FILE"
+    _emit_resume_section "$iteration" "$_TASK_RESUME_INSTRUCTIONS"
+    _emit_context_section "$iteration" "$output_dir"
 }
 
 # Completion check - check PRD for incomplete tasks
