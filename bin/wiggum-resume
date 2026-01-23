@@ -190,7 +190,7 @@ do_resume() {
 
     # === STEP 2: Run resume-decide agent ===
     echo "Analyzing previous run to decide resume step..."
-    run_agent "resume-decide" "$worker_dir" "$PROJECT_DIR" 0 1 10
+    run_agent "resume-decide" "$worker_dir" "$PROJECT_DIR" 0 1 25
 
     # === STEP 3: Read decision ===
     local resume_step
@@ -210,6 +210,16 @@ do_resume() {
         echo ""
         exit $EXIT_ERROR
     fi
+
+    # Validate step is one of the known values
+    case "$resume_step" in
+        execution|audit|test|docs|validation|finalization)
+            ;;
+        *)
+            echo "Error: Invalid resume step '$resume_step' (expected: execution, audit, test, docs, validation, finalization)"
+            exit $EXIT_ERROR
+            ;;
+    esac
 
     echo "Resume decision: start from '$resume_step' step"
     echo ""

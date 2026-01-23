@@ -40,7 +40,8 @@ agent_source_once
 agent_run() {
     local worker_dir="$1"
     local project_dir="$2"
-    local max_turns="${3:-10}"
+    # $3 is max_iterations (unused — this agent runs once)
+    local max_turns="${4:-25}"
 
     local conversations_dir="$worker_dir/conversations"
     local worker_log="$worker_dir/worker.log"
@@ -50,59 +51,16 @@ agent_run() {
     # Create standard directories
     agent_create_directories "$worker_dir"
 
-    # Build the conversation context by reading all conversation files
-    local conversation_text=""
-
-    # Read iteration conversations in order
-    if ls "$conversations_dir"/iteration-*.md >/dev/null 2>&1; then
-        for conv_file in $(ls "$conversations_dir"/iteration-*.md | sort -t- -k2 -n); do
-            [ -f "$conv_file" ] || continue
-            conversation_text+="
-=== $(basename "$conv_file" .md) ===
-
-$(cat "$conv_file")
-
-"
-        done
-    fi
-
-    # Read sub-agent conversations
-    for conv_file in "$conversations_dir"/*.md; do
-        [ -f "$conv_file" ] || continue
-        local base
-        base=$(basename "$conv_file" .md)
-        # Skip iteration files (already processed above)
-        case "$base" in iteration-*) continue ;; esac
-        conversation_text+="
-=== $base ===
-
-$(cat "$conv_file")
-
-"
-    done
-
-    # Read worker.log for phase-level events
-    local worker_log_text=""
-    if [ -f "$worker_log" ]; then
-        worker_log_text=$(cat "$worker_log")
-    fi
-
-    # Check if we have PRD to include status
-    local prd_status=""
-    if [ -f "$worker_dir/prd.md" ]; then
-        prd_status=$(cat "$worker_dir/prd.md")
-    fi
-
-    # Build user prompt with all context
+    # Build a lightweight user prompt with file paths for the agent to explore
     local user_prompt
-    user_prompt=$(_build_user_prompt "$conversation_text" "$worker_log_text" "$prd_status")
+    user_prompt=$(_build_user_prompt "$worker_dir")
 
-    # Run Claude once to get the decision
+    # Run Claude with tool access so it can read the files itself
     local workspace="$worker_dir"
     [ -d "$worker_dir/workspace" ] && workspace="$worker_dir/workspace"
 
     run_agent_once "$workspace" \
-        "$(_get_system_prompt)" \
+        "$(_get_system_prompt "$worker_dir")" \
         "$user_prompt" \
         "$worker_dir/logs/resume-decide.log" \
         "$max_turns"
@@ -133,23 +91,37 @@ $(cat "$conv_file")
 
 # System prompt for the resume-decide agent
 _get_system_prompt() {
-    cat << 'EOF'
+    local worker_dir="$1"
+
+    cat << EOF
 RESUME DECISION AGENT
 
 You are analyzing a previously interrupted worker run to decide where to resume from.
+You have access to tools (Read, Glob, Grep) to explore the worker directory and understand what happened.
+
+## Worker Directory
+
+All files are located under: $worker_dir
+
+Key paths to explore:
+- $worker_dir/worker.log — Phase-level status log (READ THIS FIRST)
+- $worker_dir/prd.md — The task requirements (check completion status)
+- $worker_dir/conversations/ — Converted conversation logs from the previous run
+  - iteration-*.md files show the main work loop conversations
+  - audit-*.md, test-*.md, etc. show sub-agent conversations
 
 ## Available Steps (in order)
 
-1. `execution` - The main work loop (ralph loop iterations). Resume here means restarting the ENTIRE work loop from scratch. You cannot resume between iterations.
-2. `audit` - Security audit phase
-3. `test` - Test coverage phase
-4. `docs` - Documentation writer phase
-5. `validation` - Validation review phase
-6. `finalization` - Commit/PR creation phase
+1. \`execution\` - The main work loop (ralph loop iterations). Resume here means restarting the ENTIRE work loop from scratch. You cannot resume between iterations.
+2. \`audit\` - Security audit phase
+3. \`test\` - Test coverage phase
+4. \`docs\` - Documentation writer phase
+5. \`validation\` - Validation review phase
+6. \`finalization\` - Commit/PR creation phase
 
 ## Decision Rules
 
-- If the execution phase (ralph loop) was interrupted mid-iteration, you MUST resume from `execution` (you cannot resume between iterations)
+- If the execution phase (ralph loop) was interrupted mid-iteration, you MUST resume from \`execution\` (you cannot resume between iterations)
 - If execution completed successfully (all PRD tasks marked [x]) but a later phase failed or wasn't reached, resume from that phase
 - If the worker failed due to a fundamental issue (bad PRD, impossible task, repeated failures), output ABORT
 - If all phases completed successfully, output ABORT (nothing to resume)
@@ -166,9 +138,10 @@ You are analyzing a previously interrupted worker run to decide where to resume 
 
 ## Output Format
 
-You MUST output your decision in these exact XML tags:
+You MUST output your decision in these exact XML tags.
+The step value MUST be exactly one of: execution, audit, test, docs, validation, finalization, ABORT
 
-<step>STEP_NAME_OR_ABORT</step>
+<step>execution|audit|test|docs|validation|finalization|ABORT</step>
 
 <instructions>
 Detailed instructions for the resumed worker. Include:
@@ -180,47 +153,41 @@ Detailed instructions for the resumed worker. Include:
 
 ## Important
 
+- Start by reading worker.log to understand the phase-level status
+- Then check prd.md for task completion status
+- Only read conversation files if you need more detail about what happened
 - Be thorough in your analysis but decisive in your output
 - The instructions will be injected into the resumed worker's prompt, so write them as guidance for a developer
 - If the workspace has code changes from completed execution, those changes are preserved
 EOF
 }
 
-# Build user prompt with conversation context
+# Build user prompt — lightweight, just tells the agent to explore
 _build_user_prompt() {
-    local conversation_text="$1"
-    local worker_log_text="$2"
-    local prd_status="$3"
+    local worker_dir="$1"
+
+    # List available conversation files for the agent's awareness
+    local conv_files=""
+    if [ -d "$worker_dir/conversations" ]; then
+        conv_files=$(ls "$worker_dir/conversations/"*.md 2>/dev/null | sort || true)
+    fi
 
     cat << EOF
-Analyze the following worker run and decide which step to resume from.
+Analyze the previous worker run and decide which step to resume from.
 
-## Worker Log (phase-level events)
+Start by reading these files:
+1. $worker_dir/worker.log — to understand which phases ran and their results
+2. $worker_dir/prd.md — to check task completion status
 
-\`\`\`
-$worker_log_text
-\`\`\`
+Available conversation logs (read as needed for detail):
+$conv_files
 
-## PRD Status
-
-\`\`\`markdown
-$prd_status
-\`\`\`
-
-## Conversation History
-
-The following are the converted conversation logs from the previous run, showing what the worker did:
-
-$conversation_text
-
----
-
-Based on the above, determine:
+Based on your analysis, determine:
 1. Which phases completed successfully?
 2. Where was the worker interrupted?
 3. What step should we resume from (or should we ABORT)?
 
-Provide your decision using the <step> and <instructions> tags as specified in the system prompt.
+Output your decision using the <step> and <instructions> XML tags.
 EOF
 }
 
