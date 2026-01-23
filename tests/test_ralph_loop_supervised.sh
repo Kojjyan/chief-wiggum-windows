@@ -264,7 +264,7 @@ test_config_loading_supervisor_interval_default() {
 
     load_agent_config "unknown-agent-type"
 
-    assert_equals "3" "$AGENT_CONFIG_SUPERVISOR_INTERVAL" "Default supervisor_interval should be 3"
+    assert_equals "2" "$AGENT_CONFIG_SUPERVISOR_INTERVAL" "Default supervisor_interval should be 2"
 }
 
 test_config_loading_max_restarts_default() {
@@ -282,7 +282,7 @@ test_config_loading_supervisor_settings_from_json() {
     load_agent_config "task-worker"
 
     # These should get the defaults from agents.json since task-worker doesn't override them
-    assert_equals "3" "$AGENT_CONFIG_SUPERVISOR_INTERVAL" "supervisor_interval from defaults"
+    assert_equals "2" "$AGENT_CONFIG_SUPERVISOR_INTERVAL" "supervisor_interval from defaults"
     assert_equals "2" "$AGENT_CONFIG_MAX_RESTARTS" "max_restarts from defaults"
 }
 
@@ -308,7 +308,7 @@ test_agents_json_supervisor_interval_value() {
     local value
     value=$(jq '.defaults.supervisor_interval' "$WIGGUM_HOME/config/agents.json" 2>/dev/null)
 
-    assert_equals "3" "$value" "supervisor_interval should be 3"
+    assert_equals "2" "$value" "supervisor_interval should be 2"
 }
 
 test_agents_json_max_restarts_value() {

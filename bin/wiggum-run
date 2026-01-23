@@ -372,7 +372,7 @@ main() {
         exit $EXIT_RUN_GIT_DIRTY
     fi
 
-    # Pre-flight checks: Ensure SSH and GPG keys are cached
+    # Pre-flight checks: Ensure SSH keys are cached and gh is authenticated
     log "Running pre-flight checks..."
 
     # Extract hostname from git remote
@@ -399,16 +399,15 @@ main() {
         fi
     fi
 
-    # Test GPG signing
-    echo "  → Testing GPG key..."
-    if echo "test" | gpg --clearsign >/dev/null 2>&1; then
-        echo "  ✓ GPG key is cached and ready"
+    # Test GitHub CLI authentication
+    echo "  → Checking gh auth status..."
+    if gh auth status &>/dev/null; then
+        echo "  ✓ GitHub CLI authenticated"
     else
-        log_error "GPG test failed. Please ensure your GPG key is unlocked."
+        log_error "gh auth check failed. Please log in with: gh auth login"
         echo ""
-        echo "Try running: echo 'test' | gpg --clearsign"
-        echo "You may need to unlock your GPG key or configure git signing."
-        exit $EXIT_RUN_GPG_FAILED
+        echo "Try running: gh auth status"
+        exit $EXIT_RUN_GH_AUTH_FAILED
     fi
 
     echo ""

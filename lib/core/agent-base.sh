@@ -218,7 +218,7 @@ load_agent_config() {
     AGENT_CONFIG_MAX_TURNS=30
     AGENT_CONFIG_TIMEOUT_SECONDS=3600
     AGENT_CONFIG_AUTO_COMMIT=false
-    AGENT_CONFIG_SUPERVISOR_INTERVAL=3
+    AGENT_CONFIG_SUPERVISOR_INTERVAL=2
     AGENT_CONFIG_MAX_RESTARTS=2
 
     # Load from config file if it exists
@@ -233,7 +233,7 @@ load_agent_config() {
             AGENT_CONFIG_MAX_TURNS=$(echo "$default_config" | jq -r '.max_turns // 30')
             AGENT_CONFIG_TIMEOUT_SECONDS=$(echo "$default_config" | jq -r '.timeout_seconds // 3600')
             AGENT_CONFIG_AUTO_COMMIT=$(echo "$default_config" | jq -r '.auto_commit // false')
-            AGENT_CONFIG_SUPERVISOR_INTERVAL=$(echo "$default_config" | jq -r '.supervisor_interval // 3')
+            AGENT_CONFIG_SUPERVISOR_INTERVAL=$(echo "$default_config" | jq -r '.supervisor_interval // 2')
             AGENT_CONFIG_MAX_RESTARTS=$(echo "$default_config" | jq -r '.max_restarts // 2')
         fi
 

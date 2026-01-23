@@ -155,7 +155,7 @@ SUPERVISOR_PROMPT_EOF
 #   max_turns           - Max turns per Claude session (default: 50)
 #   output_dir          - Directory for logs and summaries (default: workspace parent)
 #   session_prefix      - Prefix for session files (default: iteration)
-#   supervisor_interval - Run supervisor every M iterations (default: 3)
+#   supervisor_interval - Run supervisor every M iterations (default: 2)
 #   supervisor_prompt_fn - Callback: generates supervisor prompts (default: _default_supervisor_prompt)
 #   max_restarts        - Max RESTART decisions before forcing STOP (default: 2)
 #
@@ -169,7 +169,7 @@ run_ralph_loop_supervised() {
     local max_turns="${6:-50}"
     local output_dir="${7:-}"
     local session_prefix="${8:-iteration}"
-    local supervisor_interval="${9:-3}"
+    local supervisor_interval="${9:-2}"
     local supervisor_prompt_fn="${10:-_default_supervisor_prompt}"
     local max_restarts="${11:-2}"
 

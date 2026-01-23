@@ -218,7 +218,7 @@ agent_run() {
 
     if _should_run_step "execution" "$start_from_step"; then
         # Supervisor interval (run supervisor every N iterations)
-        local supervisor_interval="${WIGGUM_SUPERVISOR_INTERVAL:-3}"
+        local supervisor_interval="${WIGGUM_SUPERVISOR_INTERVAL:-2}"
 
         # Run main work loop with supervision
         run_ralph_loop_supervised "$workspace" \
