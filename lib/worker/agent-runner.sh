@@ -63,7 +63,7 @@ agent_runner_init() {
     trap '_agent_runner_signal_handler' INT TERM
 
     # NOTE: Violation monitoring is now handled by each agent individually
-    # (e.g., task-worker.sh starts its own log-based monitor)
+    # (e.g., system.task-worker starts its own log-based monitor)
     # The generic git-status-based monitor was removed because it caused
     # false positives when multiple workers run concurrently.
 

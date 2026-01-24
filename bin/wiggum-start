@@ -22,7 +22,7 @@ source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
 # Default configuration
 MAX_ITERATIONS=20
 MAX_TURNS=50
-AGENT_TYPE="task-worker"
+AGENT_TYPE="system.task-worker"
 
 show_help() {
     cat << EOF
@@ -41,7 +41,7 @@ Task ID Resolution:
 Options:
   --max-iters N   Maximum iterations per worker (default: 20)
   --max-turns N   Maximum turns per Claude session (default: 50)
-  --agent-type T  Agent type to use (default: task-worker)
+  --agent-type T  Agent type to use (default: system.task-worker)
   --pipeline NAME Pipeline config to use (from config/pipelines/ or .ralph/pipelines/)
   -h, --help      Show this help message
 
@@ -116,7 +116,7 @@ do_start() {
 
     echo "Starting worker $worker_id for task $task_id"
 
-    # Launch task-worker agent in background
+    # Launch agent in background
     # run_agent writes PID to agent.pid - orchestrator can poll for it
     # Use setsid to create a new session/process group for the worker
     # This prevents SIGINT from the orchestrator from killing workers

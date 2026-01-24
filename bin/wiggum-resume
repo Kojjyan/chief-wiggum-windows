@@ -39,7 +39,7 @@ The resume process:
   1. Converts worker logs to readable conversation format
   2. Runs an LLM agent to analyze what happened and decide the resume step
   3. Archives previous run artifacts (workspace is preserved)
-  4. Launches a fresh task-worker from the decided step
+  4. Launches a fresh system.task-worker from the decided step
 
 Resume Steps (in order):
   execution     - Restart the main work loop from scratch
@@ -246,14 +246,14 @@ do_resume() {
         usage_tracker_write_shared "$RALPH_DIR" > /dev/null 2>&1 || true
     fi
 
-    # === STEP 7: Launch task-worker ===
-    # Always use normal task-worker (not plan-mode) — it picks up existing plan files
-    echo "Launching task-worker from step: $resume_step"
+    # === STEP 7: Launch system.task-worker ===
+    # Always use normal system.task-worker (not plan-mode) — it picks up existing plan files
+    echo "Launching system.task-worker from step: $resume_step"
 
     mkdir -p "$RALPH_DIR/logs"
     (
         # Run agent in subshell to isolate it
-        run_agent "task-worker" "$worker_dir" "$PROJECT_DIR" 30 "$MAX_ITERATIONS" "$MAX_TURNS" \
+        run_agent "system.task-worker" "$worker_dir" "$PROJECT_DIR" 30 "$MAX_ITERATIONS" "$MAX_TURNS" \
             "$resume_step" "$worker_dir/reports/resume-instructions.md"
     ) >> "$RALPH_DIR/logs/workers.log" 2>&1 &
 

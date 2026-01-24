@@ -17,7 +17,7 @@ Chief Wiggum agents operate in isolated worker directories but need to share sta
 │   ├── 1705312200-security-audit-result.json   # Gate decision + metadata
 │   ├── 1705312500-security-fix-result.json     # Gate decision + metadata
 │   ├── 1705312800-validation-review-result.json
-│   └── 1705313100-task-worker-result.json
+│   └── 1705313100-system.task-worker-result.json
 ├── reports/
 │   ├── 1705312200-security-audit-report.md     # Analysis output
 │   ├── 1705312500-security-fix-report.md       # Status output
@@ -166,7 +166,7 @@ JSON checkpoints at `checkpoints/checkpoint-N.json`:
 ### Pattern: Parent → Sub-Agent
 
 ```bash
-# Parent agent (task-worker.sh)
+# Parent agent (system/task-worker.sh)
 agent_run() {
     local worker_dir="$1"
     local project_dir="$2"
@@ -241,7 +241,7 @@ Agents update task status in `.ralph/kanban.md`:
 | Marker | Status | Set By |
 |--------|--------|--------|
 | `[ ]` | TODO | Initial state |
-| `[=]` | In Progress | task-worker start |
+| `[=]` | In Progress | system.task-worker start |
 | `[x]` | Complete | post-PR merge |
 | `[P]` | Pending Approval | PR created |
 | `[*]` | Failed | validation failed |

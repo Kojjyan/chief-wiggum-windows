@@ -1,6 +1,6 @@
 {
   "agents": {
-    "task-worker": {
+    "system.task-worker": {
       "max_iterations": 20,
       "max_turns": 50,
       "timeout_seconds": 3600,

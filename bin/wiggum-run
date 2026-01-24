@@ -22,7 +22,7 @@ MAX_WORKERS=4
 MAX_ITERATIONS=20       # Max outer loop iterations per worker
 MAX_TURNS=50           # Max turns per Claude session
 SYNC_INTERVAL=6        # Run sync every N iterations (30 seconds at 5s sleep)
-AGENT_TYPE="task-worker"  # Default agent type (can be overridden with 'plan' mode)
+AGENT_TYPE="system.task-worker"  # Default agent type (can be overridden with 'plan' mode)
 PID_WAIT_TIMEOUT=300   # Deciseconds to wait for agent.pid (30 seconds)
 FORCE_LOCK=false       # --force flag state for lock override
 MAX_SKIP_RETRIES=3     # Kanban update failures before permanent skip
@@ -37,8 +37,8 @@ wiggum run - Orchestrate workers for incomplete tasks
 Usage: wiggum run [mode] [options]
 
 Modes:
-  (default)            Use task-worker agent (standard execution)
-  plan                 Use task-worker agent with plan mode enabled (creates
+  (default)            Use system.task-worker agent (standard execution)
+  plan                 Use system.task-worker agent with plan mode enabled (creates
                        implementation plan before execution)
 
 Options:

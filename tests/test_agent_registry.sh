@@ -242,12 +242,12 @@ test_list_agents_returns_agents() {
         "list_agents should include task-executor"
 }
 
-test_list_agents_includes_pipeline_agents() {
+test_list_agents_includes_system_agents() {
     local result
     result=$(list_agents)
 
-    assert_output_contains "$result" "task-worker" \
-        "list_agents should include pipeline agent task-worker"
+    assert_output_contains "$result" "system.task-worker" \
+        "list_agents should include system agent system.task-worker"
 }
 
 # =============================================================================
@@ -269,7 +269,7 @@ run_test test_validate_prerequisites_fails_when_paths_missing
 run_test test_validate_outputs_passes_with_valid_result
 run_test test_validate_outputs_fails_with_missing_result
 run_test test_list_agents_returns_agents
-run_test test_list_agents_includes_pipeline_agents
+run_test test_list_agents_includes_system_agents
 
 print_test_summary
 exit_with_test_result

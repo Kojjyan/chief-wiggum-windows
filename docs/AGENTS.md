@@ -7,7 +7,7 @@ This document describes how to create and configure agents in Chief Wiggum.
 Agents are self-contained Bash scripts that implement specific workflows.
 There are two agent patterns, each in its own directory:
 
-- **Orchestrator agents** (`lib/agents/pipeline/`) — `task-worker` —
+- **Orchestrator agents** (`lib/agents/system/`) — `system.task-worker` —
   manage the full task pipeline, spawn sub-agents, and handle commits/PRs.
   The orchestrator controls workflow only and never calls `claude/*` directly.
   Plan mode is enabled via `WIGGUM_PLAN_MODE=true` or config `plan_mode: true`.
@@ -56,7 +56,7 @@ There are two agent patterns, each in its own directory:
 
 Create a new file with the naming convention `{agent-name}.sh`:
 - Leaf agents → `lib/agents/`
-- Orchestrator agents → `lib/agents/pipeline/`
+- System agents → `lib/agents/system/`
 
 #### Leaf Agent Template (most common)
 
@@ -119,7 +119,7 @@ agent_run() {
 
 #### Orchestrator Agent Template
 
-For pipeline agents that manage sub-agents (like `task-worker`).
+For pipeline agents that manage sub-agents (like `system.task-worker`).
 Orchestrators control workflow only — they never call `claude/*` directly.
 Instead, they delegate execution to leaf agents via `run_sub_agent`:
 
@@ -500,7 +500,7 @@ Excludes lifecycle management - just executes `agent_run()`.
 
 ### Orchestrator Parameters
 
-Orchestrator agents (`task-worker`) receive positional arguments for
+Orchestrator agents (`system.task-worker`) receive positional arguments for
 configuration and resume support:
 
 ```bash
@@ -559,7 +559,7 @@ Agents read configuration from `config/agents.json`:
 ```json
 {
   "agents": {
-    "task-worker": {
+    "system.task-worker": {
       "max_iterations": 20,
       "max_turns": 50,
       "timeout_seconds": 3600
@@ -579,7 +579,7 @@ Agents read configuration from `config/agents.json`:
 
 | Agent | Purpose |
 |-------|---------|
-| `task-worker` | Main task execution from PRD (supports plan mode via `WIGGUM_PLAN_MODE`) |
+| `system.task-worker` | Main task execution from PRD (supports plan mode via `WIGGUM_PLAN_MODE`) |
 
 ### Leaf Agents
 

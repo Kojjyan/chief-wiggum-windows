@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Pipeline Configuration",
-  "description": "Defines a linear pipeline of agent steps for task-worker execution",
+  "description": "Defines a linear pipeline of agent steps for system.task-worker execution",
   "type": "object",
   "required": ["name", "steps"],
   "properties": {

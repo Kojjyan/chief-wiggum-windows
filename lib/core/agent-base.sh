@@ -27,7 +27,7 @@ _AGENT_BASE_LOADED=1
 # Initialize agent metadata
 #
 # Args:
-#   type        - Agent type identifier (e.g., "task-worker")
+#   type        - Agent type identifier (e.g., "system.task-worker")
 #   description - Human-readable description
 #
 # Sets and exports: AGENT_TYPE, AGENT_DESCRIPTION

@@ -19,7 +19,7 @@ set -euo pipefail
 
 # Source base library and initialize metadata
 source "$WIGGUM_HOME/lib/core/agent-base.sh"
-agent_init_metadata "task-worker" "Main task execution agent that manages the complete task lifecycle from PRD"
+agent_init_metadata "system.task-worker" "Main task execution agent that manages the complete task lifecycle from PRD"
 
 # Required paths before agent can run
 agent_required_paths() {

@@ -8,7 +8,7 @@
 # Requires:
 #   - pipeline-loader.sh sourced and pipeline loaded
 #   - agent-base.sh sourced (for run_sub_agent, agent_read_subagent_result, etc.)
-#   - _phase_start/_phase_end/_commit_subagent_changes from task-worker.sh
+#   - _phase_start/_phase_end/_commit_subagent_changes from system/task-worker.sh
 #   - PIPELINE_PLAN_FILE, PIPELINE_RESUME_INSTRUCTIONS exported by caller
 # =============================================================================
 

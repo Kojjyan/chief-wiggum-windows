@@ -102,11 +102,11 @@ test_config_loading_task_worker() {
     fixture_home=$(_setup_config_fixture)
     WIGGUM_HOME="$fixture_home" source "$fixture_home/lib/core/agent-base.sh"
 
-    WIGGUM_HOME="$fixture_home" load_agent_config "task-worker"
+    WIGGUM_HOME="$fixture_home" load_agent_config "system.task-worker"
 
-    assert_equals "20" "$AGENT_CONFIG_MAX_ITERATIONS" "task-worker max_iterations should be 20"
-    assert_equals "50" "$AGENT_CONFIG_MAX_TURNS" "task-worker max_turns should be 50"
-    assert_equals "3600" "$AGENT_CONFIG_TIMEOUT_SECONDS" "task-worker timeout_seconds should be 3600"
+    assert_equals "20" "$AGENT_CONFIG_MAX_ITERATIONS" "system.task-worker max_iterations should be 20"
+    assert_equals "50" "$AGENT_CONFIG_MAX_TURNS" "system.task-worker max_turns should be 50"
+    assert_equals "3600" "$AGENT_CONFIG_TIMEOUT_SECONDS" "system.task-worker timeout_seconds should be 3600"
     rm -rf "$fixture_home"
 }
 
@@ -497,7 +497,7 @@ test_agents_json_has_required_agents() {
     local agents
     agents=$(jq -r '.agents | keys[]' "$WIGGUM_HOME/config/agents.json" 2>/dev/null | sort | tr '\n' ',')
 
-    assert_output_contains "$agents" "task-worker" "agents.json should have task-worker"
+    assert_output_contains "$agents" "system.task-worker" "agents.json should have system.task-worker"
     assert_output_contains "$agents" "pr-comment-fix" "agents.json should have pr-comment-fix"
     assert_output_contains "$agents" "validation-review" "agents.json should have validation-review"
 }
@@ -538,10 +538,10 @@ test_agent_registry_sh_syntax() {
 }
 
 test_task_worker_sh_syntax() {
-    if bash -n "$WIGGUM_HOME/lib/agents/pipeline/task-worker.sh" 2>/dev/null; then
-        assert_success "task-worker.sh should have valid bash syntax" true
+    if bash -n "$WIGGUM_HOME/lib/agents/system/task-worker.sh" 2>/dev/null; then
+        assert_success "system/task-worker.sh should have valid bash syntax" true
     else
-        assert_failure "task-worker.sh should have valid bash syntax" true
+        assert_failure "system/task-worker.sh should have valid bash syntax" true
     fi
 }
 

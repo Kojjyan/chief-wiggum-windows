@@ -22,7 +22,7 @@ source "$TESTS_DIR/test-framework.sh"
 
 TEST_DIR=""
 
-# Stub functions that pipeline-runner.sh expects from task-worker context
+# Stub functions that pipeline-runner.sh expects from system.task-worker context
 _phase_start() { :; }
 _phase_end() { :; }
 _commit_subagent_changes() { :; }

@@ -222,7 +222,7 @@ agent_cleanup()           # [Optional] Cleanup after completion
 **Available agents:**
 | Agent | Purpose |
 |-------|---------|
-| `task-worker` | Primary task execution - reads PRD, implements features |
+| `system.task-worker` | Primary task execution - reads PRD, implements features |
 | `validation-review` | Code review against PRD requirements |
 | `pr-comment-fix` | Addresses PR review feedback iteratively |
 
@@ -239,7 +239,7 @@ Worker directory created: worker-TASK-001-<timestamp>/
        ↓
 PRD generated from task specification
        ↓
-task-worker agent executes as entry point
+system.task-worker agent executes as entry point
        ↓
 Agent may invoke sub-agents (e.g., validation-review)
        ↓
@@ -262,12 +262,12 @@ Agents can call other agents, creating a hierarchy. There are two invocation mod
 
 Example hierarchy:
 ```
-task-worker (top-level agent)
+system.task-worker (top-level agent)
   └── validation-review (sub-agent)
         └── [could call further sub-agents if needed]
 ```
 
-From `task-worker.sh`:
+From `system/task-worker.sh`:
 ```bash
 # After main work completes, run validation as sub-agent
 run_sub_agent "validation-review" "$worker_dir" "$project_dir"
@@ -330,7 +330,7 @@ run_agent_resume "$session_id" "$prompt" "$output_file" "$max_turns"
 
 ### Combining Patterns
 
-Agents typically combine these patterns. Here's how `task-worker` uses all three:
+Agents typically combine these patterns. Here's how `system.task-worker` uses all three:
 
 ```
 1. RALPH LOOP (iterative work)

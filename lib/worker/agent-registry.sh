@@ -41,18 +41,19 @@ _AGENT_REGISTRY_WORKER_DIR=""
 # Load an agent by type
 #
 # Args:
-#   agent_type - The agent type name (e.g., "task-worker")
+#   agent_type - Dotted agent name (e.g., "system.task-worker" → lib/agents/system/task-worker.sh)
 #
 # Returns: 0 on success, 1 if agent not found
 load_agent() {
     local agent_type="$1"
-    local agent_file="$WIGGUM_HOME/lib/agents/${agent_type}.sh"
-    if [ ! -f "$agent_file" ]; then
-        agent_file="$WIGGUM_HOME/lib/agents/pipeline/${agent_type}.sh"
-    fi
+    local agents_dir="$WIGGUM_HOME/lib/agents"
+
+    # Convert dotted name to path: system.task-worker → system/task-worker
+    local agent_path="${agent_type//./\/}"
+    local agent_file="$agents_dir/${agent_path}.sh"
 
     if [ ! -f "$agent_file" ]; then
-        log_error "Unknown agent type: $agent_type"
+        log_error "Unknown agent type: $agent_type (expected at $agent_file)"
         log_error "Available agents: $(list_agents | tr '\n' ' ')"
         return 1
     fi
@@ -371,7 +372,7 @@ run_sub_agent() {
     local parent_agent_type="${WIGGUM_CURRENT_AGENT_TYPE:-}"
 
     # Export agent type for workspace safety hooks to detect destructive git commands
-    # Sub-agents are blocked from destructive git operations; task-worker is exempt
+    # Sub-agents are blocked from destructive git operations; system.task-worker is exempt
     export WIGGUM_CURRENT_AGENT_TYPE="$agent_type"
 
     # Validate we have required directories
@@ -483,7 +484,7 @@ run_sub_agent() {
 
 # List available agents
 #
-# Returns: List of agent names (one per line)
+# Returns: List of dotted agent names (one per line)
 list_agents() {
     local agents_dir="$WIGGUM_HOME/lib/agents"
 
@@ -491,15 +492,9 @@ list_agents() {
         return 0
     fi
 
-    for f in "$agents_dir"/*.sh; do
-        if [ -f "$f" ]; then
-            basename "$f" .sh
-        fi
-    done
-    for f in "$agents_dir"/pipeline/*.sh; do
-        if [ -f "$f" ]; then
-            basename "$f" .sh
-        fi
+    find "$agents_dir" -name "*.sh" -type f | sort | while read -r f; do
+        local rel="${f#$agents_dir/}"
+        echo "${rel%.sh}" | tr '/' '.'
     done
 }
 

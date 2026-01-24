@@ -205,8 +205,8 @@ test_git_is_readonly_agent() {
     assert_equals "0" "$?" "code-review should be read-only"
 
     # These should NOT be read-only
-    git_is_readonly_agent "task-worker"
-    assert_equals "1" "$?" "task-worker should NOT be read-only"
+    git_is_readonly_agent "system.task-worker"
+    assert_equals "1" "$?" "system.task-worker should NOT be read-only"
 
     git_is_readonly_agent "security-fix"
     assert_equals "1" "$?" "security-fix should NOT be read-only"

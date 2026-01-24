@@ -279,9 +279,9 @@ test_config_loading_supervisor_settings_from_json() {
     source "$WIGGUM_HOME/lib/core/agent-base.sh"
 
     # Verify the values come from config file defaults
-    load_agent_config "task-worker"
+    load_agent_config "system.task-worker"
 
-    # These should get the defaults from agents.json since task-worker doesn't override them
+    # These should get the defaults from agents.json since system.task-worker doesn't override them
     assert_equals "2" "$AGENT_CONFIG_SUPERVISOR_INTERVAL" "supervisor_interval from defaults"
     assert_equals "2" "$AGENT_CONFIG_MAX_RESTARTS" "max_restarts from defaults"
 }

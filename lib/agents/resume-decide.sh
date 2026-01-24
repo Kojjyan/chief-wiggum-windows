@@ -259,7 +259,7 @@ $worker_dir/
 | test | "Test coverage result: PASS\|FAIL\|SKIP" | results/*-test-coverage-result.json |
 | docs | "Documentation writer result:" | results/*-documentation-writer-result.json |
 | validation | "Validation review completed with result:" | results/*-validation-review-result.json |
-| finalization | "PR created:" or "Commit created" | results/*-task-worker-result.json |
+| finalization | "PR created:" or "Commit created" | results/*-system.task-worker-result.json |
 
 ## Git Restrictions (CRITICAL)
 
