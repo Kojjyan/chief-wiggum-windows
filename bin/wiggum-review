@@ -329,17 +329,28 @@ cmd_global_sync() {
                 log "  PR #$pr_number ($task_id): New comments detected"
 
                 # Find worker directory and sync comments
-                local worker_dir
+                local worker_dir output_dir
                 worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$task_id" 2>/dev/null)
 
                 if [ -n "$worker_dir" ] && [ -d "$worker_dir" ]; then
-                    sync_pr_comments "$task_id" "$worker_dir"
-                    echo "$task_id" >> "$tasks_needing_fix"
-
-                    # Create .needs-fix marker
-                    touch "$worker_dir/.needs-fix"
-                    ((++comments_count))
+                    output_dir="$worker_dir"
+                else
+                    # Fall back to review directory
+                    output_dir="$RALPH_DIR/review"
+                    mkdir -p "$output_dir"
+                    log "  PR #$pr_number ($task_id): No worker found, using review directory"
                 fi
+
+                sync_pr_comments "$task_id" "$output_dir"
+                echo "$task_id" >> "$tasks_needing_fix"
+
+                # Create .needs-fix marker if worker exists
+                if [ -n "$worker_dir" ] && [ -d "$worker_dir" ]; then
+                    touch "$worker_dir/.needs-fix"
+                fi
+                ((++comments_count))
+            else
+                log "  PR #$pr_number ($task_id): No new comments"
             fi
         fi
     done < <(echo "$all_prs" | jq -c '.[]')

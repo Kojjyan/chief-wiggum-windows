@@ -38,13 +38,57 @@ _usage_get_week_start() {
     echo "$monday_midnight"
 }
 
+# Parse threshold_boundary from config (unix epoch or ISO timestamp)
+# Returns epoch timestamp or empty string if not configured
+_usage_get_threshold_boundary() {
+    local config_file="${WIGGUM_HOME}/config/config.json"
+    local boundary=""
+
+    if [ -f "$config_file" ]; then
+        boundary=$(jq -r '.rate_limit.threshold_boundary // empty' "$config_file" 2>/dev/null)
+    fi
+
+    # Also check environment variable override
+    boundary="${WIGGUM_RATE_LIMIT_BOUNDARY:-$boundary}"
+
+    if [ -z "$boundary" ]; then
+        echo ""
+        return
+    fi
+
+    # Check if it's already a unix epoch (numeric)
+    if [[ "$boundary" =~ ^[0-9]+$ ]]; then
+        echo "$boundary"
+        return
+    fi
+
+    # Try to parse as ISO timestamp
+    local epoch
+    epoch=$(date -d "$boundary" +%s 2>/dev/null) || epoch=""
+    echo "$epoch"
+}
+
 # Get current 5-hour cycle start epoch timestamp
+# If threshold_boundary is configured, cycles are aligned to that boundary
+# Otherwise, uses rolling 5h windows from epoch
 _usage_get_5h_cycle_start() {
-    local now hours_since_epoch cycle_number
+    local now boundary
     now=$(date +%s)
-    hours_since_epoch=$(( now / 3600 ))
-    cycle_number=$(( hours_since_epoch / 5 ))
-    echo $(( cycle_number * 5 * 3600 ))
+    boundary=$(_usage_get_threshold_boundary)
+
+    if [ -n "$boundary" ] && [ "$boundary" -gt 0 ] 2>/dev/null; then
+        # Calculate cycle based on configured boundary
+        local seconds_since_boundary=$(( now - boundary ))
+        local cycle_seconds=18000  # 5 hours
+        local cycles_elapsed=$(( seconds_since_boundary / cycle_seconds ))
+        echo $(( boundary + (cycles_elapsed * cycle_seconds) ))
+    else
+        # Original rolling window behavior
+        local hours_since_epoch cycle_number
+        hours_since_epoch=$(( now / 3600 ))
+        cycle_number=$(( hours_since_epoch / 5 ))
+        echo $(( cycle_number * 5 * 3600 ))
+    fi
 }
 
 # Check if message content is a command (slash command or local command output)
@@ -431,8 +475,8 @@ rate_limit_wait_for_cycle_reset() {
         local remaining=$(( wait_seconds - elapsed ))
         local remaining_min=$(( remaining / 60 ))
         log "Rate limit: ${remaining_min}m remaining until cycle reset"
-        local sleep_interval=60
-        if [ "$remaining" -lt 60 ]; then
+        local sleep_interval=300
+        if [ "$remaining" -lt 300 ]; then
             sleep_interval="$remaining"
         fi
         sleep "$sleep_interval"

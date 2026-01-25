@@ -15,7 +15,8 @@
     "logs_dir": "logs"
   },
   "rate_limit": {
-    "threshold_prompts": 900
+    "threshold_prompts": 900,
+    "threshold_boundary": 1769349244
   },
   "review": {
     "approved_authors": ["copilot", "dependabot", "github-actions[bot]", "dependabot[bot]", "renovate[bot]", "codecov[bot]"],
