@@ -169,12 +169,36 @@ run_shellcheck() {
     local errors=0
     local checked=0
 
+    # Match CI: check bin executables, lib/*.sh, tests/*.sh, and root scripts
     while IFS= read -r -d '' script; do
         ((++checked))
-        if ! shellcheck -e SC1090,SC1091,SC2034,SC2154 "$script" 2>/dev/null; then
+        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
             ((++errors))
         fi
-    done < <(find "$PROJECT_ROOT/bin" "$PROJECT_ROOT/lib" -name "*.sh" -print0 2>/dev/null)
+    done < <(find "$PROJECT_ROOT/bin" -type f -executable -print0 2>/dev/null)
+
+    while IFS= read -r -d '' script; do
+        ((++checked))
+        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
+            ((++errors))
+        fi
+    done < <(find "$PROJECT_ROOT/lib" -name "*.sh" -type f -print0 2>/dev/null)
+
+    while IFS= read -r -d '' script; do
+        ((++checked))
+        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
+            ((++errors))
+        fi
+    done < <(find "$PROJECT_ROOT/tests" -name "*.sh" -type f -print0 2>/dev/null)
+
+    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/install-symlink.sh"; do
+        if [ -f "$script" ]; then
+            ((++checked))
+            if ! shellcheck --severity=warning "$script" 2>/dev/null; then
+                ((++errors))
+            fi
+        fi
+    done
 
     if [ $errors -eq 0 ]; then
         PASSED_SUITES=$((PASSED_SUITES + 1))

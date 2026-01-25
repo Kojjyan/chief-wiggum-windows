@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # Test file-lock.sh with edge cases including special characters
 
 set -e

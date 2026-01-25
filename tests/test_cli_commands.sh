@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # CLI integration tests for bin/wiggum-* commands
 #
 # Tests argument validation, help output, and early-exit paths.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # Error path tests for Chief Wiggum modules
 # Tests edge cases, error handling, and failure modes
 
