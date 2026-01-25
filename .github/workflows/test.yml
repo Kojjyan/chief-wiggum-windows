@@ -26,6 +26,10 @@ jobs:
         run: |
           find tests -name "*.sh" -type f -exec shellcheck --severity=warning {} +
 
+      - name: Run shellcheck on hooks scripts
+        run: |
+          find hooks -name "*.sh" -type f -exec shellcheck --severity=warning {} +
+
       - name: Run shellcheck on root scripts
         run: |
           shellcheck --severity=warning install.sh install-symlink.sh

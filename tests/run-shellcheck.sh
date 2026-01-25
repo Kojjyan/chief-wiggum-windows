@@ -16,6 +16,9 @@ find lib -name "*.sh" -type f -exec shellcheck --severity=warning {} +
 echo "Checking test scripts..."
 find tests -name "*.sh" -type f -exec shellcheck --severity=warning {} +
 
+echo "Checking hooks scripts..."
+find hooks -name "*.sh" -type f -exec shellcheck --severity=warning {} +
+
 echo "Checking root scripts..."
 shellcheck --severity=warning install.sh install-symlink.sh
 
