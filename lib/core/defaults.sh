@@ -23,6 +23,13 @@ CLAUDE="${CLAUDE:-claude}"
 [ -n "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" ] && export ANTHROPIC_DEFAULT_SONNET_MODEL
 [ -n "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" ] && export ANTHROPIC_DEFAULT_HAIKU_MODEL
 
+# Logging configuration
+# Map WIGGUM_LOG_LEVEL to LOG_LEVEL for logger.sh
+if [ -n "${WIGGUM_LOG_LEVEL:-}" ]; then
+    LOG_LEVEL="${WIGGUM_LOG_LEVEL^^}"  # Convert to uppercase
+    export LOG_LEVEL
+fi
+
 # Worker configuration defaults
 MAX_WORKERS="${WIGGUM_MAX_WORKERS:-4}"
 export MAX_WORKERS

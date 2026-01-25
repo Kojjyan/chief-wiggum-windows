@@ -92,116 +92,107 @@ _md_parse_frontmatter() {
         return 1
     fi
 
-    # Parse using yq if available, else use basic grep/sed parsing
-    if command -v yq &>/dev/null; then
-        _md_parse_frontmatter_yq "$frontmatter"
+    _md_parse_frontmatter_impl "$frontmatter"
+}
+
+# Extract a simple YAML value (key: value format)
+# Handles quoted and unquoted values, returns empty string if not found
+#
+# Args:
+#   frontmatter - The frontmatter content
+#   key         - The key to extract
+#   default     - Default value if key not found (optional)
+#
+# Returns: The value (echoed)
+_yaml_get_value() {
+    local frontmatter="$1"
+    local key="$2"
+    local default="${3:-}"
+
+    local value
+    # Match "key:" at start of line, capture everything after colon
+    value=$(echo "$frontmatter" | grep -E "^${key}:" | head -1 | sed "s/^${key}:[[:space:]]*//" || true)
+
+    # Remove surrounding quotes if present
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+
+    # Trim whitespace
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [ -z "$value" ]; then
+        echo "$default"
     else
-        _md_parse_frontmatter_bash "$frontmatter"
+        echo "$value"
     fi
 }
 
-# Parse frontmatter using yq (preferred)
-_md_parse_frontmatter_yq() {
+# Extract a YAML array value (key: [a, b, c] format)
+# Populates the provided array variable name
+#
+# Args:
+#   frontmatter - The frontmatter content
+#   key         - The key to extract
+#   array_name  - Name of the array variable to populate
+_yaml_get_array() {
     local frontmatter="$1"
+    local key="$2"
+    local array_name="$3"
 
-    _MD_TYPE=$(echo "$frontmatter" | yq -r '.type // ""')
-    _MD_DESCRIPTION=$(echo "$frontmatter" | yq -r '.description // ""')
-    _MD_MODE=$(echo "$frontmatter" | yq -r '.mode // "ralph_loop"')
-    _MD_READONLY=$(echo "$frontmatter" | yq -r '.readonly // "false"')
-    _MD_REPORT_TAG=$(echo "$frontmatter" | yq -r '.report_tag // "report"')
-    _MD_RESULT_TAG=$(echo "$frontmatter" | yq -r '.result_tag // "result"')
-    _MD_OUTPUT_PATH=$(echo "$frontmatter" | yq -r '.output_path // ""')
-    _MD_WORKSPACE_OVERRIDE=$(echo "$frontmatter" | yq -r '.workspace_override // ""')
-    _MD_COMPLETION_CHECK=$(echo "$frontmatter" | yq -r '.completion_check // "result_tag"')
-    _MD_SESSION_FROM=$(echo "$frontmatter" | yq -r '.session_from // ""')
+    # Clear the array
+    eval "$array_name=()"
 
-    # Parse arrays
-    _MD_REQUIRED_PATHS=()
-    local paths
-    paths=$(echo "$frontmatter" | yq -r '.required_paths[]? // empty')
-    local i=0
-    while IFS= read -r path; do
-        [ -n "$path" ] && _MD_REQUIRED_PATHS[$i]="$path"
-        ((++i)) || true
-    done <<< "$paths"
+    local line
+    line=$(echo "$frontmatter" | grep -E "^${key}:" | head -1 | sed "s/^${key}:[[:space:]]*//" || true)
 
-    _MD_VALID_RESULTS=()
-    local results
-    results=$(echo "$frontmatter" | yq -r '.valid_results[]? // empty')
-    i=0
-    while IFS= read -r result; do
-        [ -n "$result" ] && _MD_VALID_RESULTS[$i]="$result"
-        ((++i)) || true
-    done <<< "$results"
+    # Check if it's bracket notation: [a, b, c]
+    if [[ "$line" =~ ^\[.*\]$ ]]; then
+        # Remove brackets
+        line="${line:1:-1}"
 
-    _MD_OUTPUTS=()
-    local outputs
-    outputs=$(echo "$frontmatter" | yq -r '.outputs[]? // empty')
-    i=0
-    while IFS= read -r output; do
-        [ -n "$output" ] && _MD_OUTPUTS[$i]="$output"
-        ((++i)) || true
-    done <<< "$outputs"
+        # Split by comma, handling spaces
+        local i=0
+        local item
+        while IFS= read -r -d ',' item || [ -n "$item" ]; do
+            # Trim whitespace and quotes
+            item="${item#"${item%%[![:space:]]*}"}"
+            item="${item%"${item##*[![:space:]]}"}"
+            item="${item#\"}"
+            item="${item%\"}"
+            item="${item#\'}"
+            item="${item%\'}"
+
+            if [ -n "$item" ]; then
+                eval "${array_name}[$i]=\"\$item\""
+                ((++i)) || true
+            fi
+        done <<< "$line,"
+    fi
 }
 
-# Parse frontmatter using pure bash (fallback)
-_md_parse_frontmatter_bash() {
+# Parse frontmatter using pure bash (no external dependencies like yq)
+_md_parse_frontmatter_impl() {
     local frontmatter="$1"
 
-    # Simple key: value extraction
-    _MD_TYPE=$(echo "$frontmatter" | grep -E '^type:' | sed 's/^type:\s*//' | tr -d '"' | tr -d "'")
-    _MD_DESCRIPTION=$(echo "$frontmatter" | grep -E '^description:' | sed 's/^description:\s*//' | tr -d '"' | tr -d "'")
-    _MD_MODE=$(echo "$frontmatter" | grep -E '^mode:' | sed 's/^mode:\s*//' | tr -d '"' | tr -d "'" || echo "ralph_loop")
-    _MD_READONLY=$(echo "$frontmatter" | grep -E '^readonly:' | sed 's/^readonly:\s*//' | tr -d '"' | tr -d "'" || echo "false")
-    _MD_REPORT_TAG=$(echo "$frontmatter" | grep -E '^report_tag:' | sed 's/^report_tag:\s*//' | tr -d '"' | tr -d "'" || echo "report")
-    _MD_RESULT_TAG=$(echo "$frontmatter" | grep -E '^result_tag:' | sed 's/^result_tag:\s*//' | tr -d '"' | tr -d "'" || echo "result")
-    _MD_OUTPUT_PATH=$(echo "$frontmatter" | grep -E '^output_path:' | sed 's/^output_path:\s*//' | tr -d '"' | tr -d "'" || echo "")
-    _MD_WORKSPACE_OVERRIDE=$(echo "$frontmatter" | grep -E '^workspace_override:' | sed 's/^workspace_override:\s*//' | tr -d '"' | tr -d "'" || echo "")
-    _MD_COMPLETION_CHECK=$(echo "$frontmatter" | grep -E '^completion_check:' | sed 's/^completion_check:\s*//' | tr -d '"' | tr -d "'" || echo "result_tag")
-    _MD_SESSION_FROM=$(echo "$frontmatter" | grep -E '^session_from:' | sed 's/^session_from:\s*//' | tr -d '"' | tr -d "'" || echo "")
+    # Extract scalar values with defaults
+    _MD_TYPE=$(_yaml_get_value "$frontmatter" "type" "")
+    _MD_DESCRIPTION=$(_yaml_get_value "$frontmatter" "description" "")
+    _MD_MODE=$(_yaml_get_value "$frontmatter" "mode" "ralph_loop")
+    _MD_READONLY=$(_yaml_get_value "$frontmatter" "readonly" "false")
+    _MD_REPORT_TAG=$(_yaml_get_value "$frontmatter" "report_tag" "report")
+    _MD_RESULT_TAG=$(_yaml_get_value "$frontmatter" "result_tag" "result")
+    _MD_OUTPUT_PATH=$(_yaml_get_value "$frontmatter" "output_path" "")
+    _MD_WORKSPACE_OVERRIDE=$(_yaml_get_value "$frontmatter" "workspace_override" "")
+    _MD_COMPLETION_CHECK=$(_yaml_get_value "$frontmatter" "completion_check" "result_tag")
+    _MD_SESSION_FROM=$(_yaml_get_value "$frontmatter" "session_from" "")
 
-    # Parse arrays (simple bracket notation: [a, b, c])
-    _MD_REQUIRED_PATHS=()
-    local paths_line
-    paths_line=$(echo "$frontmatter" | grep -E '^required_paths:' | sed 's/^required_paths:\s*//')
-    if [[ "$paths_line" =~ ^\[.*\]$ ]]; then
-        paths_line="${paths_line:1:-1}"  # Remove brackets
-        IFS=', ' read -ra paths <<< "$paths_line"
-        local i=0
-        for path in "${paths[@]}"; do
-            path=$(echo "$path" | tr -d '"' | tr -d "'" | xargs)
-            [ -n "$path" ] && _MD_REQUIRED_PATHS[$i]="$path"
-            ((++i)) || true
-        done
-    fi
-
-    _MD_VALID_RESULTS=()
-    local results_line
-    results_line=$(echo "$frontmatter" | grep -E '^valid_results:' | sed 's/^valid_results:\s*//')
-    if [[ "$results_line" =~ ^\[.*\]$ ]]; then
-        results_line="${results_line:1:-1}"
-        IFS=', ' read -ra results <<< "$results_line"
-        local i=0
-        for result in "${results[@]}"; do
-            result=$(echo "$result" | tr -d '"' | tr -d "'" | xargs)
-            [ -n "$result" ] && _MD_VALID_RESULTS[$i]="$result"
-            ((++i)) || true
-        done
-    fi
-
-    _MD_OUTPUTS=()
-    local outputs_line
-    outputs_line=$(echo "$frontmatter" | grep -E '^outputs:' | sed 's/^outputs:\s*//')
-    if [[ "$outputs_line" =~ ^\[.*\]$ ]]; then
-        outputs_line="${outputs_line:1:-1}"
-        IFS=', ' read -ra outputs <<< "$outputs_line"
-        local i=0
-        for output in "${outputs[@]}"; do
-            output=$(echo "$output" | tr -d '"' | tr -d "'" | xargs)
-            [ -n "$output" ] && _MD_OUTPUTS[$i]="$output"
-            ((++i)) || true
-        done
-    fi
+    # Extract array values
+    _yaml_get_array "$frontmatter" "required_paths" "_MD_REQUIRED_PATHS"
+    _yaml_get_array "$frontmatter" "valid_results" "_MD_VALID_RESULTS"
+    _yaml_get_array "$frontmatter" "outputs" "_MD_OUTPUTS"
 }
 
 # =============================================================================
@@ -611,10 +602,15 @@ md_agent_run() {
     local worker_dir="$2"
     local project_dir="$3"
 
+    log_debug "md_agent_run: starting with md_file=$md_file worker_dir=$worker_dir project_dir=$project_dir"
+
     # Load the agent definition
+    log_debug "md_agent_run: loading agent definition"
     if ! md_agent_load "$md_file"; then
+        log_error "md_agent_run: md_agent_load failed for $md_file"
         return 1
     fi
+    log_debug "md_agent_run: loaded type=$_MD_TYPE mode=$_MD_MODE workspace_override=$_MD_WORKSPACE_OVERRIDE"
 
     # Set runtime context
     _MD_WORKER_DIR="$worker_dir"
@@ -626,16 +622,19 @@ md_agent_run() {
     else
         _MD_WORKSPACE="$worker_dir/workspace"
     fi
+    log_debug "md_agent_run: workspace set to $_MD_WORKSPACE"
 
     # Extract task ID from worker directory name
     local worker_id
     worker_id=$(basename "$worker_dir")
     _MD_TASK_ID=$(echo "$worker_id" | sed -E 's/worker-([A-Za-z]{2,10}-[0-9]{1,4})-.*/\1/' || echo "")
+    log_debug "md_agent_run: task_id=$_MD_TASK_ID"
 
     # Initialize agent metadata for base library compatibility
     agent_init_metadata "$_MD_TYPE" "$_MD_DESCRIPTION"
 
     # Create standard directories
+    log_debug "md_agent_run: creating directories"
     agent_create_directories "$worker_dir"
 
     # Set up callback context
@@ -682,7 +681,10 @@ md_agent_run() {
 _md_run_ralph_loop() {
     local worker_dir="$1"
 
+    log_debug "_md_run_ralph_loop: starting for worker_dir=$worker_dir"
+
     # Source ralph loop
+    log_debug "_md_run_ralph_loop: sourcing run-claude-ralph-loop.sh"
     source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
 
     # Get config values
@@ -697,11 +699,26 @@ _md_run_ralph_loop() {
     # Use step ID from pipeline for session prefix
     local session_prefix="${WIGGUM_STEP_ID:-agent}"
 
+    log_debug "_md_run_ralph_loop: max_turns=$max_turns max_iterations=$max_iterations session_prefix=$session_prefix"
+
     # Interpolate system prompt
     local system_prompt
     system_prompt=$(_md_interpolate "$_MD_SYSTEM_PROMPT")
+    log_debug "_md_run_ralph_loop: system_prompt interpolated (${#system_prompt} chars)"
+
+    # Verify callback functions exist
+    if ! declare -F "_md_user_prompt_callback" > /dev/null 2>&1; then
+        log_error "_md_run_ralph_loop: callback _md_user_prompt_callback not found!"
+        return 1
+    fi
+    if ! declare -F "_md_completion_check" > /dev/null 2>&1; then
+        log_error "_md_run_ralph_loop: callback _md_completion_check not found!"
+        return 1
+    fi
+    log_debug "_md_run_ralph_loop: callback functions verified"
 
     # Run the loop
+    log_debug "_md_run_ralph_loop: calling run_ralph_loop with workspace=$_MD_WORKSPACE"
     run_ralph_loop "$_MD_WORKSPACE" \
         "$system_prompt" \
         "_md_user_prompt_callback" \
