@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# run-claude-ralph-loop.sh - Generic self-prompting loop mechanism
+# run-claude-ralph-loop.sh - Unified self-prompting loop with optional supervision
 #
 # Provides the core ralph loop pattern that can be parameterized for different use cases:
-# - Task execution (original ralph-loop)
+# - Task execution (with supervision)
+# - Security audits (without supervision)
 # - PR comment fixing
 # - Other iterative agent workflows
 #
-# Core concept: ralph-loop runs claude in a loop, run-agent-once runs it just once.
-# This script extracts the loop to be reusable across different contexts.
+# Supervision is opt-in via supervisor_interval parameter:
+# - supervisor_interval=0 (default): No supervision, pure iterative loop
+# - supervisor_interval=N: Run supervisor every N iterations
+#
+# The supervisor can:
+# - CONTINUE: Work is progressing, inject feedback for next round
+# - STOP: Halt the loop (supervisor explains why)
+# - RESTART: Reset to iteration 0, archive current run, inject redirect guidance
 set -euo pipefail
 
 source "$WIGGUM_HOME/lib/core/logger.sh"
@@ -15,6 +22,10 @@ source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/core/checkpoint.sh"
 source "$WIGGUM_HOME/lib/utils/work-log.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
 # Extract clean text from Claude CLI stream-JSON output
 # Filters out JSON and returns only assistant text responses
@@ -25,20 +36,153 @@ extract_summary_text() {
         grep -v '^$'
 }
 
-# Generic ralph loop execution
+# =============================================================================
+# SUPERVISOR TAG EXTRACTION HELPERS
+# =============================================================================
+
+# Extract decision from supervisor output (CONTINUE|STOP|RESTART)
+_extract_supervisor_decision() {
+    local log_file="$1"
+    local decision
+    decision=$(grep -oP '(?<=<decision>)(CONTINUE|STOP|RESTART)(?=</decision>)' "$log_file" 2>/dev/null | head -1) || true
+
+    # Default to CONTINUE if not found or invalid
+    if [ -z "$decision" ]; then
+        echo "CONTINUE"
+    else
+        echo "$decision"
+    fi
+}
+
+# Extract review content from supervisor output
+_extract_supervisor_review() {
+    local log_file="$1"
+    local output_file="$2"
+
+    if grep -q '<review>' "$log_file" 2>/dev/null; then
+        sed -n '/<review>/,/<\/review>/p' "$log_file" | sed '1d;$d' > "$output_file"
+        return 0
+    fi
+    return 1
+}
+
+# Extract guidance from supervisor output
+_extract_supervisor_guidance() {
+    local log_file="$1"
+    local output_file="$2"
+
+    if grep -q '<guidance>' "$log_file" 2>/dev/null; then
+        sed -n '/<guidance>/,/<\/guidance>/p' "$log_file" | sed '1d;$d' > "$output_file"
+        return 0
+    fi
+    return 1
+}
+
+# =============================================================================
+# DEFAULT SUPERVISOR PROMPT
+# =============================================================================
+
+# Default supervisor prompt template
+# Override by passing a custom supervisor_prompt_fn
+_default_supervisor_prompt() {
+    local iteration="$1"
+    # shellcheck disable=SC2034  # output_dir available for custom prompt functions
+    local output_dir="$2"
+    local last_summary="$3"
+
+    cat << SUPERVISOR_PROMPT_EOF
+SUPERVISOR REVIEW:
+
+You oversee an iterative work loop. Review progress and decide how to proceed.
+
+**Iteration**: ${iteration}
+**Summary**: @../summaries/${last_summary}
+
+## Supervisor Philosophy
+
+* DEFAULT TO CONTINUE - Only intervene when you have HIGH CONFIDENCE (>90%) something is wrong
+* Let workers work - Minor issues, slow progress, or imperfect approaches are NOT reasons to stop
+* Restarts are expensive - Only restart if the fundamental approach is broken
+* Trust the process - The completion check will detect when work is actually done
+
+## Decision Criteria
+
+### CONTINUE
+
+Use CONTINUE when:
+* Work is progressing (even slowly)
+* There are minor issues but forward momentum exists
+* You're uncertain whether there's a problem
+* The approach seems reasonable even if not optimal
+
+### STOP
+
+Use STOP ONLY when one of these is TRUE:
+* Hard blocker exists that CANNOT be resolved (missing permissions, impossible requirement)
+* Continuing would cause harm (runaway resource usage, destructive actions)
+
+DO NOT use STOP for:
+* Slow progress
+* Minor bugs or issues
+* Approaches you'd do differently
+* Uncertainty about completion
+
+### RESTART
+
+Use RESTART ONLY when:
+* The fundamental approach is PROVABLY wrong (not just suboptimal)
+* Significant work has gone in a completely wrong direction
+* Starting fresh with a different strategy is clearly better than course-correcting
+* Worker is stuck in an infinite loop doing the exact same thing repeatedly
+
+DO NOT use RESTART for:
+* Minor course corrections (use CONTINUE with guidance instead)
+* Slow progress
+* Code quality concerns
+
+## Response Format
+
+Be concise. Analyze then decide.
+
+<review>
+**Progress**: [1-2 sentences - what was accomplished]
+**Assessment**: [1-2 sentences - on track or concern]
+**Rationale**: [1-2 sentences - why this decision]
+</review>
+
+<decision>CONTINUE</decision>
+
+<guidance>
+[3-5 sentences max. For CONTINUE: what to focus on next. For STOP: why halting. For RESTART: what to try instead.]
+</guidance>
+
+The <decision> tag MUST be exactly: CONTINUE, STOP, or RESTART.
+SUPERVISOR_PROMPT_EOF
+}
+
+# =============================================================================
+# MAIN RALPH LOOP FUNCTION
+# =============================================================================
+
+# Unified ralph loop execution with optional supervision
 #
 # Args:
 #   workspace           - Working directory for the agent
 #   system_prompt       - System prompt for the agent
-#   user_prompt_fn      - Function name that generates user prompt (called with iteration number and output_dir)
-#   completion_check_fn - Function name that returns 0 if work is complete, 1 otherwise
+#   user_prompt_fn      - Callback: generates work prompts (iteration, output_dir, supervisor_dir, supervisor_feedback)
+#   completion_check_fn - Callback: checks if work complete (returns 0 if done, 1 otherwise)
 #   max_iterations      - Maximum loop iterations (default: 20)
 #   max_turns           - Max turns per Claude session (default: 50)
 #   output_dir          - Directory for logs and summaries (default: workspace parent)
 #   session_prefix      - Prefix for session files (default: iteration)
+#   supervisor_interval - Run supervisor every N iterations; 0 = disabled (default: 0)
+#   supervisor_prompt_fn - Callback: generates supervisor prompts (default: _default_supervisor_prompt)
+#   max_restarts        - Max RESTART decisions before forcing STOP (default: 2)
 #
-# The user_prompt_fn and completion_check_fn are callback function names that will be invoked.
-# This allows customization of the loop behavior without code duplication.
+# Callback signatures:
+#   user_prompt_fn(iteration, output_dir, supervisor_dir, supervisor_feedback) -> prompt text
+#   completion_check_fn() -> exit code (0 = complete, 1 = continue)
+#   supervisor_prompt_fn(iteration, output_dir, last_summary_file) -> supervisor prompt text
 #
 # Returns: 0 on successful completion, 1 if max iterations reached or error
 run_ralph_loop() {
@@ -50,6 +194,9 @@ run_ralph_loop() {
     local max_turns="${6:-50}"
     local output_dir="${7:-}"
     local session_prefix="${8:-iteration}"
+    local supervisor_interval="${9:-0}"
+    local supervisor_prompt_fn="${10:-_default_supervisor_prompt}"
+    local max_restarts="${11:-2}"
 
     # Validate callback functions exist before starting loop
     if ! declare -F "$user_prompt_fn" > /dev/null 2>&1; then
@@ -70,9 +217,17 @@ run_ralph_loop() {
     fi
 
     local iteration=0
+    local restart_count=0
     local shutdown_requested=false
     local last_session_id=""
+    local supervisor_feedback=""
     local _ralph_loop_completed_normally=false
+
+    # Determine if supervision is enabled
+    local supervision_enabled=false
+    if [ "$supervisor_interval" -gt 0 ]; then
+        supervision_enabled=true
+    fi
 
     # Signal handler for graceful shutdown (invoked by trap)
     # shellcheck disable=SC2329
@@ -85,8 +240,8 @@ run_ralph_loop() {
     # shellcheck disable=SC2329
     _ralph_loop_exit_handler() {
         local exit_code=$?
-        if [ "$_ralph_loop_completed_normally" != true ]; then
-            log_error "Unexpected exit from ralph loop (exit_code=$exit_code, iteration=$iteration, workspace=$workspace)"
+        if [ "${_ralph_loop_completed_normally:-}" != true ]; then
+            log_error "Unexpected exit from ralph loop (exit_code=$exit_code, iteration=${iteration:-unknown}, workspace=${workspace:-unknown})"
         fi
         # Reset trap to avoid recursion
         trap - EXIT
@@ -102,7 +257,11 @@ run_ralph_loop() {
     local run_id="${session_prefix}-${start_time}"
     export RALPH_RUN_ID="$run_id"
 
-    log "Ralph loop starting (max $max_iterations iterations, $max_turns turns/session, run_id=$run_id)"
+    if [ "$supervision_enabled" = true ]; then
+        log "Ralph loop starting with supervision (max $max_iterations iterations, supervisor every $supervisor_interval, run_id=$run_id)"
+    else
+        log "Ralph loop starting (max $max_iterations iterations, $max_turns turns/session, run_id=$run_id)"
+    fi
 
     # Change to workspace
     cd "$workspace" || {
@@ -113,6 +272,9 @@ run_ralph_loop() {
     # Create run-namespaced subdirectories
     mkdir -p "$output_dir/logs/$run_id"
     mkdir -p "$output_dir/summaries/$run_id"
+    if [ "$supervision_enabled" = true ]; then
+        mkdir -p "$output_dir/supervisors"
+    fi
 
     # Initialize work log (uses RALPH_RUN_ID for namespacing)
     work_log_init "$output_dir"
@@ -147,34 +309,19 @@ run_ralph_loop() {
         session_id=$(uuidgen)
         last_session_id="$session_id"
 
-        # Get user prompt from callback (pass iteration and output_dir for context)
+        # Get user prompt from callback (unified 4-arg signature)
+        local supervisor_dir="$output_dir/supervisors"
         local user_prompt
-        user_prompt=$($user_prompt_fn "$iteration" "$output_dir")
-
-        # For continuation iterations, prepend the previous iteration's summary
-        if [ "$iteration" -gt 0 ]; then
-            local prev_iteration=$((iteration - 1))
-            local prev_summary_file="$output_dir/summaries/$run_id/${session_prefix}-${prev_iteration}-summary.txt"
-
-            if [ -f "$prev_summary_file" ]; then
-                local prev_summary
-                prev_summary=$(cat "$prev_summary_file")
-                user_prompt="## Previous Iteration Summary
-
-The following is a summary of work completed in iteration $prev_iteration:
-
-$prev_summary
-
----
-
-$user_prompt"
-            fi
-        fi
+        user_prompt=$($user_prompt_fn "$iteration" "$output_dir" "$supervisor_dir" "$supervisor_feedback")
 
         log_debug "Iteration $iteration: Session $session_id (max $max_turns turns)"
 
         # Log iteration start to worker.log if it exists
-        echo "[$(date -Iseconds)] INFO: ITERATION_START iteration=$iteration session_id=$session_id max_turns=$max_turns" >> "$output_dir/worker.log" 2>/dev/null || true
+        if [ "$supervision_enabled" = true ]; then
+            echo "[$(date -Iseconds)] INFO: ITERATION_START iteration=$iteration session_id=$session_id max_turns=$max_turns restart_count=$restart_count" >> "$output_dir/worker.log" 2>/dev/null || true
+        else
+            echo "[$(date -Iseconds)] INFO: ITERATION_START iteration=$iteration session_id=$session_id max_turns=$max_turns" >> "$output_dir/worker.log" 2>/dev/null || true
+        fi
 
         # Generate timestamp for log filename uniqueness
         local log_timestamp
@@ -190,11 +337,13 @@ $user_prompt"
                   --arg sys_prompt "$system_prompt" \
                   --arg user_prompt "$user_prompt" \
                   --arg max_turns "$max_turns" \
+                  --arg restart_count "$restart_count" \
                   '{
                     type: "iteration_start",
                     iteration: ($iteration | tonumber),
                     session_id: $session,
                     max_turns: ($max_turns | tonumber),
+                    restart_count: ($restart_count | tonumber),
                     system_prompt: $sys_prompt,
                     user_prompt: $user_prompt,
                     timestamp: now | strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -325,6 +474,152 @@ Please provide your summary based on the conversation so far, following this str
         fi
 
         iteration=$((iteration + 1))
+
+        # =================================================================
+        # SUPERVISOR PHASE (every N iterations, if enabled)
+        # =================================================================
+        if [ "$supervision_enabled" = true ] && [ $((iteration % supervisor_interval)) -eq 0 ]; then
+            log "Supervisor phase triggered at iteration $iteration"
+
+            # Run supervisor session
+            local supervisor_session_id
+            supervisor_session_id=$(uuidgen)
+
+            local supervisor_log="$output_dir/supervisors/supervisor-$iteration.log"
+            local supervisor_review="$output_dir/supervisors/supervisor-$iteration-review.md"
+            local supervisor_decision_file="$output_dir/supervisors/supervisor-$iteration-decision.txt"
+            local supervisor_guidance_file="$output_dir/supervisors/supervisor-$iteration-guidance.md"
+
+            # Get supervisor prompt (use last summary)
+            local prev_iter=$((iteration - 1))
+            local last_summary_file="$run_id/${session_prefix}-$prev_iter-summary.txt"
+            local supervisor_prompt
+            supervisor_prompt=$($supervisor_prompt_fn "$iteration" "$output_dir" "$last_summary_file")
+
+            local supervisor_system_prompt="You are a supervisor overseeing an iterative work process. Your bias is toward CONTINUE - only intervene with STOP or RESTART when you have high confidence something is fundamentally wrong. Let workers work."
+
+            log "Running supervisor session $supervisor_session_id"
+            echo "[$(date -Iseconds)] INFO: SUPERVISOR_START iteration=$iteration session_id=$supervisor_session_id" >> "$output_dir/worker.log" 2>/dev/null || true
+
+            # Log supervisor prompt
+            {
+                jq -c -n --arg iteration "$iteration" \
+                      --arg session "$supervisor_session_id" \
+                      --arg prompt "$supervisor_prompt" \
+                      '{
+                        type: "supervisor_start",
+                        iteration: ($iteration | tonumber),
+                        session_id: $session,
+                        prompt: $prompt,
+                        timestamp: now | strftime("%Y-%m-%dT%H:%M:%SZ")
+                      }'
+            } > "$supervisor_log"
+
+            # Run supervisor
+            local supervisor_exit_code=0
+            "$CLAUDE" --verbose \
+                --output-format stream-json \
+                ${WIGGUM_HOME:+--plugin-dir "$WIGGUM_HOME/skills"} \
+                --append-system-prompt "$supervisor_system_prompt" \
+                --session-id "$supervisor_session_id" \
+                --max-turns 5 \
+                --dangerously-skip-permissions \
+                -p "$supervisor_prompt" >> "$supervisor_log" 2>&1 || supervisor_exit_code=$?
+            log "Supervisor session completed (exit code: $supervisor_exit_code)"
+
+            # Extract decision and guidance
+            local decision
+            decision=$(_extract_supervisor_decision "$supervisor_log")
+            echo "$decision" > "$supervisor_decision_file"
+
+            # Extract review content
+            _extract_supervisor_review "$supervisor_log" "$supervisor_review" || true
+
+            # Extract guidance (always try to capture)
+            _extract_supervisor_guidance "$supervisor_log" "$supervisor_guidance_file" || true
+
+            # Read guidance for next round
+            if [ -f "$supervisor_guidance_file" ]; then
+                supervisor_feedback=$(cat "$supervisor_guidance_file")
+            else
+                supervisor_feedback=""
+            fi
+
+            log "Supervisor decision: $decision"
+            echo "[$(date -Iseconds)] INFO: SUPERVISOR_COMPLETE iteration=$iteration decision=$decision" >> "$output_dir/worker.log" 2>/dev/null || true
+
+            # Update checkpoint with supervisor decision (deterministic: decision extracted via regex from log)
+            # iteration was already incremented, so the reviewed work is at iteration-1
+            local reviewed_iteration=$((iteration - 1))
+            checkpoint_update_supervisor "$output_dir" "$reviewed_iteration" "$decision" "$supervisor_feedback"
+
+            # Handle decision
+            case "$decision" in
+                CONTINUE)
+                    log "Supervisor: CONTINUE - proceeding with guidance"
+                    # supervisor_feedback is already set, loop continues
+                    ;;
+
+                STOP)
+                    log "Supervisor: STOP - halting loop"
+                    echo "[$(date -Iseconds)] INFO: SUPERVISOR_STOP iteration=$iteration reason=supervisor_decision" >> "$output_dir/worker.log" 2>/dev/null || true
+
+                    # Record end time and exit
+                    local end_time
+                    end_time=$(date +%s)
+                    local duration=$((end_time - start_time))
+
+                    log "Ralph loop stopped by supervisor after $iteration iterations (duration: ${duration}s)"
+                    echo "[$(date -Iseconds)] INFO: LOOP_STOPPED_BY_SUPERVISOR end_time=$end_time duration_sec=$duration iterations=$iteration" >> "$output_dir/worker.log" 2>/dev/null || true
+
+                    export RALPH_LOOP_LAST_SESSION_ID="$last_session_id"
+                    _ralph_loop_completed_normally=true
+                    trap - EXIT  # Clear trap before returning
+                    return 0
+                    ;;
+
+                RESTART)
+                    restart_count=$((restart_count + 1))
+
+                    if [ $restart_count -gt "$max_restarts" ]; then
+                        log_warn "Supervisor: RESTART requested but max_restarts ($max_restarts) exceeded - forcing STOP"
+                        echo "[$(date -Iseconds)] WARN: RESTART_LIMIT_EXCEEDED restart_count=$restart_count max_restarts=$max_restarts" >> "$output_dir/worker.log" 2>/dev/null || true
+
+                        local end_time
+                        end_time=$(date +%s)
+                        local duration=$((end_time - start_time))
+
+                        log "Ralph loop stopped due to restart limit (duration: ${duration}s)"
+                        export RALPH_LOOP_LAST_SESSION_ID="$last_session_id"
+                        _ralph_loop_completed_normally=true
+                        trap - EXIT  # Clear trap before returning
+                        return 1
+                    fi
+
+                    log "Supervisor: RESTART - archiving run $run_id and resetting to iteration 0"
+                    echo "[$(date -Iseconds)] INFO: SUPERVISOR_RESTART iteration=$iteration restart_count=$restart_count run_id=$run_id" >> "$output_dir/worker.log" 2>/dev/null || true
+
+                    # Archive current run's logs and summaries
+                    local archive_dir="$output_dir/supervisors/run-$((restart_count - 1))"
+                    mkdir -p "$archive_dir"
+                    mv "$output_dir/logs/$run_id" "$archive_dir/" 2>/dev/null || true
+                    mv "$output_dir/summaries/$run_id" "$archive_dir/" 2>/dev/null || true
+
+                    # Generate new run ID for the restart
+                    run_id="${session_prefix}-$(date +%s)"
+                    export RALPH_RUN_ID="$run_id"
+
+                    # Create fresh directories for new run
+                    mkdir -p "$output_dir/logs/$run_id"
+                    mkdir -p "$output_dir/summaries/$run_id"
+
+                    # Reset iteration
+                    iteration=0
+                    log "Restarted loop - beginning run $run_id (restart_count=$restart_count) with supervisor guidance"
+                    ;;
+            esac
+        fi
+
         sleep 2  # Prevent tight loop
     done
 
@@ -335,17 +630,52 @@ Please provide your summary based on the conversation so far, following this str
 
     if [ $iteration -ge "$max_iterations" ]; then
         log_error "Ralph loop reached max iterations ($max_iterations) without completing"
-        echo "[$(date -Iseconds)] WARN: LOOP_INCOMPLETE end_time=$end_time duration_sec=$duration iterations=$iteration max_iterations=$max_iterations" >> "$output_dir/worker.log" 2>/dev/null || true
+        if [ "$supervision_enabled" = true ]; then
+            echo "[$(date -Iseconds)] WARN: LOOP_INCOMPLETE end_time=$end_time duration_sec=$duration iterations=$iteration restarts=$restart_count" >> "$output_dir/worker.log" 2>/dev/null || true
+        else
+            echo "[$(date -Iseconds)] WARN: LOOP_INCOMPLETE end_time=$end_time duration_sec=$duration iterations=$iteration max_iterations=$max_iterations" >> "$output_dir/worker.log" 2>/dev/null || true
+        fi
         _ralph_loop_completed_normally=true
+        trap - EXIT  # Clear trap before returning
         return 1
     fi
 
-    echo "[$(date -Iseconds)] INFO: LOOP_COMPLETED end_time=$end_time duration_sec=$duration iterations=$iteration" >> "$output_dir/worker.log" 2>/dev/null || true
-    log "Ralph loop finished after $iteration iterations (duration: ${duration}s)"
+    if [ "$supervision_enabled" = true ]; then
+        echo "[$(date -Iseconds)] INFO: LOOP_COMPLETED end_time=$end_time duration_sec=$duration iterations=$iteration restarts=$restart_count" >> "$output_dir/worker.log" 2>/dev/null || true
+        log "Ralph loop finished after $iteration iterations, $restart_count restarts (duration: ${duration}s)"
+    else
+        echo "[$(date -Iseconds)] INFO: LOOP_COMPLETED end_time=$end_time duration_sec=$duration iterations=$iteration" >> "$output_dir/worker.log" 2>/dev/null || true
+        log "Ralph loop finished after $iteration iterations (duration: ${duration}s)"
+    fi
 
     # Export last session ID for potential follow-up (e.g., final summary generation)
     export RALPH_LOOP_LAST_SESSION_ID="$last_session_id"
 
     _ralph_loop_completed_normally=true
+    trap - EXIT  # Clear trap before returning
     return 0
+}
+
+# =============================================================================
+# BACKWARD COMPATIBILITY ALIAS
+# =============================================================================
+
+# Alias for supervised mode - calls run_ralph_loop with supervisor_interval defaulting to 2
+# This maintains backward compatibility for code that explicitly calls run_ralph_loop_supervised
+run_ralph_loop_supervised() {
+    local workspace="$1"
+    local system_prompt="$2"
+    local user_prompt_fn="$3"
+    local completion_check_fn="$4"
+    local max_iterations="${5:-20}"
+    local max_turns="${6:-50}"
+    local output_dir="${7:-}"
+    local session_prefix="${8:-iteration}"
+    local supervisor_interval="${9:-2}"
+    local supervisor_prompt_fn="${10:-_default_supervisor_prompt}"
+    local max_restarts="${11:-2}"
+
+    run_ralph_loop "$workspace" "$system_prompt" "$user_prompt_fn" "$completion_check_fn" \
+        "$max_iterations" "$max_turns" "$output_dir" "$session_prefix" \
+        "$supervisor_interval" "$supervisor_prompt_fn" "$max_restarts"
 }

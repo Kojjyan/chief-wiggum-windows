@@ -82,14 +82,16 @@ agent_source_core() {
     source "$WIGGUM_HOME/lib/core/defaults.sh"
 }
 
-# Source ralph loop (main execution pattern)
+# Source ralph loop (unified execution pattern with optional supervision)
+# Supervision is enabled by passing supervisor_interval > 0 to run_ralph_loop
 agent_source_ralph() {
     source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop.sh"
 }
 
-# Source supervised ralph loop (with periodic supervisor intervention)
+# Alias for backward compatibility - sources the same unified ralph loop
+# The run_ralph_loop_supervised function is defined in the unified file
 agent_source_ralph_supervised() {
-    source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop-supervised.sh"
+    agent_source_ralph
 }
 
 # Source one-shot agent execution (no iteration loop)

@@ -186,10 +186,13 @@ STATUS: ../reports/comment-status.md (update as you fix)
 EOF
 }
 
-# User prompt callback
+# User prompt callback (unified 4-arg signature)
 _fix_user_prompt() {
     local iteration="$1"
     local output_dir="$2"
+    # shellcheck disable=SC2034  # supervisor args unused but part of unified callback signature
+    local _supervisor_dir="${3:-}"
+    local _supervisor_feedback="${4:-}"
 
     # Always include the initial prompt to ensure full context after summarization
     cat << 'EOF'

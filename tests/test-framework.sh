@@ -296,6 +296,25 @@ assert_greater_than() {
     fi
 }
 
+# Assert that a string/variable is not empty
+assert_not_empty() {
+    local value="$1"
+    local message="${2:-Value should not be empty}"
+
+    ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
+
+    if [ -n "$value" ]; then
+        echo -e "  ${GREEN}✓${NC} $message"
+        return 0
+    else
+        echo -e "  ${RED}✗${NC} $message"
+        echo -e "    ${RED}Expected: non-empty value${NC}"
+        echo -e "    ${RED}Actual:   (empty)${NC}"
+        FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
+        return 1
+    fi
+}
+
 # =============================================================================
 # Fixture Functions
 # =============================================================================

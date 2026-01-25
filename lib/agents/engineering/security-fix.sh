@@ -250,10 +250,13 @@ EOF
     echo ""
 }
 
-# User prompt callback
+# User prompt callback (unified 4-arg signature)
 _fix_user_prompt() {
     local iteration="$1"
     local output_dir="$2"
+    # shellcheck disable=SC2034  # supervisor args unused but part of unified callback signature
+    local _supervisor_dir="${3:-}"
+    local _supervisor_feedback="${4:-}"
 
     # Include context section first
     _get_context_section

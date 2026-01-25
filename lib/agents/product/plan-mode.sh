@@ -154,11 +154,14 @@ Your role is EXCLUSIVELY to explore and plan. You do NOT implement.
 EOF
 }
 
-# User prompt callback for ralph loop
+# User prompt callback for ralph loop (unified 4-arg signature)
 _plan_user_prompt() {
     local iteration="$1"
     # shellcheck disable=SC2034  # output_dir is part of callback signature
     local output_dir="$2"
+    # shellcheck disable=SC2034  # supervisor args unused but part of unified callback signature
+    local _supervisor_dir="${3:-}"
+    local _supervisor_feedback="${4:-}"
     local task_id="$_PLAN_TASK_ID"
     local plan_output="$_PLAN_OUTPUT_FILE"
 

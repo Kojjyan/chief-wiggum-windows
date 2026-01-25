@@ -77,10 +77,18 @@ _usage_get_5h_cycle_start() {
     boundary=$(_usage_get_threshold_boundary)
 
     if [ -n "$boundary" ] && [ "$boundary" -gt 0 ] 2>/dev/null; then
-        # Calculate cycle based on configured boundary
-        local seconds_since_boundary=$(( now - boundary ))
         local cycle_seconds=18000  # 5 hours
-        local cycles_elapsed=$(( seconds_since_boundary / cycle_seconds ))
+        local seconds_since_boundary=$(( now - boundary ))
+        local cycles_elapsed
+
+        # Floor division (bash truncates toward zero, we need toward -infinity)
+        if [ "$seconds_since_boundary" -lt 0 ]; then
+            # For negative: floor(x/y) = (x - y + 1) / y when x < 0
+            cycles_elapsed=$(( (seconds_since_boundary - cycle_seconds + 1) / cycle_seconds ))
+        else
+            cycles_elapsed=$(( seconds_since_boundary / cycle_seconds ))
+        fi
+
         echo $(( boundary + (cycles_elapsed * cycle_seconds) ))
     else
         # Original rolling window behavior

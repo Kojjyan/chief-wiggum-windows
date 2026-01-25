@@ -39,15 +39,25 @@ teardown() {
 }
 
 # =============================================================================
-# Test: 5-hour cycle start is always a multiple of 5 hours
+# Test: 5-hour cycle start aligns to boundary or epoch
 # =============================================================================
-test_5h_cycle_is_multiple_of_5() {
-    local cycle_start
+test_5h_cycle_aligns_correctly() {
+    local cycle_start boundary
     cycle_start=$(_usage_get_5h_cycle_start)
+    boundary=$(_usage_get_threshold_boundary)
 
-    # cycle_start should be divisible by 18000 (5*3600)
-    local remainder=$(( cycle_start % 18000 ))
-    assert_equals "0" "$remainder" "5h cycle start should be multiple of 18000 seconds"
+    if [ -n "$boundary" ] && [ "$boundary" -gt 0 ] 2>/dev/null; then
+        # When boundary is configured, cycle_start should have same offset as boundary
+        local cycle_offset=$(( cycle_start % 18000 ))
+        local boundary_offset=$(( boundary % 18000 ))
+        assert_equals "$boundary_offset" "$cycle_offset" \
+            "5h cycle start should align to configured boundary"
+    else
+        # Without boundary, cycle_start should be multiple of 18000
+        local remainder=$(( cycle_start % 18000 ))
+        assert_equals "0" "$remainder" \
+            "5h cycle start should be multiple of 18000 seconds"
+    fi
 }
 
 # =============================================================================
@@ -193,11 +203,15 @@ test_rate_limit_over_threshold() {
     local ralph_dir="$TEST_DIR/ralph-over"
     mkdir -p "$ralph_dir"
 
-    # Create usage data over threshold
-    cat > "$ralph_dir/claude-usage.json" << 'JSON'
+    # Get current cycle start in milliseconds to avoid stale data detection
+    local current_cycle_start_ms
+    current_cycle_start_ms=$(( $(_usage_get_5h_cycle_start) * 1000 ))
+
+    # Create usage data over threshold with current cycle timestamp
+    cat > "$ralph_dir/claude-usage.json" << JSON
 {
     "current_5h_cycle": {
-        "start_time": 1700000000000,
+        "start_time": $current_cycle_start_ms,
         "total_prompts": 950
     },
     "current_week": {
@@ -218,10 +232,14 @@ test_rate_limit_custom_threshold() {
     local ralph_dir="$TEST_DIR/ralph-custom"
     mkdir -p "$ralph_dir"
 
-    cat > "$ralph_dir/claude-usage.json" << 'JSON'
+    # Get current cycle start in milliseconds to avoid stale data detection
+    local current_cycle_start_ms
+    current_cycle_start_ms=$(( $(_usage_get_5h_cycle_start) * 1000 ))
+
+    cat > "$ralph_dir/claude-usage.json" << JSON
 {
     "current_5h_cycle": {
-        "start_time": 1700000000000,
+        "start_time": $current_cycle_start_ms,
         "total_prompts": 50
     }
 }
@@ -350,7 +368,7 @@ test_write_shared() {
 # =============================================================================
 # Run all tests
 # =============================================================================
-run_test test_5h_cycle_is_multiple_of_5
+run_test test_5h_cycle_aligns_correctly
 run_test test_5h_cycle_start_not_in_future
 run_test test_week_start_is_monday
 run_test test_week_start_not_in_future

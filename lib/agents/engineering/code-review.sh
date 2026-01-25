@@ -84,11 +84,14 @@ agent_run() {
     return $agent_exit
 }
 
-# User prompt callback for ralph loop
+# User prompt callback for ralph loop (unified 4-arg signature)
 _review_user_prompt() {
     local iteration="$1"
     # shellcheck disable=SC2034  # output_dir available for future use
     local output_dir="$2"
+    # shellcheck disable=SC2034  # supervisor args unused but part of unified callback signature
+    local _supervisor_dir="${3:-}"
+    local _supervisor_feedback="${4:-}"
 
     # Always include the initial prompt to ensure full context after summarization
     _get_user_prompt "$_REVIEW_SCOPE"

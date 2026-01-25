@@ -12,9 +12,11 @@ Chief Wiggum is an autonomous task runner that orchestrates workers to execute s
 
 ### Running Tests
 ```bash
-./tests/test-runner.sh                      # Run all tests
+./tests/test-runner.sh                      # Run all Bash tests
 ./tests/test-runner.sh --filter <pattern>   # Run filtered tests
+./tests/run-all-tests.sh                    # Run ALL tests (Bash + TUI)
 ./tests/run-all-tests.sh --quick            # Quick mode (skip slow tests)
+./tests/tui-test-runner.sh                  # Run TUI tests only
 ./tests/run-coverage.sh                     # Code coverage
 ./tests/run-shellcheck.sh                   # Bash linting
 bash tests/test_<name>.sh                   # Run specific test file
@@ -59,8 +61,9 @@ WIGGUM_LOG_LEVEL=debug wiggum run           # Verbose logging
 ### Claude Invocation Patterns (`lib/claude/`)
 
 1. **run-claude-once.sh** - Single-shot execution, no session continuity
-2. **run-claude-ralph-loop.sh** - Iterative work with context preservation via summaries
-3. **run-claude-ralph-loop-supervised.sh** - Ralph Loop with periodic supervisor checkpoints
+2. **run-claude-ralph-loop.sh** - Unified iterative loop with optional supervision
+   - `supervisor_interval=0` (default): Pure iterative loop with summaries
+   - `supervisor_interval=N`: Supervisor reviews every N iterations (CONTINUE/STOP/RESTART)
 
 ### Pipeline Engine
 
@@ -199,6 +202,10 @@ function_name() {
 - All scripts must pass shellcheck
 - Use `# shellcheck disable=SC####` with justification when necessary
 
+## Python TUI Development
+
+The TUI component uses Python 3.10+ with [uv](https://docs.astral.sh/uv/) for dependency management.
+
 ## Critical Constraints & Gotchas
 
 ### Agent Rules
@@ -206,7 +213,7 @@ function_name() {
 - **Sub-agents don't manage PID files or signal handlers** - only top-level agents do
 - **`readonly: true` agents get git checkpoint restored after exit** - changes are discarded
 - **Agents must write epoch-named results** - use `agent_write_result`, never delete from `results/`, `reports/`, `logs/`, `summaries/`
-- **Ralph loop callbacks have different signatures**: unsupervised (2 args), supervised (4 args with supervisor feedback)
+- **Ralph loop callbacks use unified 4-arg signature**: `user_prompt_fn(iteration, output_dir, supervisor_dir, supervisor_feedback)` - agents not using supervision can ignore the last 2 args
 
 ### Pipeline Rules
 - **Every cycle needs a bounded `max`** - termination guarantee requires `max` on any step in a loop
