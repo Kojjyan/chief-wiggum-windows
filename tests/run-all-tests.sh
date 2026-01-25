@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --quick, -q     Skip slow tests"
             echo "  --verbose, -v   Show detailed output"
-            echo "  --suite, -s     Run specific suite (syntax, integration, e2e)"
+            echo "  --suite, -s     Run specific suite (syntax, integration, e2e, tui)"
             echo "  --help, -h      Show this help"
             exit 0
             ;;
@@ -226,6 +226,9 @@ main() {
             e2e)
                 run_suite "E2E Smoke Tests" "$SCRIPT_DIR/e2e/test-smoke.sh"
                 ;;
+            tui)
+                run_suite "TUI Tests" "$SCRIPT_DIR/tui-test-runner.sh"
+                ;;
             *)
                 echo "Unknown suite: $SPECIFIC_SUITE"
                 exit 1
@@ -253,6 +256,9 @@ main() {
         if [ "$QUICK_MODE" = false ]; then
             run_suite "E2E Smoke Tests" "$SCRIPT_DIR/e2e/test-smoke.sh"
         fi
+
+        # 6. TUI tests (Python)
+        run_suite "TUI Tests" "$SCRIPT_DIR/tui-test-runner.sh"
     fi
 
     # Print summary
