@@ -179,12 +179,11 @@ class WorkersPanel(Widget):
             self.app.notify("Worker is not running", severity="warning")
             return
 
-        if worker.pid:
-            if stop_worker(worker.pid):
-                self.app.notify(f"Sent SIGTERM to {worker.id}")
-                self.refresh_data()
-            else:
-                self.app.notify(f"Failed to stop {worker.id}", severity="error")
+        if stop_worker(worker.id):
+            self.app.notify(f"Stopping {worker.id}")
+            self.refresh_data()
+        else:
+            self.app.notify(f"Failed to stop {worker.id}", severity="error")
 
     def action_kill_worker(self) -> None:
         """Kill the selected worker."""
@@ -197,12 +196,11 @@ class WorkersPanel(Widget):
             self.app.notify("Worker is not running", severity="warning")
             return
 
-        if worker.pid:
-            if kill_worker(worker.pid):
-                self.app.notify(f"Sent SIGKILL to {worker.id}")
-                self.refresh_data()
-            else:
-                self.app.notify(f"Failed to kill {worker.id}", severity="error")
+        if kill_worker(worker.id):
+            self.app.notify(f"Killed {worker.id}")
+            self.refresh_data()
+        else:
+            self.app.notify(f"Failed to kill {worker.id}", severity="error")
 
     def action_view_conversation(self) -> None:
         """View conversation for selected worker."""

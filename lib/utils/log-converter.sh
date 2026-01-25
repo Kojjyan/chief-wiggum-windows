@@ -2,7 +2,7 @@
 # log-converter.sh - Convert JSONL iteration logs to readable conversation markdown
 #
 # Modes:
-#   Single file: log-converter.sh <iteration-log.jsonl> [output.md]
+#   Single file: log-converter.sh <agent-log.jsonl> [output.md]
 #   Directory:   log-converter.sh --dir <worker_dir>
 #
 # In directory mode, processes all iteration and sub-agent logs in a worker
@@ -253,23 +253,15 @@ convert_dir() {
 
     local converted=0
 
-    # 1. Process iteration logs in time order (searches subdirectories)
+    # Process all agent logs in time order (searches subdirectories)
+    # Matches any log file with format: {step-id}-{iteration}[-{timestamp}].log
+    # Excludes summary logs which have different structure
     while IFS= read -r log_file; do
         [ -f "$log_file" ] || continue
         local_name=$(basename "$log_file" .log)
         convert_log "$log_file" "$conv_dir/${local_name}.md"
         ((converted++)) || true
-    done < <(find "$logs_dir" -name "iteration-*.log" ! -name "*summary*" -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
-
-    # 2. Process sub-agent logs (audit, test, docs, etc.) in time order
-    for prefix in audit test docs security fix validation; do
-        while IFS= read -r log_file; do
-            [ -f "$log_file" ] || continue
-            local_name=$(basename "$log_file" .log)
-            convert_log "$log_file" "$conv_dir/${local_name}.md"
-            ((converted++)) || true
-        done < <(find "$logs_dir" -name "${prefix}-*.log" ! -name "*summary*" -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
-    done
+    done < <(find "$logs_dir" -name "*.log" ! -name "*summary*" -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
 
     echo "Converted $converted log files to conversations in $conv_dir" >&2
 }
@@ -290,7 +282,7 @@ else
     INPUT_FILE="${1:-}"
     OUTPUT_FILE="${2:-/dev/stdout}"
     if [ -z "$INPUT_FILE" ] || [ ! -f "$INPUT_FILE" ]; then
-        echo "Usage: log-converter.sh <iteration-log.jsonl> [output.md]" >&2
+        echo "Usage: log-converter.sh <agent-log.jsonl> [output.md]" >&2
         echo "       log-converter.sh --dir <worker_dir>" >&2
         echo "Converts Claude CLI stream-JSON logs to readable markdown." >&2
         exit 1

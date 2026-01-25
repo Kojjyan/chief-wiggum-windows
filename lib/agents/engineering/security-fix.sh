@@ -99,6 +99,9 @@ No CRITICAL, HIGH, or MEDIUM security findings were present in the report.
 
     log "Starting security fix loop (max $max_iterations iterations, $max_turns turns/session)"
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-audit-fix}"
+
     # Run the fix loop
     run_ralph_loop \
         "$workspace" \
@@ -108,7 +111,7 @@ No CRITICAL, HIGH, or MEDIUM security findings were present in the report.
         "$max_iterations" \
         "$max_turns" \
         "$worker_dir" \
-        "fix"
+        "$session_prefix"
 
     local loop_result=$?
 

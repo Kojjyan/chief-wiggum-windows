@@ -68,7 +68,8 @@ _create_iteration_log() {
     local duration_ms="${5:-60000}"
     local cost="${6:-0.05}"
 
-    cat > "$worker_dir/logs/iteration-${iteration}.log" << EOF
+    # Use generic step ID for test (pattern works with any step ID)
+    cat > "$worker_dir/logs/teststep-${iteration}.log" << EOF
 {"type":"result","duration_ms":$duration_ms,"total_cost_usd":$cost,"usage":{"input_tokens":$input_tokens,"output_tokens":$output_tokens,"cache_creation_input_tokens":200,"cache_read_input_tokens":100}}
 EOF
 }

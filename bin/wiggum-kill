@@ -54,8 +54,8 @@ kill_single_worker() {
     local pid
     pid=$(get_worker_pid "$worker_dir") || return 1
 
-    echo "Force killing worker $worker_id (PID: $pid)..."
-    kill -9 "$pid" 2>/dev/null || true
+    echo "Force killing worker $worker_id (PID: $pid) and children..."
+    kill_process_tree "$pid" KILL
 
     sleep 1
     if kill -0 "$pid" 2>/dev/null; then
@@ -93,8 +93,8 @@ kill_all_workers() {
     local killed_count=0
     for pid in "${!worker_pids_map[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
-            echo "Killing ${worker_pids_map[$pid]} (PID $pid)"
-            kill -9 "$pid" 2>/dev/null || true
+            echo "Killing ${worker_pids_map[$pid]} (PID $pid) and children"
+            kill_process_tree "$pid" KILL
             ((killed_count++)) || true
         fi
     done

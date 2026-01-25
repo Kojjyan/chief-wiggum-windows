@@ -71,12 +71,15 @@ agent_run() {
     _PLAN_TASK_ID="$task_id"
     _PLAN_OUTPUT_FILE=".ralph/plans/${task_id}.md"
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-planning}"
+
     # Run planning loop (operates on project_dir, not a worktree)
     run_ralph_loop "$project_dir" \
         "$(_get_system_prompt "$project_dir" "$task_id")" \
         "_plan_user_prompt" \
         "_plan_completion_check" \
-        "$max_iterations" "$max_turns" "$worker_dir" "plan"
+        "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix"
 
     local loop_result=$?
 

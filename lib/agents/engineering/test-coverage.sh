@@ -57,12 +57,15 @@ agent_run() {
     # Set up callback context using base library
     agent_setup_context "$worker_dir" "$workspace" "$project_dir"
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-test}"
+
     # Run test loop
     run_ralph_loop "$workspace" \
         "$(_get_system_prompt "$workspace")" \
         "_test_user_prompt" \
         "_test_completion_check" \
-        "$max_iterations" "$max_turns" "$worker_dir" "test"
+        "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix"
 
     local agent_exit=$?
 

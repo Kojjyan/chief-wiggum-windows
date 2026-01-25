@@ -68,14 +68,18 @@ agent_run() {
 
     log "Generating final summary by resuming $resume_from_agent session: $session_id"
 
+    # Use step ID from pipeline for log file naming
+    local step_prefix="${WIGGUM_STEP_ID:-summary}"
+    local log_file="$worker_dir/logs/${step_prefix}.log"
+
     # Resume the executor's session with summary prompt
     run_agent_resume "$session_id" \
         "$(_get_final_summary_prompt)" \
-        "$worker_dir/logs/iteration-summary.log" "$max_turns"
+        "$log_file" "$max_turns"
 
     # Extract to summaries/summary.txt (parse stream-JSON to get text, then extract summary tags)
-    if [ -f "$worker_dir/logs/iteration-summary.log" ]; then
-        grep '"type":"assistant"' "$worker_dir/logs/iteration-summary.log" | \
+    if [ -f "$log_file" ]; then
+        grep '"type":"assistant"' "$log_file" | \
             jq -r 'select(.message.content[]? | .type == "text") | .message.content[] | select(.type == "text") | .text' 2>/dev/null | \
             sed -n '/<summary>/,/<\/summary>/p' | \
             sed '1d;$d' > "$worker_dir/summaries/summary.txt"

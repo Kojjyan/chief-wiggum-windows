@@ -386,7 +386,8 @@ test_default_supervisor_prompt_contains_required_elements() {
     source "$WIGGUM_HOME/lib/claude/run-claude-ralph-loop-supervised.sh"
 
     local prompt
-    prompt=$(_default_supervisor_prompt 3 "/tmp/output" "iteration-2-summary.txt")
+    # Use generic step ID for test (summary file name comes from session_prefix)
+    prompt=$(_default_supervisor_prompt 3 "/tmp/output" "mystep-2-summary.txt")
 
     assert_output_contains "$prompt" "SUPERVISOR REVIEW" "Prompt should contain review header"
     assert_output_contains "$prompt" "CONTINUE" "Prompt should mention CONTINUE option"

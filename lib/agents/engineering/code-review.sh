@@ -60,12 +60,15 @@ agent_run() {
     agent_setup_context "$worker_dir" "$workspace" "$project_dir"
     _REVIEW_SCOPE="$review_scope"
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-review}"
+
     # Run review loop
     run_ralph_loop "$workspace" \
         "$(_get_system_prompt "$workspace" "$review_scope")" \
         "_review_user_prompt" \
         "_review_completion_check" \
-        "$max_iterations" "$max_turns" "$worker_dir" "review"
+        "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix"
 
     local agent_exit=$?
 

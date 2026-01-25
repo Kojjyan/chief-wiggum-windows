@@ -12,7 +12,7 @@ set -euo pipefail
 #   - workspace : Directory containing the code to work on
 #   - prd.md    : Product Requirements Document containing tasks to execute
 # OUTPUT_FILES:
-#   - logs/iteration-*.log : Per-iteration conversation logs
+#   - logs/${WIGGUM_STEP_ID}-*.log : Per-iteration conversation logs
 # =============================================================================
 
 # Source base library and initialize metadata
@@ -83,11 +83,14 @@ agent_run() {
     log "Task executor starting (max_iterations=$max_iterations, max_turns=$max_turns, supervisor_interval=$supervisor_interval)"
 
     # Run main work loop with supervision
+    # Use step ID from pipeline (set by pipeline-runner.sh) for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-execution}"
+
     run_ralph_loop_supervised "$workspace" \
         "$(_get_system_prompt "$workspace")" \
         "_task_user_prompt" \
         "_task_completion_check" \
-        "$max_iterations" "$max_turns" "$worker_dir" "iteration" \
+        "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix" \
         "$supervisor_interval"
 
     local loop_result=$?
@@ -315,7 +318,9 @@ _emit_context_section() {
     local output_dir="$2"
     [ "$iteration" -le 0 ] && return
     local prev_iter=$((iteration - 1))
-    [ -f "$output_dir/summaries/iteration-$prev_iter-summary.txt" ] || return
+    # Use step ID from pipeline for summary file naming
+    local step_prefix="${WIGGUM_STEP_ID:-execution}"
+    [ -f "$output_dir/summaries/${step_prefix}-$prev_iter-summary.txt" ] || return
     cat << CONTEXT_EOF
 
 CONTEXT FROM PREVIOUS ITERATION:
@@ -323,12 +328,12 @@ CONTEXT FROM PREVIOUS ITERATION:
 This is iteration $iteration of a multi-iteration work session. Previous work has been completed in earlier iterations.
 
 To understand what has already been accomplished and maintain continuity:
-- Read the file @../summaries/iteration-$prev_iter-summary.txt to understand completed work and context
+- Read the file @../summaries/${step_prefix}-$prev_iter-summary.txt to understand completed work and context
 - This summary describes what was done, decisions made, and files modified
 - Use this information to avoid duplicating work and to build upon previous progress
 - Ensure your approach aligns with patterns and decisions from earlier iterations
 
-CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window. Only read the summaries/iteration-X-summary.txt files for context.
+CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window. Only read the summaries/${step_prefix}-X-summary.txt files for context.
 CONTEXT_EOF
 }
 

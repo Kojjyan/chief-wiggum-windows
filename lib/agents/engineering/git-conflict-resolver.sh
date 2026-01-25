@@ -82,12 +82,15 @@ No merge conflicts were found in the workspace. The repository is in a clean sta
 
     log "Starting conflict resolution..."
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-resolve}"
+
     # Run resolution loop
     run_ralph_loop "$workspace" \
         "$(_get_system_prompt "$workspace")" \
         "_conflict_user_prompt" \
         "_conflict_completion_check" \
-        "$max_iterations" "$max_turns" "$worker_dir" "resolve"
+        "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix"
 
     local agent_exit=$?
 

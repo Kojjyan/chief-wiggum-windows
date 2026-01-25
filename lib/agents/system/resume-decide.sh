@@ -56,11 +56,48 @@ _load_pipeline_config() {
     fi
 }
 
+# Find the entry point step (the main implementation step, typically system.task-executor)
+# Returns the step ID of the first step with agent "system.task-executor", or the first non-disabled step
+_find_entry_point_step() {
+    local step_count
+    step_count=$(pipeline_step_count)
+
+    # First, look for system.task-executor agent
+    local i=0
+    while [ "$i" -lt "$step_count" ]; do
+        local agent enabled_by
+        agent=$(pipeline_get "$i" ".agent")
+        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
+
+        if [ -z "$enabled_by" ] && [ "$agent" = "system.task-executor" ]; then
+            pipeline_get "$i" ".id"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    # Fallback: first non-disabled step
+    i=0
+    while [ "$i" -lt "$step_count" ]; do
+        local enabled_by
+        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
+
+        if [ -z "$enabled_by" ]; then
+            pipeline_get "$i" ".id"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    echo "unknown"
+}
+
 # Generate the "Pipeline Steps" table dynamically from loaded pipeline
 # Returns markdown table via stdout
 _generate_steps_table() {
-    local step_count
+    local step_count entry_step
     step_count=$(pipeline_step_count)
+    entry_step=$(_find_entry_point_step)
 
     echo "| # | Step | Agent | Special Handling |"
     echo "|---|------|-------|------------------|"
@@ -81,7 +118,8 @@ _generate_steps_table() {
         fi
 
         # Determine special handling notes
-        if [ "$step_id" = "execution" ]; then
+        # The entry point step (task-executor) cannot resume mid-step
+        if [ "$step_id" = "$entry_step" ]; then
             special="Cannot resume mid-step"
         elif [ "$readonly" = "true" ]; then
             special="Read-only"
@@ -96,35 +134,36 @@ _generate_steps_table() {
 # Generate the "Decision Criteria" table dynamically from loaded pipeline
 # Returns markdown table via stdout
 _generate_decision_criteria() {
-    local step_count
+    local step_count entry_step
     step_count=$(pipeline_step_count)
+    entry_step=$(_find_entry_point_step)
 
     echo "| Scenario | Decision |"
     echo "|----------|----------|"
 
-    # Always start with execution-related criteria
-    echo "| PRD has incomplete \\\`- [ ]\\\` tasks | \\\`execution\\\` |"
-    echo "| PRD says complete but workspace diff contradicts claims | \\\`execution\\\` |"
+    # Always start with entry-point-related criteria (PRD tasks)
+    echo "| PRD has incomplete \\\`- [ ]\\\` tasks | \\\`$entry_step\\\` |"
+    echo "| PRD says complete but workspace diff contradicts claims | \\\`$entry_step\\\` |"
 
-    # Build criteria for each step after execution
-    local prev_step="execution"
+    # Build criteria for each step after entry point
+    local prev_step="$entry_step"
     local i=0
     while [ "$i" -lt "$step_count" ]; do
         local step_id enabled_by
         step_id=$(pipeline_get "$i" ".id")
         enabled_by=$(pipeline_get "$i" ".enabled_by" "")
 
-        # Skip disabled-by-default and execution (handled above)
-        if [ -n "$enabled_by" ] || [ "$step_id" = "execution" ]; then
+        # Skip disabled-by-default and entry point (handled above)
+        if [ -n "$enabled_by" ] || [ "$step_id" = "$entry_step" ]; then
             i=$((i + 1))
             continue
         fi
 
         # Generate criterion: if prev_step complete but this step never ran
-        if [ "$prev_step" != "execution" ]; then
+        if [ "$prev_step" != "$entry_step" ]; then
             echo "| ${prev_step^} complete, $step_id never ran or has no result file | \\\`$step_id\\\` |"
         else
-            echo "| Execution complete, $step_id never ran or has no result file | \\\`$step_id\\\` |"
+            echo "| ${entry_step^} complete, $step_id never ran or has no result file | \\\`$step_id\\\` |"
         fi
 
         prev_step="$step_id"
@@ -141,16 +180,20 @@ _get_valid_steps() {
     local step_count
     step_count=$(pipeline_step_count)
 
-    local steps="execution"  # Always valid
+    # Collect all non-disabled step IDs
+    local steps=""
     local i=0
     while [ "$i" -lt "$step_count" ]; do
         local step_id enabled_by
         step_id=$(pipeline_get "$i" ".id")
         enabled_by=$(pipeline_get "$i" ".enabled_by" "")
 
-        # Include all non-disabled steps except execution (already added)
-        if [ -z "$enabled_by" ] && [ "$step_id" != "execution" ]; then
-            steps="$steps|$step_id"
+        if [ -z "$enabled_by" ]; then
+            if [ -z "$steps" ]; then
+                steps="$step_id"
+            else
+                steps="$steps|$step_id"
+            fi
         fi
         i=$((i + 1))
     done
@@ -239,11 +282,8 @@ archive_from_step() {
     archive_dir="$worker_dir/history/resume-$(date +%s)"
 
     # Map resume step to its conversation log prefix
-    local step_prefix
-    case "$resume_step" in
-        execution) step_prefix="iteration-" ;;
-        *) step_prefix="${resume_step}-" ;;
-    esac
+    # All agents use their step ID as the prefix (no special cases)
+    local step_prefix="${resume_step}-"
 
     # Find the earliest conversation log for the resume step (timestamp reference)
     local reference_file=""
@@ -353,7 +393,7 @@ $worker_dir/
 ├── prd.md               ← Task requirements (check completion status)
 ├── workspace/           ← Code changes (PRESERVED - do not modify)
 ├── conversations/       ← Converted conversation logs from previous run
-│   ├── iteration-*.md   ← Main work loop conversations
+│   ├── execution-*.md   ← Main work loop conversations
 │   ├── audit-*.md       ← Security audit conversations
 │   ├── test-*.md        ← Test coverage conversations
 │   └── ...              ← Other sub-agent conversations

@@ -516,7 +516,8 @@ agent_write_result() {
     local iterations_completed=0
     if [ -d "$worker_dir/logs" ]; then
         local count
-        count=$(find "$worker_dir/logs" \( -name "iteration-*.log" -o -name "validation-*.log" -o -name "fix-*.log" \) ! -name "*summary*" 2>/dev/null | wc -l || true)
+        # Count all agent log files (any step ID prefix, excluding summaries)
+        count=$(find "$worker_dir/logs" -name "*.log" ! -name "*summary*" 2>/dev/null | wc -l || true)
         iterations_completed=$(echo "$count" | tr -d '[:space:]')
     fi
     # Ensure numeric values

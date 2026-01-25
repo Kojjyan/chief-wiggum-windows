@@ -197,8 +197,9 @@ test_convert_dir_creates_conversations_dir() {
     local worker_dir="$TEST_DIR/worker"
     mkdir -p "$worker_dir/logs"
 
+    # Use generic step ID (could be any pipeline step)
     echo '{"type":"iteration_start","iteration":1,"session_id":"sess1"}' \
-        > "$worker_dir/logs/iteration-1.log"
+        > "$worker_dir/logs/mystep-1.log"
 
     convert_dir "$worker_dir" 2>/dev/null
 
@@ -206,25 +207,26 @@ test_convert_dir_creates_conversations_dir() {
         "Should create conversations/ directory"
 }
 
-test_convert_dir_processes_iteration_logs() {
+test_convert_dir_processes_agent_logs() {
     local worker_dir="$TEST_DIR/worker"
     mkdir -p "$worker_dir/logs"
 
+    # Use generic step IDs (could be any pipeline step)
     echo '{"type":"iteration_start","iteration":1,"session_id":"sess1"}' \
-        > "$worker_dir/logs/iteration-1.log"
+        > "$worker_dir/logs/mystep-1.log"
     echo '{"type":"iteration_start","iteration":2,"session_id":"sess2"}' \
-        > "$worker_dir/logs/iteration-2.log"
+        > "$worker_dir/logs/mystep-2.log"
 
     convert_dir "$worker_dir" 2>/dev/null
 
-    assert_file_exists "$worker_dir/conversations/iteration-1.md" \
-        "Should create iteration-1.md"
-    assert_file_exists "$worker_dir/conversations/iteration-2.md" \
-        "Should create iteration-2.md"
-    assert_file_contains "$worker_dir/conversations/iteration-1.md" "Iteration 1" \
-        "iteration-1.md should contain iteration 1 content"
-    assert_file_contains "$worker_dir/conversations/iteration-2.md" "Iteration 2" \
-        "iteration-2.md should contain iteration 2 content"
+    assert_file_exists "$worker_dir/conversations/mystep-1.md" \
+        "Should create mystep-1.md"
+    assert_file_exists "$worker_dir/conversations/mystep-2.md" \
+        "Should create mystep-2.md"
+    assert_file_contains "$worker_dir/conversations/mystep-1.md" "Iteration 1" \
+        "mystep-1.md should contain iteration 1 content"
+    assert_file_contains "$worker_dir/conversations/mystep-2.md" "Iteration 2" \
+        "mystep-2.md should contain iteration 2 content"
 }
 
 test_convert_dir_processes_subagent_logs() {

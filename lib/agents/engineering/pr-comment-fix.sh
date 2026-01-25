@@ -91,6 +91,9 @@ agent_run() {
 
     log "Starting comment fix loop (max $max_iterations iterations, $max_turns turns/session)"
 
+    # Use step ID from pipeline for session prefix
+    local session_prefix="${WIGGUM_STEP_ID:-pr-fix}"
+
     # Run the fix loop
     run_ralph_loop \
         "$workspace" \
@@ -100,7 +103,7 @@ agent_run() {
         "$max_iterations" \
         "$max_turns" \
         "$worker_dir" \
-        "fix"
+        "$session_prefix"
 
     local loop_result=$?
 

@@ -67,9 +67,10 @@ export_metrics() {
         local pr_url=""
 
         if [ -d "$log_dir" ]; then
-            # Sum all result entries from iteration logs using jq
+            # Sum all result entries from agent logs using jq
+            # Matches any step ID prefix (excluding summary logs)
             local totals
-            totals=$(find "$log_dir" -type f -name "iteration-*.log" -exec grep '"type":"result"' {} \; 2>/dev/null | \
+            totals=$(find "$log_dir" -type f -name "*.log" ! -name "*summary*" -exec grep '"type":"result"' {} \; 2>/dev/null | \
                 jq -s '{
                     duration_ms: (map(.duration_ms) | add // 0),
                     total_cost: (map(.total_cost_usd) | add // 0),

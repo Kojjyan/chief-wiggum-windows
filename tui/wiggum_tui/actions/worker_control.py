@@ -1,43 +1,47 @@
-"""Worker control actions - stop, kill, verify."""
+"""Worker control actions - stop, kill, verify via wiggum CLI."""
 
 import os
-import signal
+import subprocess
 from pathlib import Path
 
 
-def stop_worker(pid: int) -> bool:
-    """Send SIGTERM to gracefully stop a worker.
+def stop_worker(worker_id: str) -> bool:
+    """Stop a worker gracefully via wiggum stop.
 
     Args:
-        pid: Process ID of the worker.
+        worker_id: Worker ID (e.g., worker-TASK-001-123456).
 
     Returns:
-        True if signal was sent, False if process not found.
+        True if command succeeded, False otherwise.
     """
     try:
-        os.kill(pid, signal.SIGTERM)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
+        result = subprocess.run(
+            ["wiggum", "stop", worker_id],
+            capture_output=True,
+            timeout=35,  # wiggum stop has 30s internal timeout
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
 
 
-def kill_worker(pid: int) -> bool:
-    """Send SIGKILL to forcefully terminate a worker.
+def kill_worker(worker_id: str) -> bool:
+    """Kill a worker forcefully via wiggum kill.
 
     Args:
-        pid: Process ID of the worker.
+        worker_id: Worker ID (e.g., worker-TASK-001-123456).
 
     Returns:
-        True if signal was sent, False if process not found.
+        True if command succeeded, False otherwise.
     """
     try:
-        os.kill(pid, signal.SIGKILL)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
+        result = subprocess.run(
+            ["wiggum", "kill", worker_id],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
 
 

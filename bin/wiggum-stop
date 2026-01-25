@@ -53,8 +53,8 @@ stop_single_worker() {
     local pid
     pid=$(get_worker_pid "$worker_dir") || return 1
 
-    echo "Stopping worker $worker_id (PID: $pid)..."
-    kill -TERM "$pid"
+    echo "Stopping worker $worker_id (PID: $pid) and children..."
+    kill_process_tree "$pid" TERM
 
     # Wait for graceful shutdown (up to 30 seconds)
     local timeout=30
@@ -113,8 +113,8 @@ stop_all_workers() {
     # Send TERM signal to all workers
     for pid in "${all_pids[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
-            echo "Stopping ${worker_pids_map[$pid]} (PID $pid)"
-            kill -TERM "$pid"
+            echo "Stopping ${worker_pids_map[$pid]} (PID $pid) and children"
+            kill_process_tree "$pid" TERM
         fi
     done
 
@@ -145,8 +145,8 @@ stop_all_workers() {
         echo "Warning: Some workers did not stop gracefully, force killing..."
         for pid in "${all_pids[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
-                echo "Force killing ${worker_pids_map[$pid]} (PID $pid)"
-                kill -9 "$pid" 2>/dev/null || true
+                echo "Force killing ${worker_pids_map[$pid]} (PID $pid) and children"
+                kill_process_tree "$pid" KILL
             fi
         done
         sleep 1

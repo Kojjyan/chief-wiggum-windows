@@ -295,6 +295,37 @@ remove_pid_file() {
     ) 200>"$lock_file"
 }
 
+# Kill a process and all its descendants (children, grandchildren, etc.)
+# Args: <pid> [signal]
+# Signal can be: TERM, KILL, or a number (default: KILL/9)
+# Kills children first (bottom-up) to avoid orphan processes
+kill_process_tree() {
+    local pid="$1"
+    local signal="${2:-KILL}"
+
+    # Validate PID
+    if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+
+    # Don't kill ourselves or init
+    if [ "$pid" -eq $$ ] || [ "$pid" -eq 1 ]; then
+        return 1
+    fi
+
+    # Get all child PIDs
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null) || true
+
+    # Recursively kill children first (depth-first)
+    for child in $children; do
+        kill_process_tree "$child" "$signal"
+    done
+
+    # Now kill the parent
+    kill -"$signal" "$pid" 2>/dev/null || true
+}
+
 # Wait for worker PID file to be created
 # Args: <worker_dir> [timeout_deciseconds]
 # Returns: 0 if PID file created, 1 if timeout
