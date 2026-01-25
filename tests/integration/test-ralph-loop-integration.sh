@@ -189,10 +189,13 @@ test_ralph_loop_creates_summaries() {
         "_test_user_prompt_5" "_test_never_complete_3" \
         2 5 "$OUTPUT_DIR" "test" || true
 
-    # Summary text files should exist
-    assert_file_exists "$OUTPUT_DIR/summaries/test-0-summary.txt" \
+    # Summary text files should exist in run-namespaced subfolder
+    local run_dir
+    run_dir=$(ls -d "$OUTPUT_DIR/summaries/test-"* 2>/dev/null | head -1)
+    assert_not_empty "$run_dir" "Run-namespaced summary directory should exist"
+    assert_file_exists "$run_dir/test-0-summary.txt" \
         "Summary for iteration 0 should exist"
-    assert_file_exists "$OUTPUT_DIR/summaries/test-1-summary.txt" \
+    assert_file_exists "$run_dir/test-1-summary.txt" \
         "Summary for iteration 1 should exist"
 }
 

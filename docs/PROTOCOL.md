@@ -146,7 +146,7 @@ All gate agents produce a `gate_result` field. Default values include PASS, FIX,
 
 ### Iteration Summaries
 
-Each iteration writes a summary to `summaries/iteration-N-summary.txt`:
+Each iteration writes a summary to `summaries/<run_id>/<prefix>-N-summary.txt`:
 
 ```markdown
 ## Iteration 3 Summary

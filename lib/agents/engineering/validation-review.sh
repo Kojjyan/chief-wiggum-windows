@@ -93,7 +93,7 @@ _validation_user_prompt() {
 
 CONTINUATION CONTEXT (Iteration $iteration):
 
-Your previous review work is summarized in @../summaries/validation-$prev_iter-summary.txt.
+Your previous review work is summarized in @../summaries/${RALPH_RUN_ID:-}/validation-$prev_iter-summary.txt.
 
 Please continue your review:
 1. If you haven't completed all review sections, continue from where you left off

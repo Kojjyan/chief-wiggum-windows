@@ -222,7 +222,7 @@ run_ralph_loop_supervised() {
 
     # Create run-namespaced directory structure
     mkdir -p "$output_dir/logs/$run_id"
-    mkdir -p "$output_dir/summaries"
+    mkdir -p "$output_dir/summaries/$run_id"
     mkdir -p "$output_dir/supervisors"
 
     # Main loop
@@ -351,7 +351,7 @@ Please provide your summary based on the conversation so far, following this str
 
         # Capture full JSON output to logs directory
         local summary_log="$output_dir/logs/$run_id/${session_prefix}-${iteration}-${log_timestamp}-summary.log"
-        local summary_txt="$output_dir/summaries/${session_prefix}-${iteration}-summary.txt"
+        local summary_txt="$output_dir/summaries/$run_id/${session_prefix}-${iteration}-summary.txt"
 
         local summary_exit_code=0
         "$CLAUDE" --verbose --resume "$session_id" --max-turns 2 \
@@ -416,7 +416,7 @@ Please provide your summary based on the conversation so far, following this str
 
             # Get supervisor prompt (use last summary)
             local prev_iter=$((iteration - 1))
-            local last_summary_file="${session_prefix}-$prev_iter-summary.txt"
+            local last_summary_file="$run_id/${session_prefix}-$prev_iter-summary.txt"
             local supervisor_prompt
             supervisor_prompt=$($supervisor_prompt_fn "$iteration" "$output_dir" "$last_summary_file")
 
@@ -525,7 +525,7 @@ Please provide your summary based on the conversation so far, following this str
                     local archive_dir="$output_dir/supervisors/run-$((restart_count - 1))"
                     mkdir -p "$archive_dir"
                     mv "$output_dir/logs/$run_id" "$archive_dir/" 2>/dev/null || true
-                    mv "$output_dir/summaries/"* "$archive_dir/" 2>/dev/null || true
+                    mv "$output_dir/summaries/$run_id" "$archive_dir/" 2>/dev/null || true
 
                     # Generate new run ID for the restart
                     run_id="${session_prefix}-$(date +%s)"
@@ -533,7 +533,7 @@ Please provide your summary based on the conversation so far, following this str
 
                     # Create fresh directories for new run
                     mkdir -p "$output_dir/logs/$run_id"
-                    mkdir -p "$output_dir/summaries"
+                    mkdir -p "$output_dir/summaries/$run_id"
 
                     # Reset iteration
                     iteration=0

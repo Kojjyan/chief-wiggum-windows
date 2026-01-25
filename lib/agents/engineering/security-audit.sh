@@ -95,7 +95,7 @@ _audit_user_prompt() {
 
 CONTINUATION CONTEXT (Iteration $iteration):
 
-Your previous audit work is summarized in @../summaries/audit-$prev_iter-summary.txt.
+Your previous audit work is summarized in @../summaries/${RALPH_RUN_ID:-}/audit-$prev_iter-summary.txt.
 
 Please continue your audit:
 1. If you haven't completed all scan categories, continue from where you left off

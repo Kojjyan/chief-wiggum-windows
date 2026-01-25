@@ -320,7 +320,8 @@ _emit_context_section() {
     local prev_iter=$((iteration - 1))
     # Use step ID from pipeline for summary file naming
     local step_prefix="${WIGGUM_STEP_ID:-execution}"
-    [ -f "$output_dir/summaries/${step_prefix}-$prev_iter-summary.txt" ] || return
+    local run_id="${RALPH_RUN_ID:-}"
+    [ -n "$run_id" ] && [ -f "$output_dir/summaries/$run_id/${step_prefix}-$prev_iter-summary.txt" ] || return
     cat << CONTEXT_EOF
 
 CONTEXT FROM PREVIOUS ITERATION:
@@ -328,12 +329,12 @@ CONTEXT FROM PREVIOUS ITERATION:
 This is iteration $iteration of a multi-iteration work session. Previous work has been completed in earlier iterations.
 
 To understand what has already been accomplished and maintain continuity:
-- Read the file @../summaries/${step_prefix}-$prev_iter-summary.txt to understand completed work and context
+- Read the file @../summaries/$run_id/${step_prefix}-$prev_iter-summary.txt to understand completed work and context
 - This summary describes what was done, decisions made, and files modified
 - Use this information to avoid duplicating work and to build upon previous progress
 - Ensure your approach aligns with patterns and decisions from earlier iterations
 
-CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window. Only read the summaries/${step_prefix}-X-summary.txt files for context.
+CRITICAL: Do NOT read files in the logs/ directory - they contain full conversation JSON streams that are too large and will deplete your context window. Only read the summaries/$run_id/${step_prefix}-X-summary.txt files for context.
 CONTEXT_EOF
 }
 

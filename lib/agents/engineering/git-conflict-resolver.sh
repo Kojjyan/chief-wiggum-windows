@@ -128,7 +128,7 @@ _conflict_user_prompt() {
 
 CONTINUATION CONTEXT (Iteration $iteration):
 
-Your previous work is summarized in @../summaries/resolve-$prev_iter-summary.txt.
+Your previous work is summarized in @../summaries/${RALPH_RUN_ID:-}/resolve-$prev_iter-summary.txt.
 
 Please continue resolving conflicts:
 1. Check which files still have unresolved conflicts using 'git diff --name-only --diff-filter=U'

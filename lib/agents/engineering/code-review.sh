@@ -100,7 +100,7 @@ _review_user_prompt() {
 
 CONTINUATION CONTEXT (Iteration $iteration):
 
-Your previous review work is summarized in @../summaries/review-$prev_iter-summary.txt.
+Your previous review work is summarized in @../summaries/${RALPH_RUN_ID:-}/review-$prev_iter-summary.txt.
 
 Please continue your review:
 1. If you haven't completed all review categories, continue from where you left off

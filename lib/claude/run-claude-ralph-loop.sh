@@ -112,7 +112,7 @@ run_ralph_loop() {
 
     # Create run-namespaced subdirectories
     mkdir -p "$output_dir/logs/$run_id"
-    mkdir -p "$output_dir/summaries"
+    mkdir -p "$output_dir/summaries/$run_id"
 
     # Initialize work log (uses RALPH_RUN_ID for namespacing)
     work_log_init "$output_dir"
@@ -150,6 +150,26 @@ run_ralph_loop() {
         # Get user prompt from callback (pass iteration and output_dir for context)
         local user_prompt
         user_prompt=$($user_prompt_fn "$iteration" "$output_dir")
+
+        # For continuation iterations, prepend the previous iteration's summary
+        if [ "$iteration" -gt 0 ]; then
+            local prev_iteration=$((iteration - 1))
+            local prev_summary_file="$output_dir/summaries/$run_id/${session_prefix}-${prev_iteration}-summary.txt"
+
+            if [ -f "$prev_summary_file" ]; then
+                local prev_summary
+                prev_summary=$(cat "$prev_summary_file")
+                user_prompt="## Previous Iteration Summary
+
+The following is a summary of work completed in iteration $prev_iteration:
+
+$prev_summary
+
+---
+
+$user_prompt"
+            fi
+        fi
 
         log_debug "Iteration $iteration: Session $session_id (max $max_turns turns)"
 
@@ -252,7 +272,7 @@ Please provide your summary based on the conversation so far, following this str
 
         # Capture full JSON output to logs directory (same format as work phase)
         local summary_log="$output_dir/logs/$run_id/${session_prefix}-${iteration}-${log_timestamp}-summary.log"
-        local summary_txt="$output_dir/summaries/${session_prefix}-${iteration}-summary.txt"
+        local summary_txt="$output_dir/summaries/$run_id/${session_prefix}-${iteration}-summary.txt"
 
         local summary_exit_code=0
         "$CLAUDE" --verbose --resume "$session_id" --max-turns 2 \

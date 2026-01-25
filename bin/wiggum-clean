@@ -19,6 +19,7 @@ Targets:
   <pattern>           Clean workers matching pattern (e.g., TASK-001, 030)
   <p1>,<p2>,...       Clean multiple patterns (comma-separated)
   all                 Clean all worktrees and worker directories
+  done                Clean workers whose PRs have been merged
 
 Options:
   -y, --yes           Skip confirmation prompt
@@ -31,11 +32,14 @@ Description:
   Pattern matching: searches for worker directories matching the pattern.
   Proceeds only if exactly one match is found per pattern.
 
+  The 'done' target finds workers with merged PRs using the GitHub CLI (gh).
+
 Examples:
   wiggum clean TASK-001       # Clean workers matching TASK-001
   wiggum clean 030            # Clean workers matching "030"
   wiggum clean TASK-001,002   # Clean workers for TASK-001 and those matching "002"
   wiggum clean all            # Clean up all worktrees and worker directories
+  wiggum clean done           # Clean workers with merged PRs
   wiggum clean -y all         # Clean all without confirmation
 
 EOF
@@ -99,6 +103,56 @@ find_all_workers() {
     for dir in "$RALPH_DIR/workers"/worker-*; do
         if [ -d "$dir" ]; then
             basename "$dir"
+        fi
+    done
+}
+
+# Check if a PR is merged
+# Args: <pr_url>
+# Returns: 0 if merged, 1 otherwise
+is_pr_merged() {
+    local pr_url="$1"
+
+    if [ -z "$pr_url" ] || [ "$pr_url" = "N/A" ]; then
+        return 1
+    fi
+
+    # Check if gh CLI is available
+    if ! command -v gh &> /dev/null; then
+        log "Warning: gh CLI not found, cannot check PR status"
+        return 1
+    fi
+
+    # Extract PR number and repo from URL
+    # URL format: https://github.com/owner/repo/pull/123
+    local pr_state
+    pr_state=$(gh pr view "$pr_url" --json state -q .state 2>/dev/null) || return 1
+
+    if [ "$pr_state" = "MERGED" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Find workers with merged PRs
+find_workers_with_merged_prs() {
+    if [ ! -d "$RALPH_DIR/workers" ]; then
+        return
+    fi
+
+    for dir in "$RALPH_DIR/workers"/worker-*; do
+        if [ -d "$dir" ]; then
+            local worker_name
+            worker_name=$(basename "$dir")
+            local pr_url_file="$dir/pr_url.txt"
+
+            if [ -f "$pr_url_file" ]; then
+                local pr_url
+                pr_url=$(cat "$pr_url_file")
+                if is_pr_merged "$pr_url"; then
+                    echo "$worker_name"
+                fi
+            fi
         fi
     done
 }
@@ -223,6 +277,9 @@ fi
 # Determine workers to clean
 if [ "$TARGET" = "all" ]; then
     workers_to_clean=$(find_all_workers)
+elif [ "$TARGET" = "done" ]; then
+    echo "Checking PR status for all workers (this may take a moment)..."
+    workers_to_clean=$(find_workers_with_merged_prs)
 else
     workers_to_clean=$(resolve_patterns "$TARGET") || exit $EXIT_CLEAN_PATTERN_NOT_FOUND
 fi
@@ -254,7 +311,11 @@ if [ ${#running_workers[@]} -gt 0 ]; then
 fi
 
 # Show what will be cleaned and ask for confirmation
-echo "The following worker directories will be removed:"
+if [ "$TARGET" = "done" ]; then
+    echo "The following workers have merged PRs and will be removed:"
+else
+    echo "The following worker directories will be removed:"
+fi
 for worker in "${workers_array[@]}"; do
     echo "  $worker"
 done

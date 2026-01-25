@@ -97,7 +97,7 @@ _test_user_prompt() {
 
 CONTINUATION CONTEXT (Iteration $iteration):
 
-Your previous test work is summarized in @../summaries/test-$prev_iter-summary.txt.
+Your previous test work is summarized in @../summaries/${RALPH_RUN_ID:-}/test-$prev_iter-summary.txt.
 
 Please continue:
 1. If you haven't finished writing tests, continue from where you left off
