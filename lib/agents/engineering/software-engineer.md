@@ -1,5 +1,5 @@
 ---
-type: system.task-executor
+type: engineering.software-engineer
 description: Executes task implementation via supervised ralph loop
 required_paths: [workspace, prd.md]
 valid_results: [PASS, FAIL]

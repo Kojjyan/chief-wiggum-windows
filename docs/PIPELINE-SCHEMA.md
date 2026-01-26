@@ -330,7 +330,7 @@ The previous schema fields map to this model:
     },
     {
       "id": "execution",
-      "agent": "system.task-executor",
+      "agent": "engineering.software-engineer",
       "max": 3,
       "config": { "max_iterations": 20, "max_turns": 50, "supervisor_interval": 2 },
       "on_result": {

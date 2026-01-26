@@ -815,22 +815,22 @@ Missing content
 # Test: Task Executor MD
 # =============================================================================
 
-test_task_executor_md_loads() {
+test_software_engineer_md_loads() {
     source "$WIGGUM_HOME/lib/core/agent-md.sh"
 
-    local md_file="$WIGGUM_HOME/lib/agents/system/task-executor.md"
+    local md_file="$WIGGUM_HOME/lib/agents/engineering/software-engineer.md"
 
     if [ ! -f "$md_file" ]; then
-        skip_test "task-executor.md not found"
+        skip_test "software-engineer.md not found"
         return
     fi
 
     if md_agent_load "$md_file"; then
-        assert_equals "system.task-executor" "$_MD_TYPE" "task-executor.md should have correct type"
-        assert_equals "ralph_loop" "$_MD_MODE" "task-executor.md should be ralph_loop mode"
-        assert_equals "2" "$_MD_SUPERVISOR_INTERVAL" "task-executor.md should have supervisor_interval=2"
+        assert_equals "engineering.software-engineer" "$_MD_TYPE" "software-engineer.md should have correct type"
+        assert_equals "ralph_loop" "$_MD_MODE" "software-engineer.md should be ralph_loop mode"
+        assert_equals "2" "$_MD_SUPERVISOR_INTERVAL" "software-engineer.md should have supervisor_interval=2"
     else
-        assert_failure "task-executor.md should load successfully" true
+        assert_failure "software-engineer.md should load successfully" true
     fi
 }
 
@@ -927,7 +927,7 @@ run_test test_conditional_supervisor_without_feedback
 run_test test_conditional_iteration_zero
 run_test test_conditional_iteration_nonzero
 run_test test_conditional_file_exists
-run_test test_task_executor_md_loads
+run_test test_software_engineer_md_loads
 run_test test_security_audit_md_loads
 run_test test_validation_review_md_loads
 run_test test_documentation_writer_md_loads

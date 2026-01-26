@@ -6,7 +6,7 @@
       "timeout_seconds": 3600,
       "plan_mode": false
     },
-    "system.task-executor": {
+    "engineering.software-engineer": {
       "max_iterations": 20,
       "max_turns": 50,
       "supervisor_interval": 2,

@@ -223,7 +223,7 @@ pipeline_load_builtin_defaults() {
   "name": "builtin-default",
   "steps": [
     {"id":"planning","agent":"product.plan-mode","readonly":true,"enabled_by":"WIGGUM_PLAN_MODE"},
-    {"id":"execution","agent":"system.task-executor","max":3,"config":{"max_iterations":20,"max_turns":50,"supervisor_interval":2}},
+    {"id":"execution","agent":"engineering.software-engineer","max":3,"config":{"max_iterations":20,"max_turns":50,"supervisor_interval":2}},
     {"id":"summary","agent":"system.task-summarizer","readonly":true},
     {"id":"audit","agent":"engineering.security-audit","max":3,"readonly":true,"on_result":{"FIX":{"id":"audit-fix","agent":"engineering.security-fix","max":2,"commit_after":true}}},
     {"id":"test","agent":"engineering.test-coverage","max":2,"commit_after":true},

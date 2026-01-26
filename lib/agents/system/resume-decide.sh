@@ -59,48 +59,48 @@ _load_pipeline_config() {
     fi
 }
 
-# Find the entry point step (the main implementation step, typically system.task-executor)
-# Returns the step ID of the first step with agent "system.task-executor", or the first non-disabled step
-_find_entry_point_step() {
-    local step_count
-    step_count=$(pipeline_step_count)
+# Get an agent's execution mode from its .md file
+# Returns: mode string (ralph_loop, once, resume) or empty if not found
+_get_agent_mode() {
+    local agent_type="$1"
+    local agent_path="${agent_type//./\/}"
+    local md_file="$WIGGUM_HOME/lib/agents/${agent_path}.md"
 
-    # First, look for system.task-executor agent
-    local i=0
-    while [ "$i" -lt "$step_count" ]; do
-        local agent enabled_by
-        agent=$(pipeline_get "$i" ".agent")
-        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
+    if [ ! -f "$md_file" ]; then
+        echo ""
+        return
+    fi
 
-        if [ -z "$enabled_by" ] && [ "$agent" = "system.task-executor" ]; then
-            pipeline_get "$i" ".id"
-            return 0
+    # Extract just the frontmatter and mode field
+    local in_frontmatter=false
+    local mode=""
+    while IFS= read -r line; do
+        if [ "$line" = "---" ]; then
+            if [ "$in_frontmatter" = true ]; then
+                break  # End of frontmatter
+            fi
+            in_frontmatter=true
+            continue
         fi
-        i=$((i + 1))
-    done
-
-    # Fallback: first non-disabled step
-    i=0
-    while [ "$i" -lt "$step_count" ]; do
-        local enabled_by
-        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
-
-        if [ -z "$enabled_by" ]; then
-            pipeline_get "$i" ".id"
-            return 0
+        if [ "$in_frontmatter" = true ]; then
+            if [[ "$line" =~ ^mode:[[:space:]]*(.+)$ ]]; then
+                mode="${BASH_REMATCH[1]}"
+                # Remove quotes if present
+                mode="${mode#\"}"
+                mode="${mode%\"}"
+                break
+            fi
         fi
-        i=$((i + 1))
-    done
+    done < "$md_file"
 
-    echo "unknown"
+    echo "${mode:-ralph_loop}"  # Default to ralph_loop if not specified
 }
 
 # Generate the "Pipeline Steps" table dynamically from loaded pipeline
 # Returns markdown table via stdout
 _generate_steps_table() {
-    local step_count entry_step
+    local step_count
     step_count=$(pipeline_step_count)
-    entry_step=$(_find_entry_point_step)
 
     echo "| # | Step | Agent | Special Handling |"
     echo "|---|------|-------|------------------|"
@@ -121,8 +121,10 @@ _generate_steps_table() {
         fi
 
         # Determine special handling notes
-        # The entry point step (task-executor) cannot resume mid-step
-        if [ "$step_id" = "$entry_step" ]; then
+        local agent_mode
+        agent_mode=$(_get_agent_mode "$agent")
+        if [ "$agent_mode" = "ralph_loop" ]; then
+            # ralph_loop agents maintain state via summaries; must restart from beginning
             special="Cannot resume mid-step"
         elif [ "$is_readonly" = "true" ]; then
             special="Read-only"
@@ -134,74 +136,19 @@ _generate_steps_table() {
     done
 }
 
-# Generate the "Decision Criteria" table dynamically from loaded pipeline
-# Returns markdown table via stdout
+# Generate the "Decision Criteria" section
+# Returns markdown via stdout
 _generate_decision_criteria() {
-    local step_count entry_step
-    step_count=$(pipeline_step_count)
-    entry_step=$(_find_entry_point_step)
-
-    echo "| Scenario | Decision |"
-    echo "|----------|----------|"
-
-    # Always start with entry-point-related criteria (PRD tasks)
-    echo "| PRD has incomplete \\\`- [ ]\\\` tasks | \\\`$entry_step\\\` |"
-    echo "| PRD says complete but workspace diff contradicts claims | \\\`$entry_step\\\` |"
-
-    # Build criteria for each step after entry point
-    local prev_step="$entry_step"
-    local i=0
-    while [ "$i" -lt "$step_count" ]; do
-        local step_id enabled_by
-        step_id=$(pipeline_get "$i" ".id")
-        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
-
-        # Skip disabled-by-default and entry point (handled above)
-        if [ -n "$enabled_by" ] || [ "$step_id" = "$entry_step" ]; then
-            i=$((i + 1))
-            continue
-        fi
-
-        # Generate criterion: if prev_step complete but this step never ran
-        if [ "$prev_step" != "$entry_step" ]; then
-            echo "| ${prev_step^} complete, $step_id never ran or has no result file | \\\`$step_id\\\` |"
-        else
-            echo "| ${entry_step^} complete, $step_id never ran or has no result file | \\\`$step_id\\\` |"
-        fi
-
-        prev_step="$step_id"
-        i=$((i + 1))
-    done
-
-    # Final criteria
-    echo "| All phases complete with outputs | \\\`ABORT\\\` |"
-    echo "| Fundamental issue (impossible task, repeated failures, bad PRD) | \\\`ABORT\\\` |"
-}
-
-# Get list of valid step IDs for the <step> tag validation
-_get_valid_steps() {
-    local step_count
-    step_count=$(pipeline_step_count)
-
-    # Collect all non-disabled step IDs
-    local steps=""
-    local i=0
-    while [ "$i" -lt "$step_count" ]; do
-        local step_id enabled_by
-        step_id=$(pipeline_get "$i" ".id")
-        enabled_by=$(pipeline_get "$i" ".enabled_by" "")
-
-        if [ -z "$enabled_by" ]; then
-            if [ -z "$steps" ]; then
-                steps="$step_id"
-            else
-                steps="$steps|$step_id"
-            fi
-        fi
-        i=$((i + 1))
-    done
-
-    echo "$steps"
+    cat << 'EOF'
+| Scenario | Decision |
+|----------|----------|
+| PRD has incomplete `- [ ]` tasks | First step marked "Cannot resume mid-step" |
+| PRD says complete but workspace diff contradicts claims | First step marked "Cannot resume mid-step" |
+| A step never ran or has no result file | That step |
+| A step produced FAIL that needs retry | That step |
+| All phases complete with outputs | `ABORT` |
+| Fundamental issue (impossible task, repeated failures, bad PRD) | `ABORT` |
+EOF
 }
 
 # Main entry point
@@ -265,29 +212,29 @@ agent_run() {
 
     local agent_exit=$?
 
-    # Extract decision from the JSON stream log (same pattern as other agents)
-    _extract_decision "$worker_dir"
-
     if [ $agent_exit -ne 0 ]; then
         log_warn "Resume-decide agent exited with code $agent_exit"
     fi
 
-    # Verify outputs exist
-    if [ ! -f "$worker_dir/resume-step.txt" ] || [ ! -s "$worker_dir/resume-step.txt" ]; then
-        log_error "resume-decide failed to produce resume-step.txt"
-        echo "ABORT" > "$worker_dir/resume-step.txt"
-        _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "Resume-decide agent failed to produce a decision.")
-        agent_write_result "$worker_dir" "FAIL" "$(printf '{"report_file":"%s"}' "${_RESUME_DECIDE_REPORT_PATH:-}")"
+    # Extract <step> and <instructions> from Claude's output
+    local step instructions
+    step=$(_extract_tag_content_from_stream_json "$log_file" "step") || true
+    instructions=$(_extract_tag_content_from_stream_json "$log_file" "instructions") || true
 
-        # Log failure footer
-        log_subsection "RESUME-DECIDE FAILED"
-        log_kv "Decision" "ABORT (no output)"
-        log_kv "Finished" "$(date -Iseconds)"
-        return 1
+    # Default to ABORT if no step extracted
+    if [ -z "$step" ]; then
+        log_error "No <step> tag found in resume-decide output"
+        step="ABORT"
+        instructions="${instructions:-Resume-decide agent did not produce a valid step decision.}"
     fi
 
-    local step
-    step=$(cat "$worker_dir/resume-step.txt")
+    # Write outputs
+    echo "$step" > "$worker_dir/resume-step.txt"
+    if [ -z "$instructions" ]; then
+        instructions="Resuming from step: $step. No detailed instructions available."
+    fi
+    _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "$instructions")
+
     log "Resume decision: $step"
 
     # Log completion footer
@@ -511,67 +458,3 @@ The <step> tag MUST be exactly one of the pipeline step IDs shown in the table a
 EOF
 }
 
-# Extract decision from the resume-decide JSON stream log
-# Uses shared agent-base.sh utilities (same pattern as security-audit, test-coverage, etc.)
-_extract_decision() {
-    local worker_dir="$1"
-    local step_id="${WIGGUM_STEP_ID:-resume-decide}"
-
-    # Find the latest log file matching the step pattern (unified agent interface)
-    local log_file
-    log_file=$(find_newest "$worker_dir/logs" -name "${step_id}-*.log")
-
-    if [ -z "$log_file" ] || [ ! -f "$log_file" ]; then
-        log_error "No resume-decide log file found in $worker_dir/logs"
-        echo "ABORT" > "$worker_dir/resume-step.txt"
-        _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "No decision log produced.")
-        return 1
-    fi
-
-    local log_size
-    log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
-    log "Resume-decide log: $log_file ($log_size bytes)"
-
-    # Extract assistant text from stream-JSON (shared utility)
-    local full_text
-    full_text=$(_extract_text_from_stream_json "$log_file") || true
-
-    if [ -z "$full_text" ]; then
-        log_error "No assistant text found in resume-decide log"
-        echo "ABORT" > "$worker_dir/resume-step.txt"
-        _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "Failed to extract decision from agent output.")
-        return 1
-    fi
-
-    # Extract step value from <step>...</step> (last occurrence, like _extract_result_value)
-    # Use dynamic step list from pipeline config
-    local valid_steps
-    valid_steps=$(_get_valid_steps)
-    local step
-    step=$(echo "$full_text" | \
-        grep_pcre_match "(?<=<step>)(${valid_steps}|ABORT)(?=</step>)" | \
-        tail -1) || true
-
-    if [ -z "$step" ]; then
-        log_error "No valid <step> tag found in resume-decide output"
-        echo "ABORT" > "$worker_dir/resume-step.txt"
-        _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "Agent did not produce a valid step decision.")
-        return 1
-    fi
-
-    echo "$step" > "$worker_dir/resume-step.txt"
-
-    # Extract instructions from <instructions>...</instructions> (shared utility)
-    local instructions
-    instructions=$(_extract_tag_content_from_stream_json "$log_file" "instructions") || true
-
-    if [ -z "$instructions" ]; then
-        instructions="Resuming from step: $step. No detailed instructions available."
-    fi
-
-    # Use standard report naming convention
-    _RESUME_DECIDE_REPORT_PATH=$(agent_write_report "$worker_dir" "$instructions")
-
-    log "Extracted decision: step=$step"
-    return 0
-}

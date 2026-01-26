@@ -239,8 +239,8 @@ test_list_agents_returns_agents() {
     result=$(list_agents)
 
     # Should contain at least some known agents
-    assert_output_contains "$result" "system.task-executor" \
-        "list_agents should include system.task-executor"
+    assert_output_contains "$result" "engineering.software-engineer" \
+        "list_agents should include engineering.software-engineer"
 }
 
 test_list_agents_includes_system_agents() {

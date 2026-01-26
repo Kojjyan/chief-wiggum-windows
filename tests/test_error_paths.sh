@@ -490,9 +490,9 @@ test_git_is_readonly_agent_types() {
     assert_equals "0" "$result" "engineering.code-review should be read-only"
 
     # Non-read-only agents should return 1 (false)
-    git_is_readonly_agent "system.task-executor"
+    git_is_readonly_agent "engineering.software-engineer"
     result=$?
-    assert_equals "1" "$result" "system.task-executor should NOT be read-only"
+    assert_equals "1" "$result" "engineering.software-engineer should NOT be read-only"
 
     git_is_readonly_agent "engineering.security-fix"
     result=$?

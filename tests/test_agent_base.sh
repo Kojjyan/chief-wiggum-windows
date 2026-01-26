@@ -557,8 +557,8 @@ test_validation_review_md_exists() {
     assert_file_exists "$WIGGUM_HOME/lib/agents/engineering/validation-review.md" "validation-review.md should exist"
 }
 
-test_task_executor_md_exists() {
-    assert_file_exists "$WIGGUM_HOME/lib/agents/system/task-executor.md" "task-executor.md should exist"
+test_software_engineer_md_exists() {
+    assert_file_exists "$WIGGUM_HOME/lib/agents/engineering/software-engineer.md" "software-engineer.md should exist"
 }
 
 test_task_summarizer_md_exists() {
@@ -569,7 +569,7 @@ test_agents_json_has_new_agents() {
     local agents
     agents=$(jq -r '.agents | keys[]' "$WIGGUM_HOME/config/agents.json" 2>/dev/null | sort | tr '\n' ',')
 
-    assert_output_contains "$agents" "system.task-executor" "agents.json should have system.task-executor"
+    assert_output_contains "$agents" "engineering.software-engineer" "agents.json should have engineering.software-engineer"
     assert_output_contains "$agents" "general.task-summarizer" "agents.json should have general.task-summarizer"
 }
 
@@ -611,7 +611,7 @@ run_test test_agent_registry_sh_syntax
 run_test test_task_worker_sh_syntax
 run_test test_pr_comment_fix_sh_syntax
 run_test test_validation_review_md_exists
-run_test test_task_executor_md_exists
+run_test test_software_engineer_md_exists
 run_test test_task_summarizer_md_exists
 run_test test_agents_json_has_new_agents
 

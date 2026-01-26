@@ -102,7 +102,7 @@ Agents invoke Claude Code to perform work. Each agent focuses on a single respon
 
 | Agent | Purpose |
 |-------|---------|
-| `system.task-executor` | Main implementation work via Ralph Loop |
+| `engineering.software-engineer` | Main implementation work via Ralph Loop |
 | `system.task-summarizer` | Generate completion summary |
 | `engineering.security-audit` | Security review (readonly) |
 | `engineering.security-fix` | Fix security issues |
@@ -244,7 +244,7 @@ Every N iterations, a supervisor agent reviews progress and can redirect work.
 Events are logged to `activity.jsonl` in NDJSON format:
 
 ```json
-{"ts":"2024-01-15T10:30:00Z","event":"step.started","step":"execution","agent":"system.task-executor"}
+{"ts":"2024-01-15T10:30:00Z","event":"step.started","step":"execution","agent":"engineering.software-engineer"}
 {"ts":"2024-01-15T10:35:00Z","event":"step.completed","step":"execution","result":"PASS"}
 ```
 
@@ -258,7 +258,7 @@ Events are logged to `activity.jsonl` in NDJSON format:
 {
   "name": "default",
   "steps": [
-    {"id": "execution", "agent": "system.task-executor", "max": 3},
+    {"id": "execution", "agent": "engineering.software-engineer", "max": 3},
     {"id": "audit", "agent": "engineering.security-audit", "readonly": true}
   ]
 }
@@ -272,7 +272,7 @@ Override per-project in `.ralph/pipeline.json` or per-task in `.ralph/pipelines/
 
 ```json
 {
-  "system.task-executor": "lib/agents/system/task-executor.sh",
+  "engineering.software-engineer": "lib/agents/engineering/software-engineer.md",
   "engineering.security-audit": "lib/agents/engineering/security-audit.sh"
 }
 ```
@@ -299,14 +299,14 @@ Agents can be defined in two formats with automatic discovery:
 1. **Markdown agents** (`lib/agents/<category>/<name>.md`) - Declarative definition
 2. **Shell agents** (`lib/agents/<category>/<name>.sh`) - Imperative implementation
 
-Discovery order for `system.task-executor`:
-1. Check for `lib/agents/system/task-executor.md`
-2. Check for `lib/agents/system/task-executor.sh`
+Discovery order for `engineering.software-engineer`:
+1. Check for `lib/agents/engineering/software-engineer.md`
+2. Check for `lib/agents/engineering/software-engineer.sh`
 3. If both exist: shell script is loaded, markdown provides base behavior
 
 Markdown agents use a structured format:
 ```markdown
-# Agent: system.task-executor
+# Agent: engineering.software-engineer
 
 ## Purpose
 Main implementation agent

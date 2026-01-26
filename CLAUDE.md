@@ -80,8 +80,8 @@ agent_run(worker_dir, project_dir)
 ```
 
 **Agent Categories**:
-- `lib/agents/system/` - task-executor, task-summarizer, resume-decide
-- `lib/agents/engineering/` - security-audit, security-fix, test-coverage, validation-review
+- `lib/agents/system/` - task-worker, task-summarizer, resume-decide
+- `lib/agents/engineering/` - software-engineer, security-audit, security-fix, test-coverage, validation-review
 - `lib/agents/product/` - plan-mode, documentation-writer
 
 ### Worker Structure

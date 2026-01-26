@@ -6,7 +6,7 @@ set -euo pipefail
 # AGENT_TYPE: task-worker
 # AGENT_DESCRIPTION: Main task execution agent that manages the complete task
 #   lifecycle from PRD. Handles git worktree setup, plan-mode (optional),
-#   task execution via task-executor sub-agent, summary generation via
+#   task execution via software-engineer sub-agent, summary generation via
 #   task-summarizer sub-agent, quality gates (security, tests, docs),
 #   validation review, commit/PR creation, kanban status updates, and
 #   worktree cleanup. The primary workhorse agent for automated task completion.

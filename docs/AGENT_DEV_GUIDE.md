@@ -44,7 +44,7 @@ lib/agents/
 │   └── plan-mode.md
 └── system/
     ├── task-worker.sh       # Shell only (complex orchestrator)
-    ├── task-executor.md
+    ├── software-engineer.md
     └── task-summarizer.md
 ```
 
@@ -579,7 +579,7 @@ agent_run() {
     _write_executor_config "$worker_dir" "$max_iterations" "$max_turns" ...
 
     # Delegate execution to leaf agents
-    run_sub_agent "system.task-executor" "$worker_dir" "$project_dir"
+    run_sub_agent "engineering.software-engineer" "$worker_dir" "$project_dir"
     local loop_result=$?
 
     # Generate summary via sub-agent
@@ -994,7 +994,7 @@ Agents read configuration from `config/agents.json`:
 
 | Agent | Execution | Purpose |
 |-------|-----------|---------|
-| `system.task-executor` | `run_ralph_loop_supervised` | Main code-writing agent (supervised ralph loop) |
+| `engineering.software-engineer` | `run_ralph_loop_supervised` | Main code-writing agent (supervised ralph loop) |
 | `system.task-summarizer` | `run_agent_resume` | Generate final summary by resuming executor session |
 | `system.resume-decide` | `run_agent_once` | Analyze logs to decide resume step |
 | `product.plan-mode` | `run_ralph_loop` | Read-only codebase exploration and planning |
