@@ -398,6 +398,113 @@ load_agent_config() {
 }
 
 # =============================================================================
+# RESULT MAPPINGS (Config-Driven Gate Results)
+# =============================================================================
+# Result mappings define the status, exit_code, and default_jump for each
+# gate result value. This allows custom results beyond the built-in PASS/FAIL/FIX/SKIP.
+#
+# Loaded from config/agents.json "result_mappings" section.
+# Can be overridden per-pipeline in pipeline.json "result_mappings".
+
+# Global associative arrays for result mappings (loaded once)
+declare -gA _RESULT_STATUS=()
+declare -gA _RESULT_EXIT_CODE=()
+declare -gA _RESULT_DEFAULT_JUMP=()
+_RESULT_MAPPINGS_LOADED=""
+
+# Load result mappings from config/agents.json
+#
+# Populates:
+#   _RESULT_STATUS[result]       - Status string (success, failure, partial, unknown)
+#   _RESULT_EXIT_CODE[result]    - Exit code (integer)
+#   _RESULT_DEFAULT_JUMP[result] - Default jump target (next, prev, abort, self, or step ID)
+#
+# Sets: _RESULT_MAPPINGS_LOADED=1 when complete
+load_result_mappings() {
+    [ -n "$_RESULT_MAPPINGS_LOADED" ] && return 0
+
+    local config_file="$WIGGUM_HOME/config/agents.json"
+
+    # Initialize with hardcoded defaults in case config is missing
+    _RESULT_STATUS=([PASS]="success" [FAIL]="failure" [FIX]="partial" [SKIP]="success" [STOP]="success")
+    _RESULT_EXIT_CODE=([PASS]=0 [FAIL]=10 [FIX]=0 [SKIP]=0 [STOP]=11)
+    _RESULT_DEFAULT_JUMP=([PASS]="next" [FAIL]="abort" [FIX]="prev" [SKIP]="next" [STOP]="abort")
+
+    if [ -f "$config_file" ]; then
+        local mappings_json
+        mappings_json=$(jq -c '.result_mappings // {}' "$config_file" 2>/dev/null)
+
+        if [ -n "$mappings_json" ] && [ "$mappings_json" != "{}" ] && [ "$mappings_json" != "null" ]; then
+            # Parse each result mapping
+            local result_keys
+            result_keys=$(echo "$mappings_json" | jq -r 'keys[]' 2>/dev/null)
+
+            while IFS= read -r result; do
+                [ -z "$result" ] && continue
+                local status exit_code default_jump
+                status=$(echo "$mappings_json" | jq -r ".\"$result\".status // \"unknown\"")
+                exit_code=$(echo "$mappings_json" | jq -r ".\"$result\".exit_code // 1")
+                default_jump=$(echo "$mappings_json" | jq -r ".\"$result\".default_jump // \"next\"")
+
+                _RESULT_STATUS[$result]="$status"
+                _RESULT_EXIT_CODE[$result]="$exit_code"
+                _RESULT_DEFAULT_JUMP[$result]="$default_jump"
+            done <<< "$result_keys"
+        fi
+    fi
+
+    _RESULT_MAPPINGS_LOADED=1
+}
+
+# Get the status string for a gate result
+#
+# Args:
+#   gate_result - The gate result value (e.g., PASS, FAIL, FIX)
+#
+# Returns: Status string (success, failure, partial, unknown)
+get_result_status() {
+    local gate_result="$1"
+    [ -z "$_RESULT_MAPPINGS_LOADED" ] && load_result_mappings
+    echo "${_RESULT_STATUS[$gate_result]:-unknown}"
+}
+
+# Get the exit code for a gate result
+#
+# Args:
+#   gate_result - The gate result value (e.g., PASS, FAIL, FIX)
+#
+# Returns: Exit code (integer)
+get_result_exit_code() {
+    local gate_result="$1"
+    [ -z "$_RESULT_MAPPINGS_LOADED" ] && load_result_mappings
+    echo "${_RESULT_EXIT_CODE[$gate_result]:-1}"
+}
+
+# Get the default jump target for a gate result
+#
+# Args:
+#   gate_result - The gate result value (e.g., PASS, FAIL, FIX)
+#
+# Returns: Jump target (next, prev, abort, self, or step ID), empty if unknown
+get_result_default_jump() {
+    local gate_result="$1"
+    [ -z "$_RESULT_MAPPINGS_LOADED" ] && load_result_mappings
+    echo "${_RESULT_DEFAULT_JUMP[$gate_result]:-}"
+}
+
+# Check if a gate result is defined in the mappings
+#
+# Args:
+#   gate_result - The gate result value to check
+#
+# Returns: 0 if defined, 1 if not
+is_result_defined() {
+    local gate_result="$1"
+    [ -z "$_RESULT_MAPPINGS_LOADED" ] && load_result_mappings
+    [ -n "${_RESULT_DEFAULT_JUMP[$gate_result]:-}" ]
+}
+
+# =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
@@ -616,14 +723,11 @@ agent_write_result() {
     [ -z "$extra_outputs" ] || [ "$extra_outputs" = "'{}'" ] && extra_outputs='{}'
     [ -z "$errors" ] || [ "$errors" = "'[]'" ] && errors='[]'
 
-    # Derive status and exit_code from gate_result
+    # Derive status and exit_code from gate_result using config-driven mappings
+    [ -z "${_RESULT_MAPPINGS_LOADED:-}" ] && load_result_mappings
     local result_status exit_code
-    case "$gate_result" in
-        PASS|SKIP) result_status="success"; exit_code=0 ;;
-        FAIL)      result_status="failure"; exit_code=10 ;;
-        FIX)       result_status="partial"; exit_code=0 ;;
-        *)         result_status="unknown"; exit_code=1 ;;
-    esac
+    result_status=$(get_result_status "$gate_result")
+    exit_code=$(get_result_exit_code "$gate_result")
 
     # Merge gate_result into outputs
     local outputs

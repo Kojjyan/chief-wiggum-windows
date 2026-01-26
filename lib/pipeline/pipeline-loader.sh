@@ -315,3 +315,41 @@ pipeline_find_step_index() {
 pipeline_step_count() {
     echo "$_PIPELINE_STEP_COUNT"
 }
+
+# Get a result mapping field value with pipeline override support
+#
+# Checks pipeline-level result_mappings first, then falls back to
+# config/agents.json result_mappings.
+#
+# Args:
+#   result - Gate result value (e.g., PASS, FAIL, FIX)
+#   field  - Field name: status, exit_code, or default_jump
+#
+# Returns: Field value, or empty string if not found
+pipeline_get_result_mapping() {
+    local result="$1"
+    local field="$2"
+
+    # Try pipeline-level override first
+    local pipeline_value=""
+    pipeline_value=$(_pipeline_jq ".result_mappings.\"$result\".$field // null" -r 2>/dev/null)
+
+    if [ -n "$pipeline_value" ] && [ "$pipeline_value" != "null" ]; then
+        echo "$pipeline_value"
+        return 0
+    fi
+
+    # Fall back to global config/agents.json
+    local config_file="$WIGGUM_HOME/config/agents.json"
+    if [ -f "$config_file" ]; then
+        local global_value
+        global_value=$(jq -r ".result_mappings.\"$result\".$field // null" "$config_file" 2>/dev/null)
+        if [ -n "$global_value" ] && [ "$global_value" != "null" ]; then
+            echo "$global_value"
+            return 0
+        fi
+    fi
+
+    echo ""
+    return 1
+}

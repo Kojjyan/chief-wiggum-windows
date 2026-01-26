@@ -267,6 +267,17 @@ The TUI component uses Python 3.10+ with [uv](https://docs.astral.sh/uv/) for de
 | `test-coverage` | PASS, FIX, FAIL, SKIP |
 | `plan-mode` | PASS, FAIL |
 
+**Result Mappings** (config-driven in `config/agents.json`):
+| Result | Status | Exit Code | Default Jump |
+|--------|--------|-----------|--------------|
+| `PASS` | success | 0 | next |
+| `FAIL` | failure | 10 | abort |
+| `FIX` | partial | 0 | prev |
+| `SKIP` | success | 0 | next |
+| `STOP` | success | 11 | abort |
+
+Custom results can be defined in `config/agents.json` or per-pipeline in `result_mappings`.
+
 ### Environment Variables for Config Override
 Pattern: `WIGGUM_{AGENT_NAME}_MAX_TURNS` (uppercase, underscores)
 - `WIGGUM_SECURITY_AUDIT_MAX_TURNS`

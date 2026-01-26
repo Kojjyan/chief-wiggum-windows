@@ -189,32 +189,21 @@ _dispatch_on_result() {
     handler=$(pipeline_get_on_result "$idx" "$gate_result")
 
     if [ -z "$handler" ]; then
-        # No explicit handler - apply default behaviors per spec:
-        # PASS -> next, FAIL -> abort, FIX -> prev, SKIP -> next, COMPLETE -> next
-        # Unknown results (not in defaults and not in on_result) trigger abort
-        case "$gate_result" in
-            PASS)
-                _PIPELINE_NEXT_IDX=$((idx + 1))
-                ;;
-            FAIL)
-                _resolve_jump_target "abort" "$idx"
-                ;;
-            FIX)
-                _resolve_jump_target "prev" "$idx"
-                ;;
-            SKIP)
-                _PIPELINE_NEXT_IDX=$((idx + 1))
-                ;;
-            *)
-                # Unknown result - abort to prevent silent continuation on unexpected values
-                local step_id
-                step_id=$(pipeline_get "$idx" ".id")
-                log_error "Step '$step_id' returned unknown result '$gate_result' (not in on_result handlers or default results)"
-                log_error "Valid default results are: PASS, FAIL, FIX, SKIP"
-                log_error "Define an on_result handler for '$gate_result' in the pipeline config, or fix the agent"
-                _resolve_jump_target "abort" "$idx"
-                ;;
-        esac
+        # No explicit handler - use config-driven default_jump from result_mappings
+        # Pipeline-level overrides take precedence over global config/agents.json
+        local default_jump
+        default_jump=$(pipeline_get_result_mapping "$gate_result" "default_jump")
+
+        if [ -n "$default_jump" ]; then
+            _resolve_jump_target "$default_jump" "$idx"
+        else
+            # Unknown result - abort to prevent silent continuation on unexpected values
+            local step_id
+            step_id=$(pipeline_get "$idx" ".id")
+            log_error "Step '$step_id' returned unknown result '$gate_result' (not in result_mappings)"
+            log_error "Define '$gate_result' in result_mappings (config/agents.json or pipeline.json)"
+            _resolve_jump_target "abort" "$idx"
+        fi
         return
     fi
 

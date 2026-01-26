@@ -9,6 +9,13 @@
       "type": "string",
       "description": "Pipeline name identifier"
     },
+    "result_mappings": {
+      "type": "object",
+      "description": "Custom gate result mappings for this pipeline (overrides config/agents.json)",
+      "additionalProperties": {
+        "$ref": "#/$defs/result_mapping"
+      }
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
@@ -18,6 +25,28 @@
     }
   },
   "$defs": {
+    "result_mapping": {
+      "type": "object",
+      "description": "Defines the behavior for a gate result value",
+      "required": ["status", "exit_code", "default_jump"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["success", "failure", "partial", "unknown"],
+          "description": "Status category for the result"
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exit code to return when this result is produced"
+        },
+        "default_jump": {
+          "type": "string",
+          "description": "Default jump target when no on_result handler matches: self, prev, next, abort, or step ID"
+        }
+      },
+      "additionalProperties": false
+    },
     "step": {
       "type": "object",
       "required": ["id", "agent"],

@@ -136,9 +136,61 @@ Agents produce a `gate_result` in their output JSON. Standard values:
 | `FAIL` | Quality check failed |
 | `FIX` | Fixable issues found |
 | `SKIP` | Not applicable |
+| `STOP` | Graceful termination |
 
 Any string is valid as a gate result — agents and handlers are not limited to
 these values. The pipeline dispatches on exact string match against `on_result` keys.
+
+## Result Mappings
+
+Result mappings define the behavior for each gate result value, including:
+- **status**: Category for result JSON (success, failure, partial, unknown)
+- **exit_code**: Process exit code when this result is produced
+- **default_jump**: Default control flow when no `on_result` handler matches
+
+### Built-in Result Mappings
+
+Defined in `config/agents.json`:
+
+```json
+{
+  "result_mappings": {
+    "PASS":  { "status": "success", "exit_code": 0,  "default_jump": "next" },
+    "FAIL":  { "status": "failure", "exit_code": 10, "default_jump": "abort" },
+    "FIX":   { "status": "partial", "exit_code": 0,  "default_jump": "prev" },
+    "SKIP":  { "status": "success", "exit_code": 0,  "default_jump": "next" },
+    "STOP":  { "status": "success", "exit_code": 11, "default_jump": "abort" }
+  }
+}
+```
+
+### Custom Result Mappings
+
+Define custom results in `config/agents.json` (global) or in a pipeline's `result_mappings`
+section (per-pipeline override):
+
+```json
+{
+  "name": "my-pipeline",
+  "result_mappings": {
+    "REVIEW": { "status": "pending", "exit_code": 0, "default_jump": "self" },
+    "RETRY":  { "status": "partial", "exit_code": 0, "default_jump": "self" }
+  },
+  "steps": [...]
+}
+```
+
+Pipeline-level mappings override global mappings for the same result value.
+
+### Result Mapping Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | One of: `success`, `failure`, `partial`, `unknown` |
+| `exit_code` | integer | Process exit code (0 = success, 10 = FAIL, 11 = STOP, etc.) |
+| `default_jump` | string | Jump target when no `on_result` handler matches |
+
+Unknown results (not defined in any result_mappings) trigger pipeline abort.
 
 ## Execution Semantics
 
