@@ -466,8 +466,11 @@ get_unsatisfied_dependencies() {
     done
 }
 
-# Detect circular dependencies
-# Returns 0 if no cycles, 1 if cycles detected (prints cycle path)
+# Detect self and circular dependencies
+# Returns 0 if no issues, 1 if issues detected
+# Output format (one per line):
+#   SELF:<task_id>                    - task depends on itself
+#   CYCLE:<task1> <task2> ...         - tasks involved in a cycle
 detect_circular_dependencies() {
     local kanban="$1"
 
@@ -477,21 +480,10 @@ detect_circular_dependencies() {
     local tasks
     tasks=$(echo "$all_metadata" | cut -d'|' -f1)
 
-    # Create temp files for cycle detection
-    local visited_file stack_file cycle_file
-    visited_file=$(mktemp)
-    stack_file=$(mktemp)
-    cycle_file=$(mktemp)
-
-    # Cleanup function
-    _cleanup_cycle_files() {
-        rm -f "$visited_file" "$stack_file" "$cycle_file"
-    }
-
-    # DFS using iterative approach with explicit stack to avoid subshell issues
-    # We use a simple Kahn's algorithm approach instead
     local -A in_degree=()
     local -A adj_list=()
+    local self_deps=""
+    local has_errors=0
 
     # Initialize
     for task_id in $tasks; do
@@ -499,7 +491,7 @@ detect_circular_dependencies() {
         adj_list[$task_id]=""
     done
 
-    # Build graph
+    # Build graph and detect self-dependencies
     for task_id in $tasks; do
         local deps
         deps=$(echo "$all_metadata" | awk -F'|' -v t="$task_id" '$1 == t { print $4 }')
@@ -516,6 +508,15 @@ detect_circular_dependencies() {
                 fi
                 dep=$(echo "$dep" | xargs)
                 [ -z "$dep" ] && continue
+
+                # Check for self-dependency
+                if [ "$dep" = "$task_id" ]; then
+                    echo "SELF:$task_id"
+                    self_deps="$self_deps $task_id"
+                    has_errors=1
+                    continue
+                fi
+
                 # task_id depends on dep, so edge is dep -> task_id
                 if [ -n "${in_degree[$dep]+x}" ]; then
                     adj_list[$dep]="${adj_list[$dep]} $task_id"
@@ -550,21 +551,24 @@ detect_circular_dependencies() {
         done
     done
 
-    _cleanup_cycle_files
-
     if [ "$visited_count" -ne "$total_count" ]; then
-        # Find tasks that are part of the cycle
+        # Find tasks that are part of the cycle (excluding self-deps already reported)
         local cycle_tasks=""
         for task_id in $tasks; do
             if [ "${in_degree[$task_id]}" -gt 0 ]; then
-                cycle_tasks="$cycle_tasks $task_id"
+                # Skip if already reported as self-dependency
+                if [[ ! "$self_deps" =~ (^| )$task_id($| ) ]]; then
+                    cycle_tasks="$cycle_tasks $task_id"
+                fi
             fi
         done
-        echo "Circular dependency involving:$cycle_tasks"
-        return 1
+        if [ -n "$cycle_tasks" ]; then
+            echo "CYCLE:$cycle_tasks"
+            has_errors=1
+        fi
     fi
 
-    return 0
+    return $has_errors
 }
 
 # Resolve a partial task ID to full task ID from kanban

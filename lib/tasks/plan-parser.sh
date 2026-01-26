@@ -12,7 +12,7 @@ get_plan_critical_files() {
     [ -f "$plan_file" ] || return 0
 
     awk '
-        /^### Critical Files/ { in_section = 1; next }
+        /^##+ Critical Files/ { in_section = 1; next }
         in_section && /^##/ { in_section = 0 }
         in_section {
             # Match table rows with CREATE or MODIFY action
@@ -21,6 +21,7 @@ get_plan_critical_files() {
                 # Extract first column (File)
                 split($0, cols, "|")
                 gsub(/^[ \t]+|[ \t]+$/, "", cols[2])
+                gsub(/`/, "", cols[2])  # Remove markdown backticks
                 if (cols[2] != "" && cols[2] != "File") {
                     print cols[2]
                 }

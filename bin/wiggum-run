@@ -31,7 +31,7 @@ FORCE_LOCK=false       # --force flag state for lock override
 MAX_SKIP_RETRIES=3     # Kanban update failures before permanent skip
 FIX_WORKER_TIMEOUT=1800  # Fix worker max runtime (seconds)
 FIX_WORKER_LIMIT=2     # Max concurrent fix workers
-AGING_FACTOR=10        # Iterations per priority level promotion
+AGING_FACTOR=7         # Scheduling events per priority level promotion
 SIBLING_WIP_PENALTY=20000  # Fixed-point penalty when sibling is WIP (20000 = 2.0)
 PLAN_BONUS=15000           # Fixed-point bonus for tasks with plans (15000 = 1.5)
 DEP_BONUS_PER_TASK=7000    # Fixed-point bonus per task blocked (7000 = 0.7)
@@ -655,14 +655,31 @@ main() {
     fi
     log "Kanban validation passed"
 
-    # Check for circular dependencies
-    log "Checking for circular dependencies..."
-    local cycle_path
-    if cycle_path=$(detect_circular_dependencies "$RALPH_DIR/kanban.md"); then
-        log "No circular dependencies detected"
+    # Check for self and circular dependencies
+    log "Checking for dependency cycles..."
+    local dep_errors
+    declare -gA cyclic_tasks=()  # task_id -> error type (SELF or CYCLE)
+    if dep_errors=$(detect_circular_dependencies "$RALPH_DIR/kanban.md"); then
+        log "No dependency cycles detected"
     else
-        log_error "Circular dependency detected: $cycle_path"
-        exit $EXIT_RUN_VALIDATION_FAILED
+        # Parse errors and populate cyclic_tasks for skipping
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^SELF:(.+)$ ]]; then
+                local task_id="${BASH_REMATCH[1]}"
+                cyclic_tasks[$task_id]="SELF"
+                log_error "Self-dependency detected: $task_id depends on itself - will be skipped"
+            elif [[ "$line" =~ ^CYCLE:(.+)$ ]]; then
+                local cycle_members="${BASH_REMATCH[1]}"
+                for task_id in $cycle_members; do
+                    cyclic_tasks[$task_id]="CYCLE"
+                done
+                log_error "Circular dependency detected involving:$cycle_members - will be skipped"
+            fi
+        done <<< "$dep_errors"
+
+        if [ ${#cyclic_tasks[@]} -gt 0 ]; then
+            log_warn "Skipping ${#cyclic_tasks[@]} task(s) due to dependency errors"
+        fi
     fi
 
     # Check for clean git status
@@ -736,10 +753,6 @@ main() {
         mode_desc="plan mode"
     fi
     log "Starting Chief Wiggum in $PROJECT_DIR ($mode_desc, max $MAX_WORKERS concurrent workers)"
-    echo ""
-    echo "⚠️  WARNING: Do NOT edit files in the main repository while workers are running!"
-    echo "    Workers run in isolated git worktrees. Any uncommitted changes in the main"
-    echo "    repo will cause workspace violation detection and task failures."
     echo ""
     echo "Press Ctrl+C to stop and view 'wiggum status' for details"
     echo "=========================================="
@@ -817,16 +830,9 @@ main() {
         local ready_tasks
         ready_tasks=$(get_ready_tasks "$RALPH_DIR/kanban.md" "$ready_since_file" "$AGING_FACTOR" "$SIBLING_WIP_PENALTY" "$RALPH_DIR" "$PLAN_BONUS" "$DEP_BONUS_PER_TASK")
 
-        # Update ready-since tracking: increment for tasks still ready, add new entries
-        local new_ready_since
-        new_ready_since=$(mktemp)
-        for task_id in $ready_tasks; do
-            local prev_count
-            prev_count=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)
-            prev_count=${prev_count:-0}
-            echo "$task_id|$(( prev_count + 1 ))" >> "$new_ready_since"
-        done
-        mv "$new_ready_since" "$ready_since_file"
+        # Track if scheduling events occurred (used for aging updates)
+        local scheduling_event=false
+
         local blocked_tasks
         blocked_tasks=$(get_blocked_tasks "$RALPH_DIR/kanban.md")
         local all_pending
@@ -838,6 +844,7 @@ main() {
                 activity_log "worker.completed" "" "${active_workers[$pid]}" "pid=$pid"
                 log "Worker for ${active_workers[$pid]} finished (PID: $pid)"
                 unset "active_workers[$pid]"
+                scheduling_event=true  # Worker finished = scheduling opportunity
             fi
         done
 
@@ -937,6 +944,11 @@ main() {
                 break
             fi
 
+            # Skip tasks with dependency cycles (self-dependency or circular)
+            if [ -n "${cyclic_tasks[$task_id]+x}" ]; then
+                continue
+            fi
+
             # Skip tasks that have recently failed kanban updates
             if [ -n "${skip_tasks[$task_id]+x}" ] && [ "${skip_tasks[$task_id]}" -gt 0 ]; then
                 if [ "${skip_tasks[$task_id]}" -ge "$MAX_SKIP_RETRIES" ]; then
@@ -981,6 +993,7 @@ main() {
 
             active_workers[$SPAWNED_WORKER_PID]="$task_id"
             all_pids+=("$SPAWNED_WORKER_PID")
+            scheduling_event=true  # Task spawned = other ready tasks were passed over
 
             # Remove from ready-since tracking (task is no longer waiting)
             if [ -f "$ready_since_file" ]; then
@@ -993,84 +1006,143 @@ main() {
             log "Spawned worker $SPAWNED_WORKER_ID for $task_id (PID: $SPAWNED_WORKER_PID)"
         done
 
-        # Show status and recent activity
-        echo ""
-        echo "=== Status Update (iteration $iteration) ==="
-        echo "Active workers: ${#active_workers[@]}/$MAX_WORKERS"
-
-        # Show which tasks are being worked on
-        if [ ${#active_workers[@]} -gt 0 ]; then
-            echo "In Progress:"
-            for pid in "${!active_workers[@]}"; do
-                echo "  - ${active_workers[$pid]} (PID: $pid)"
+        # Update ready-since tracking only when scheduling events occurred
+        # (task spawned or worker finished = tasks still waiting were passed over)
+        if [ "$scheduling_event" = true ]; then
+            local new_ready_since
+            new_ready_since=$(mktemp)
+            # Re-fetch ready tasks to get current state after spawning
+            local current_ready
+            current_ready=$(get_ready_tasks "$RALPH_DIR/kanban.md" "$ready_since_file" "$AGING_FACTOR" "$SIBLING_WIP_PENALTY" "$RALPH_DIR" "$PLAN_BONUS" "$DEP_BONUS_PER_TASK")
+            for task_id in $current_ready; do
+                local prev_count
+                prev_count=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)
+                prev_count=${prev_count:-0}
+                echo "$task_id|$(( prev_count + 1 ))" >> "$new_ready_since"
             done
+            mv "$new_ready_since" "$ready_since_file"
         fi
 
-        # Show active fix workers
-        if [ ${#active_fix_workers[@]} -gt 0 ]; then
-            echo "Fix Workers:"
-            for fix_pid in "${!active_fix_workers[@]}"; do
-                local fix_info="${active_fix_workers[$fix_pid]}"
-                local fix_task_id="${fix_info%%|*}"
-                local fix_start="${fix_info##*|}"
-                local fix_elapsed=$(( $(date +%s) - fix_start ))
-                echo "  - $fix_task_id (PID: $fix_pid, ${fix_elapsed}s elapsed)"
-            done
-        fi
-
-        # Show active resolve workers
-        if [ ${#active_resolve_workers[@]} -gt 0 ]; then
-            echo "Resolve Workers:"
-            for resolve_pid in "${!active_resolve_workers[@]}"; do
-                local resolve_info="${active_resolve_workers[$resolve_pid]}"
-                local resolve_task_id="${resolve_info%%|*}"
-                local resolve_start="${resolve_info##*|}"
-                local resolve_elapsed=$(( $(date +%s) - resolve_start ))
-                echo "  - $resolve_task_id (PID: $resolve_pid, ${resolve_elapsed}s elapsed)"
-            done
-        fi
-
-        # Show blocked tasks waiting on dependencies
-        if [ -n "$blocked_tasks" ]; then
-            echo "Blocked (waiting on dependencies):"
-            for task_id in $blocked_tasks; do
-                local waiting_on
-                waiting_on=$(get_unsatisfied_dependencies "$RALPH_DIR/kanban.md" "$task_id" | tr '\n' ',' | sed 's/,$//')
-                echo "  - $task_id (waiting on: $waiting_on)"
-            done
-        fi
-
-        # Show tasks deferred due to file conflicts
-        local deferred_conflicts=()
-        for task_id in $ready_tasks; do
-            if has_file_conflict "$RALPH_DIR" "$task_id" active_workers; then
-                deferred_conflicts+=("$task_id")
-            fi
-        done
-        if [ ${#deferred_conflicts[@]} -gt 0 ]; then
-            echo "Deferred (file conflict):"
-            for task_id in "${deferred_conflicts[@]}"; do
-                local conflicting_tasks
-                conflicting_tasks=$(get_conflicting_tasks "$RALPH_DIR" "$task_id" active_workers | tr '\n' ',' | sed 's/,$//')
-                echo "  - $task_id (conflicts with: $conflicting_tasks)"
-            done
-        fi
-
-        # Show ready tasks waiting for worker slots
-        local ready_count
-        ready_count=$(echo "$ready_tasks" | grep -c . 2>/dev/null)
-        ready_count=${ready_count:-0}
-        if [ "$ready_count" -gt 0 ] && [ ${#active_workers[@]} -ge "$MAX_WORKERS" ]; then
-            echo "Ready (waiting for worker slots): $ready_count tasks"
-        fi
-
-        # Show recent log activity (last 10 lines)
-        if [ -f "$RALPH_DIR/logs/workers.log" ]; then
+        # Show status only when scheduling events occur
+        if [ "$scheduling_event" = true ]; then
             echo ""
-            echo "Recent activity:"
-            tail -n 10 "$RALPH_DIR/logs/workers.log" 2>/dev/null | sed 's/^/  /'
+            echo "=== Status Update (iteration $iteration) ==="
+            echo "Active workers: ${#active_workers[@]}/$MAX_WORKERS"
+
+            # Show which tasks are being worked on
+            if [ ${#active_workers[@]} -gt 0 ]; then
+                echo "In Progress:"
+                for pid in "${!active_workers[@]}"; do
+                    echo "  - ${active_workers[$pid]} (PID: $pid)"
+                done
+            fi
+
+            # Show active fix workers
+            if [ ${#active_fix_workers[@]} -gt 0 ]; then
+                echo "Fix Workers:"
+                for fix_pid in "${!active_fix_workers[@]}"; do
+                    local fix_info="${active_fix_workers[$fix_pid]}"
+                    local fix_task_id="${fix_info%%|*}"
+                    local fix_start="${fix_info##*|}"
+                    local fix_elapsed=$(( $(date +%s) - fix_start ))
+                    echo "  - $fix_task_id (PID: $fix_pid, ${fix_elapsed}s elapsed)"
+                done
+            fi
+
+            # Show active resolve workers
+            if [ ${#active_resolve_workers[@]} -gt 0 ]; then
+                echo "Resolve Workers:"
+                for resolve_pid in "${!active_resolve_workers[@]}"; do
+                    local resolve_info="${active_resolve_workers[$resolve_pid]}"
+                    local resolve_task_id="${resolve_info%%|*}"
+                    local resolve_start="${resolve_info##*|}"
+                    local resolve_elapsed=$(( $(date +%s) - resolve_start ))
+                    echo "  - $resolve_task_id (PID: $resolve_pid, ${resolve_elapsed}s elapsed)"
+                done
+            fi
+
+            # Show blocked tasks waiting on dependencies
+            if [ -n "$blocked_tasks" ]; then
+                echo "Blocked (waiting on dependencies):"
+                for task_id in $blocked_tasks; do
+                    local waiting_on
+                    waiting_on=$(get_unsatisfied_dependencies "$RALPH_DIR/kanban.md" "$task_id" | tr '\n' ',' | sed 's/,$//')
+                    echo "  - $task_id (waiting on: $waiting_on)"
+                done
+            fi
+
+            # Show tasks skipped due to dependency cycles
+            if [ ${#cyclic_tasks[@]} -gt 0 ]; then
+                echo "Skipped (dependency cycle):"
+                for task_id in "${!cyclic_tasks[@]}"; do
+                    local error_type="${cyclic_tasks[$task_id]}"
+                    if [ "$error_type" = "SELF" ]; then
+                        echo "  - $task_id (self-dependency)"
+                    else
+                        echo "  - $task_id (circular dependency)"
+                    fi
+                done
+            fi
+
+            # Show tasks deferred due to file conflicts
+            local deferred_conflicts=()
+            for task_id in $ready_tasks; do
+                if has_file_conflict "$RALPH_DIR" "$task_id" active_workers; then
+                    deferred_conflicts+=("$task_id")
+                fi
+            done
+            if [ ${#deferred_conflicts[@]} -gt 0 ]; then
+                echo "Deferred (file conflict):"
+                for task_id in "${deferred_conflicts[@]}"; do
+                    local conflicting_tasks
+                    conflicting_tasks=$(get_conflicting_tasks "$RALPH_DIR" "$task_id" active_workers | tr '\n' ',' | sed 's/,$//')
+                    echo "  - $task_id (conflicts with: $conflicting_tasks)"
+                done
+            fi
+
+            # Show top 7 ready tasks with priority scores
+            local ready_count
+            ready_count=$(echo "$ready_tasks" | grep -c . 2>/dev/null || true)
+            ready_count=${ready_count:-0}
+            if [ "$ready_count" -gt 0 ]; then
+                echo "Ready ($ready_count tasks, top 7 by priority):"
+                # Get priority scores for display
+                local all_metadata
+                all_metadata=$(get_all_tasks_with_metadata "$RALPH_DIR/kanban.md")
+                local display_count=0
+                for task_id in $ready_tasks; do
+                    [ "$display_count" -ge 7 ] && break
+                    local priority iters_waiting effective_pri
+                    priority=$(echo "$all_metadata" | awk -F'|' -v t="$task_id" '$1 == t { print $3 }')
+                    iters_waiting=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)
+                    iters_waiting=${iters_waiting:-0}
+                    effective_pri=$(get_effective_priority "$priority" "$iters_waiting" "$AGING_FACTOR")
+                    # Apply plan bonus
+                    if task_has_plan "$RALPH_DIR" "$task_id"; then
+                        effective_pri=$((effective_pri - PLAN_BONUS))
+                    fi
+                    # Apply dep bonus
+                    local dep_depth
+                    dep_depth=$(get_dependency_depth "$RALPH_DIR/kanban.md" "$task_id")
+                    effective_pri=$((effective_pri - dep_depth * DEP_BONUS_PER_TASK))
+                    [ "$effective_pri" -lt 0 ] && effective_pri=0
+                    echo "  - $task_id (score: $effective_pri)"
+                    ((++display_count))
+                done
+            fi
+
+            # Show recent errors only (not info)
+            if [ -f "$RALPH_DIR/logs/workers.log" ]; then
+                local recent_errors
+                recent_errors=$(grep -i "ERROR\|WARN" "$RALPH_DIR/logs/workers.log" 2>/dev/null | tail -n 5)
+                if [ -n "$recent_errors" ]; then
+                    echo ""
+                    echo "Recent errors:"
+                    echo "$recent_errors" | sed 's/^/  /'
+                fi
+            fi
+            echo "=========================================="
         fi
-        echo "=========================================="
 
         # Wait a bit before checking again
         sleep 5

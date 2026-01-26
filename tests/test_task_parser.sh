@@ -378,7 +378,10 @@ test_detect_circular_dependencies_finds_cycle() {
     local result=$?
 
     assert_equals "1" "$result" "Should return 1 when cycle detected"
-    assert_output_contains "$output" "Circular dependency" "Should report circular dependency"
+    assert_output_contains "$output" "CYCLE:" "Should report cycle with CYCLE: prefix"
+    assert_output_contains "$output" "TASK-001" "Should include TASK-001 in cycle"
+    assert_output_contains "$output" "TASK-002" "Should include TASK-002 in cycle"
+    assert_output_contains "$output" "TASK-003" "Should include TASK-003 in cycle"
 }
 
 test_detect_circular_dependencies_no_cycle() {
@@ -386,6 +389,29 @@ test_detect_circular_dependencies_no_cycle() {
     detect_circular_dependencies "$FIXTURES_DIR/kanban-with-deps.md" > /dev/null 2>&1
     result=$?
     assert_equals "0" "$result" "Should return 0 when no cycle"
+}
+
+test_detect_circular_dependencies_finds_self_dependency() {
+    local output
+    output=$(detect_circular_dependencies "$FIXTURES_DIR/kanban-self-dep.md" 2>&1)
+    local result=$?
+
+    assert_equals "1" "$result" "Should return 1 when self-dependency detected"
+    assert_output_contains "$output" "SELF:TASK-002" "Should report self-dependency with SELF: prefix"
+}
+
+test_detect_circular_dependencies_self_dep_not_in_cycle_output() {
+    local output
+    output=$(detect_circular_dependencies "$FIXTURES_DIR/kanban-self-dep.md" 2>&1)
+
+    # Self-dependency should only appear in SELF: line, not CYCLE:
+    if echo "$output" | grep -q "^CYCLE:"; then
+        echo -e "  ${RED}X${NC} Self-dependency should not produce CYCLE: line"
+        FAILED_ASSERTIONS=$((FAILED_ASSERTIONS + 1))
+    else
+        echo -e "  ${GREEN}✓${NC} Self-dependency correctly not in CYCLE: output"
+    fi
+    ASSERTION_COUNT=$((ASSERTION_COUNT + 1))
 }
 
 # =============================================================================
@@ -474,6 +500,8 @@ run_test test_get_unsatisfied_dependencies_empty_when_satisfied
 # detect_circular_dependencies tests
 run_test test_detect_circular_dependencies_finds_cycle
 run_test test_detect_circular_dependencies_no_cycle
+run_test test_detect_circular_dependencies_finds_self_dependency
+run_test test_detect_circular_dependencies_self_dep_not_in_cycle_output
 
 # extract_task tests
 run_test test_extract_task_includes_title

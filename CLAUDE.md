@@ -148,7 +148,7 @@ Tasks are sorted by effective priority using fixed-point arithmetic (10000 = 1.0
 | Modifier | Value | Condition |
 |----------|-------|-----------|
 | Plan bonus | -15000 (-1.5) | Task has `.ralph/plans/<TASK-ID>.md` |
-| Aging bonus | -8000/level (-0.8) | Per `AGING_FACTOR` (10) iterations waiting |
+| Aging bonus | -8000/level (-0.8) | Per `AGING_FACTOR` (7) scheduling events waiting |
 | Dependency bonus | -7000/task (-0.7) | Per task transitively blocked by this one |
 
 **Penalties (add to priority)**:
