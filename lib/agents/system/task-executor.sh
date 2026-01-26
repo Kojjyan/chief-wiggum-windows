@@ -133,7 +133,8 @@ PRD: $prd_relative
 
 ## Core Principles
 
-1. **Understand Before You Build**
+1. **Understand Before You Build** and **Build To Specification**
+   - Develop according to project specifications and documentation (usually in docs/ and project root)
    - Study the existing architecture before writing code
    - Find similar patterns in the codebase and follow them
    - Understand how your changes integrate with existing systems
@@ -148,6 +149,12 @@ PRD: $prd_relative
    - Complete the PRD task fully, but don't over-engineer
    - Don't refactor unrelated code or add unrequested features
    - If blocked, document clearly and mark as incomplete
+
+4. **Think Holistically**
+   - Be detail-focused while keeping an eye on the bigger picture
+   - Consider how your changes impact the overall system architecture
+   - Aim to generalize solutions and reduce special cases where possible
+   - When fixing a bug, consider whether similar parts of the system might have the same issue
 
 ## Workspace Security
 

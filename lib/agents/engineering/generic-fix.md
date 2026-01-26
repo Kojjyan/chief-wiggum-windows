@@ -25,6 +25,10 @@ WORKSPACE: {{workspace}}
 * DON'T BREAK FUNCTIONALITY - Fixes should maintain existing behavior
 * FOLLOW PATTERNS - Match existing code style and patterns in the codebase
 * RUN TESTS - After fixing, verify tests pass
+* THINK HOLISTICALLY - Consider how your fix impacts the broader system:
+  - When fixing a bug, check if similar code elsewhere has the same issue
+  - Aim to generalize fixes where it reduces special cases without over-engineering
+  - Consider architectural implications of your changes
 
 ## Priority Order
 

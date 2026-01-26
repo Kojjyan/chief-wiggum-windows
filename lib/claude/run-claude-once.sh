@@ -13,7 +13,7 @@ run_agent_once() {
     local output_file="$4"
     local max_turns="${5:-3}"
     local session_id="${6:-}"
-    local _run_once_completed_normally=false
+    _run_once_completed_normally=false
 
     # Exit handler for detecting unexpected exits
     # shellcheck disable=SC2329

@@ -22,6 +22,7 @@ source "$WIGGUM_HOME/lib/core/agent-base.sh"
 source "$WIGGUM_HOME/lib/git/git-operations.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
+source "$WIGGUM_HOME/lib/pipeline/pipeline-loader.sh"
 
 # Default configuration
 MAX_ITERATIONS=20
@@ -41,13 +42,11 @@ The resume process:
   3. Archives previous run artifacts (workspace is preserved)
   4. Launches a fresh system.task-worker from the decided step
 
-Resume Steps (in order):
-  execution     - Restart the main work loop from scratch
-  audit         - Resume from security audit phase
-  test          - Resume from test coverage phase
-  docs          - Resume from documentation phase
-  validation    - Resume from validation review phase
-  finalization  - Resume from commit/PR creation phase
+Resume Steps:
+  Steps are loaded dynamically from the pipeline config (config/pipeline.json
+  or .ralph/pipeline.json). The LLM decides which step to resume from based
+  on its analysis of the previous run. Common steps in the default pipeline:
+    planning, execution, summary, audit, test, docs, validation
 
 Worker ID Resolution:
   Worker IDs can be partial as long as they match exactly one worker:
@@ -73,7 +72,9 @@ EOF
 
 # Archive previous run artifacts before resuming
 # Moves logs, summaries, checkpoints, conversations, etc. to history/
-# Workspace is LEFT UNTOUCHED (it has the actual code changes)
+# Workspace and results/ are LEFT UNTOUCHED:
+#   - workspace/ has the actual code changes
+#   - results/ has epoch-named result files needed for parent context on resume
 archive_previous_run() {
     local worker_dir="$1"
     local archive_dir
@@ -81,14 +82,14 @@ archive_previous_run() {
 
     mkdir -p "$archive_dir"
 
-    # Move all run artifacts — workspace/ is LEFT UNTOUCHED
+    # Move run artifacts — workspace/ and results/ are LEFT UNTOUCHED
+    # results/ is preserved so _export_step_context() can find parent step output
     mv "$worker_dir/logs" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/summaries" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/checkpoints" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/conversations" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/supervisors" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/worker.log" "$archive_dir/" 2>/dev/null || true
-    mv "$worker_dir/results" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/reports" "$archive_dir/" 2>/dev/null || true
     mv "$worker_dir/agent-result.json" "$archive_dir/" 2>/dev/null || true
     # reports/resume-instructions.md stays — needed by the resumed worker
@@ -218,17 +219,42 @@ do_resume() {
         exit $EXIT_ERROR
     fi
 
-    # Validate step is one of the known values
-    case "$resume_step" in
-        execution|audit|test|docs|validation|finalization)
-            ;;
-        *)
-            echo "Error: Invalid resume step '$resume_step' (expected: execution, audit, test, docs, validation, finalization)"
+    # === STEP 3b: Load pipeline config ===
+    # Load the pipeline to validate the resume step against actual step IDs
+    local pipeline_file
+    pipeline_file=$(pipeline_resolve "$PROJECT_DIR" "$task_id" "${WIGGUM_PIPELINE:-}")
+    if [ -n "$pipeline_file" ]; then
+        pipeline_load "$pipeline_file" || {
+            echo "Error: Failed to load pipeline config: $pipeline_file"
             exit $EXIT_ERROR
-            ;;
-    esac
+        }
+    else
+        pipeline_load_builtin_defaults
+    fi
 
-    echo "Resume decision: start from '$resume_step' step"
+    # Validate step exists in pipeline
+    local step_idx
+    step_idx=$(pipeline_find_step_index "$resume_step")
+    if [ "$step_idx" = "-1" ]; then
+        # Build list of valid step IDs for error message
+        local valid_steps=""
+        local count
+        count=$(pipeline_step_count)
+        for ((i=0; i<count; i++)); do
+            local sid
+            sid=$(pipeline_get "$i" ".id")
+            if [ -n "$valid_steps" ]; then
+                valid_steps="$valid_steps, $sid"
+            else
+                valid_steps="$sid"
+            fi
+        done
+        echo "Error: Invalid resume step '$resume_step'"
+        echo "Valid steps from pipeline '$PIPELINE_NAME': $valid_steps"
+        exit $EXIT_ERROR
+    fi
+
+    echo "Resume decision: start from '$resume_step' step (index $step_idx)"
     echo ""
 
     # === STEP 4: Archive old artifacts ===
@@ -251,11 +277,43 @@ do_resume() {
     echo "Launching system.task-worker from step: $resume_step"
 
     mkdir -p "$RALPH_DIR/logs"
-    (
-        # Run agent in subshell to isolate it
-        run_agent "system.task-worker" "$worker_dir" "$PROJECT_DIR" 30 "$MAX_ITERATIONS" "$MAX_TURNS" \
-            "$resume_step" "$worker_dir/reports/resume-instructions.md"
-    ) >> "$RALPH_DIR/logs/workers.log" 2>&1 &
+
+    # Launch agent in background using setsid to create a new session/process group.
+    # This prevents SIGINT from the parent (wiggum resume) from killing the worker.
+    #
+    # Security: Pass variables via environment exports, not string interpolation.
+    # This prevents command injection if any variable contains shell metacharacters.
+    export _WORKER_WIGGUM_HOME="$WIGGUM_HOME"
+    export _WORKER_DIR="$worker_dir"
+    export _WORKER_PROJECT_DIR="$PROJECT_DIR"
+    export _WORKER_MAX_ITERATIONS="$MAX_ITERATIONS"
+    export _WORKER_MAX_TURNS="$MAX_TURNS"
+    export _WORKER_RESUME_STEP="$resume_step"
+    export _WORKER_RESUME_INSTRUCTIONS="$worker_dir/reports/resume-instructions.md"
+
+    # shellcheck disable=SC2016
+    setsid bash -c '
+        set -euo pipefail
+        _log_ts() { echo "[$(date -Iseconds)] $*"; }
+        _log_ts "INFO: Worker subprocess starting (resume)"
+        _log_ts "INFO: WIGGUM_HOME=$_WORKER_WIGGUM_HOME"
+        _log_ts "INFO: worker_dir=$_WORKER_DIR"
+        _log_ts "INFO: resume_step=$_WORKER_RESUME_STEP"
+
+        export WIGGUM_HOME="$_WORKER_WIGGUM_HOME"
+
+        if ! source "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>&1; then
+            _log_ts "ERROR: Failed to source agent-registry.sh"
+            exit 1
+        fi
+
+        _log_ts "INFO: Running agent system.task-worker"
+        if ! run_agent "system.task-worker" "$_WORKER_DIR" "$_WORKER_PROJECT_DIR" 30 "$_WORKER_MAX_ITERATIONS" "$_WORKER_MAX_TURNS" \
+            "$_WORKER_RESUME_STEP" "$_WORKER_RESUME_INSTRUCTIONS"; then
+            _log_ts "ERROR: run_agent failed with exit code $?"
+            exit 1
+        fi
+    ' >> "$RALPH_DIR/logs/workers.log" 2>&1 &
 
     # Wait briefly for agent.pid to be created
     local wait_count=0

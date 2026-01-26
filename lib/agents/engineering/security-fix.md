@@ -24,6 +24,10 @@ WORKSPACE: {{workspace}}
 * CODE MUST COMPILE - A fix that breaks compilation is NOT a fix. Always verify.
 * DON'T BREAK FUNCTIONALITY - Security fixes should maintain existing behavior
 * FOLLOW PATTERNS - Match existing code style and security patterns in the codebase
+* THINK HOLISTICALLY - Consider the broader security posture:
+  - When fixing a vulnerability, check if similar code elsewhere has the same issue
+  - Aim to generalize security fixes where it reduces attack surface
+  - Consider how your fix impacts the overall system architecture
 
 ## Priority Order
 

@@ -22,7 +22,7 @@ run_agent_resume() {
     local prompt="$2"
     local output_file="$3"
     local max_turns="${4:-3}"
-    local _run_resume_completed_normally=false
+    _run_resume_completed_normally=false
 
     # Exit handler for detecting unexpected exits
     # shellcheck disable=SC2329

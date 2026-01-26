@@ -221,7 +221,7 @@ run_ralph_loop() {
     local shutdown_requested=false
     local last_session_id=""
     local supervisor_feedback=""
-    local _ralph_loop_completed_normally=false
+    _ralph_loop_completed_normally=false
 
     # Determine if supervision is enabled
     local supervision_enabled=false
