@@ -1033,11 +1033,41 @@ _extract_tag_content_from_stream_json() {
     fi
 
     # Use awk to extract the last occurrence of tag content
+    # Handles both same-line tags (<tag>content</tag>) and multi-line tags
     echo "$extracted_text" | awk -v tag="$tag" '
         BEGIN { content = ""; in_tag = 0 }
-        $0 ~ "<" tag ">" { in_tag = 1; content = ""; next }
-        $0 ~ "</" tag ">" { in_tag = 0 }
-        in_tag { content = content (content ? "\n" : "") $0 }
+        {
+            # Check for opening tag
+            if ($0 ~ "<" tag ">") {
+                in_tag = 1
+                content = ""
+                # Extract content after opening tag on same line
+                line = $0
+                sub(".*<" tag ">", "", line)
+                # Check if closing tag is also on same line
+                if (line ~ "</" tag ">") {
+                    sub("</" tag ">.*", "", line)
+                    if (line != "") content = line
+                    in_tag = 0
+                } else if (line != "") {
+                    content = line
+                }
+                next
+            }
+            # Check for closing tag
+            if ($0 ~ "</" tag ">") {
+                # Extract content before closing tag on same line
+                line = $0
+                sub("</" tag ">.*", "", line)
+                if (line != "") content = content (content ? "\n" : "") line
+                in_tag = 0
+                next
+            }
+            # Inside tag, accumulate content
+            if (in_tag) {
+                content = content (content ? "\n" : "") $0
+            }
+        }
         END { print content }
     '
 }

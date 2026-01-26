@@ -107,7 +107,7 @@ Your previous work: @../summaries/{{run_id}}/{{step_id}}-{{prev_iteration}}-summ
 | `description` | string | yes | - | Human-readable description |
 | `required_paths` | array | yes | - | Input paths that must exist (relative to worker_dir) |
 | `valid_results` | array | yes | - | Valid result tag values (e.g., `[PASS, FAIL, FIX]`) |
-| `mode` | string | yes | - | Execution mode: `ralph_loop`, `once`, or `resume` |
+| `mode` | string | yes | - | Execution mode: `ralph_loop`, `once`, `live`, or `resume` |
 | `readonly` | bool | no | false | If true, inject git restrictions into prompts |
 | `report_tag` | string | no | `report` | XML tag to extract for report |
 | `result_tag` | string | no | `result` | XML tag containing result |
@@ -260,6 +260,42 @@ Single-shot execution. Only uses system prompt and user prompt (no continuation)
 
 ```yaml
 mode: once
+```
+
+#### Mode: `live`
+
+Persistent session mode that maintains Claude context across multiple invocations within the same worker. First call creates a named session; subsequent calls resume it.
+
+```yaml
+mode: live
+```
+
+**How it works:**
+
+1. **First invocation**: Generates a UUID, creates a new Claude session with `--session-id`, and persists the UUID to `$worker_dir/live_sessions/{step_id}.session`
+2. **Subsequent invocations**: Reads the session UUID from the file and resumes the existing session with `--resume`
+3. **Session expiry recovery**: If resume fails due to session expiry/invalidation, automatically creates a new session
+
+**Session persistence:**
+```
+$worker_dir/
+├── live_sessions/
+│   └── domain-expert.session    # Contains: UUID
+├── logs/
+└── results/
+```
+
+**Use cases:**
+- Domain expert consultations where context should build over time
+- Agents that may be called multiple times within a single task
+- Interactive workflows requiring accumulated context
+
+**Example agent:**
+```markdown
+---
+type: general.domain-expert
+mode: live
+---
 ```
 
 #### Mode: `resume`

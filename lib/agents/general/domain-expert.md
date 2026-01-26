@@ -3,7 +3,7 @@ type: general.domain-expert
 description: Consultation agent that answers questions about architecture, business context, and priorities
 required_paths: [workspace]
 valid_results: [PASS]
-mode: once
+mode: live
 readonly: true
 outputs: [session_id, response_file]
 ---

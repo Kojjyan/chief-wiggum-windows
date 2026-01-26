@@ -942,6 +942,10 @@ md_agent_run() {
             log_debug "md_agent_run: matched resume, calling _md_run_resume"
             _md_run_resume "$worker_dir"
             ;;
+        live)
+            log_debug "md_agent_run: matched live, calling _md_run_live"
+            _md_run_live "$worker_dir"
+            ;;
         *)
             log_error "Unknown execution mode: $_MD_MODE"
             return 1
@@ -1109,6 +1113,125 @@ _md_run_resume() {
 
     # Run resume
     run_agent_resume "$session_id" "$user_prompt" "$log_file" "$max_turns"
+}
+
+# Execute in live mode (persistent session across invocations)
+#
+# Live mode maintains Claude context across multiple invocations within the same worker.
+# First call creates a named session; subsequent calls resume it.
+#
+# Session persistence:
+#   - Session file: $worker_dir/live_sessions/{step_id}.session
+#   - Contains the session UUID for resumption
+#
+# Behavior:
+#   - First run: Generate UUID, create new session, persist session_id
+#   - Subsequent runs: Read session_id, resume existing session
+#   - Session expiry: If resume fails, create new session automatically
+_md_run_live() {
+    local worker_dir="$1"
+
+    # Source both once and resume execution
+    source "$WIGGUM_HOME/lib/claude/run-claude-once.sh"
+    source "$WIGGUM_HOME/lib/claude/run-claude-resume.sh"
+
+    # Get config values
+    local agent_name_upper
+    agent_name_upper=$(echo "$_MD_TYPE" | tr '[:lower:]' '[:upper:]' | tr '.' '_' | tr '-' '_')
+    local max_turns_var="WIGGUM_${agent_name_upper}_MAX_TURNS"
+    local max_turns="${!max_turns_var:-${AGENT_CONFIG_MAX_TURNS:-30}}"
+
+    # Use step ID from pipeline for session naming
+    local step_id="${WIGGUM_STEP_ID:-agent}"
+    local log_timestamp
+    log_timestamp=$(date +%s)
+    local run_id="${step_id}-${log_timestamp}"
+
+    # Set RALPH_RUN_ID for result extraction compatibility
+    export RALPH_RUN_ID="$run_id"
+
+    # Create log directory
+    mkdir -p "$worker_dir/logs/$run_id"
+    local log_file="$worker_dir/logs/$run_id/${step_id}-0-${log_timestamp}.log"
+
+    # Session persistence directory and file
+    local session_dir="$worker_dir/live_sessions"
+    local session_file="$session_dir/${step_id}.session"
+    mkdir -p "$session_dir"
+
+    # Check if we have an existing session
+    local session_id=""
+    local is_first_run=true
+
+    if [ -f "$session_file" ]; then
+        session_id=$(cat "$session_file" 2>/dev/null || true)
+        if [ -n "$session_id" ]; then
+            is_first_run=false
+            log_debug "Live mode: found existing session $session_id"
+        fi
+    fi
+
+    # Interpolate prompts
+    local user_prompt
+    user_prompt=$(_md_interpolate "$_MD_USER_PROMPT")
+
+    local exit_code=0
+
+    if [ "$is_first_run" = true ]; then
+        # First run: create new named session
+        session_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-$$-$RANDOM")
+        log "Live mode: creating new session $session_id"
+
+        # Interpolate system prompt (only needed for first run)
+        local system_prompt
+        system_prompt=$(_md_interpolate "$_MD_SYSTEM_PROMPT")
+
+        # Create named session
+        run_agent_once_with_session "$_MD_WORKSPACE" "$system_prompt" "$user_prompt" "$log_file" "$max_turns" "$session_id" || exit_code=$?
+
+        # Persist session ID on success
+        if [ "$exit_code" -eq 0 ]; then
+            echo "$session_id" > "$session_file"
+            log_debug "Live mode: persisted session to $session_file"
+        fi
+    else
+        # Subsequent run: resume existing session
+        log "Live mode: resuming session $session_id"
+
+        run_agent_resume "$session_id" "$user_prompt" "$log_file" "$max_turns" || exit_code=$?
+
+        # Handle session expiry: if resume fails with specific errors, create new session
+        if [ "$exit_code" -ne 0 ]; then
+            # Check if this looks like a session error (session not found, expired, etc.)
+            if grep -q -i -E "(session.*not found|session.*expired|invalid.*session|unknown.*session)" "$log_file" 2>/dev/null; then
+                log_warn "Live mode: session expired or invalid, creating new session"
+
+                # Generate new session ID
+                session_id=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-$$-$RANDOM")
+
+                # Create new log file for retry
+                local retry_timestamp
+                retry_timestamp=$(date +%s)
+                local retry_log_file="$worker_dir/logs/$run_id/${step_id}-0-${retry_timestamp}-retry.log"
+
+                # Interpolate system prompt for new session
+                local system_prompt
+                system_prompt=$(_md_interpolate "$_MD_SYSTEM_PROMPT")
+
+                # Create new session
+                exit_code=0
+                run_agent_once_with_session "$_MD_WORKSPACE" "$system_prompt" "$user_prompt" "$retry_log_file" "$max_turns" "$session_id" || exit_code=$?
+
+                # Persist new session ID on success
+                if [ "$exit_code" -eq 0 ]; then
+                    echo "$session_id" > "$session_file"
+                    log_debug "Live mode: persisted new session to $session_file"
+                fi
+            fi
+        fi
+    fi
+
+    return $exit_code
 }
 
 # =============================================================================

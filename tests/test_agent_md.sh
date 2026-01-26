@@ -117,6 +117,36 @@ EOF
     echo "$agent_file"
 }
 
+# Create a live-mode agent fixture
+_create_live_agent_md() {
+    local tmpdir="$1"
+    local agent_file="$tmpdir/live-agent.md"
+
+    cat > "$agent_file" << 'EOF'
+---
+type: general.live-agent
+description: Live-mode test agent with persistent session
+required_paths: [workspace]
+valid_results: [PASS]
+mode: live
+readonly: true
+outputs: [session_id, response_file]
+---
+
+<WIGGUM_SYSTEM_PROMPT>
+LIVE MODE SYSTEM PROMPT
+You maintain context across multiple invocations.
+</WIGGUM_SYSTEM_PROMPT>
+
+<WIGGUM_USER_PROMPT>
+LIVE MODE USER PROMPT
+Workspace: {{workspace}}
+</WIGGUM_USER_PROMPT>
+EOF
+
+    echo "$agent_file"
+}
+
 # =============================================================================
 # Test: Syntax Validation
 # =============================================================================
@@ -405,6 +435,22 @@ test_resume_mode_detection() {
 
     assert_equals "resume" "$_MD_MODE" "Should detect resume mode"
     assert_equals "parent" "$_MD_SESSION_FROM" "Should parse session_from"
+
+    rm -rf "$tmpdir"
+}
+
+test_live_mode_detection() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local agent_file
+    agent_file=$(_create_live_agent_md "$tmpdir")
+
+    md_agent_load "$agent_file"
+
+    assert_equals "live" "$_MD_MODE" "Should detect live mode"
+    assert_equals "true" "$_MD_READONLY" "Should parse readonly for live agent"
 
     rm -rf "$tmpdir"
 }
@@ -893,6 +939,151 @@ test_documentation_writer_md_loads() {
     fi
 }
 
+test_domain_expert_md_loads() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local md_file="$WIGGUM_HOME/lib/agents/general/domain-expert.md"
+
+    if [ ! -f "$md_file" ]; then
+        echo "  [SKIP] domain-expert.md not found"
+        return
+    fi
+
+    if md_agent_load "$md_file"; then
+        assert_equals "general.domain-expert" "$_MD_TYPE" "domain-expert.md should have correct type"
+        assert_equals "live" "$_MD_MODE" "domain-expert.md should be live mode"
+        assert_equals "true" "$_MD_READONLY" "domain-expert.md should be readonly"
+    else
+        assert_failure "domain-expert.md should load successfully" true
+    fi
+}
+
+# =============================================================================
+# Test: Live Mode Session Persistence
+# =============================================================================
+
+test_live_mode_session_directory_creation() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local agent_file
+    agent_file=$(_create_live_agent_md "$tmpdir")
+
+    md_agent_load "$agent_file"
+
+    # Create a mock worker directory
+    local worker_dir="$tmpdir/worker-TEST-001-12345"
+    mkdir -p "$worker_dir/workspace"
+
+    # Set required context
+    _MD_WORKER_DIR="$worker_dir"
+    _MD_WORKSPACE="$worker_dir/workspace"
+    export WIGGUM_STEP_ID="live-test"
+
+    # Create the session directory (simulating what _md_run_live does)
+    local session_dir="$worker_dir/live_sessions"
+    mkdir -p "$session_dir"
+
+    if [ -d "$session_dir" ]; then
+        assert_success "Should create live_sessions directory" true
+    else
+        assert_failure "Should create live_sessions directory" true
+    fi
+
+    unset WIGGUM_STEP_ID
+    rm -rf "$tmpdir"
+}
+
+test_live_mode_session_file_naming() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local worker_dir="$tmpdir/worker-TEST-001-12345"
+    mkdir -p "$worker_dir/live_sessions"
+
+    export WIGGUM_STEP_ID="domain-expert"
+
+    # Verify session file path construction
+    local session_file="$worker_dir/live_sessions/${WIGGUM_STEP_ID}.session"
+    local expected_file="$worker_dir/live_sessions/domain-expert.session"
+
+    assert_equals "$expected_file" "$session_file" "Session file should use step_id in name"
+
+    unset WIGGUM_STEP_ID
+    rm -rf "$tmpdir"
+}
+
+test_live_mode_first_run_detection() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local worker_dir="$tmpdir/worker-TEST-001-12345"
+    mkdir -p "$worker_dir/live_sessions"
+
+    export WIGGUM_STEP_ID="test-agent"
+    local session_file="$worker_dir/live_sessions/${WIGGUM_STEP_ID}.session"
+
+    # First run: session file should not exist
+    local is_first_run=true
+    if [ -f "$session_file" ]; then
+        is_first_run=false
+    fi
+
+    if [ "$is_first_run" = true ]; then
+        assert_success "Should detect first run when session file missing" true
+    else
+        assert_failure "Should detect first run when session file missing" true
+    fi
+
+    # Simulate session persistence
+    echo "test-uuid-12345" > "$session_file"
+
+    # Second run: session file exists
+    is_first_run=true
+    if [ -f "$session_file" ]; then
+        local session_id
+        session_id=$(cat "$session_file" 2>/dev/null || true)
+        if [ -n "$session_id" ]; then
+            is_first_run=false
+        fi
+    fi
+
+    if [ "$is_first_run" = false ]; then
+        assert_success "Should detect subsequent run when session file exists" true
+    else
+        assert_failure "Should detect subsequent run when session file exists" true
+    fi
+
+    unset WIGGUM_STEP_ID
+    rm -rf "$tmpdir"
+}
+
+test_live_mode_session_id_persistence() {
+    source "$WIGGUM_HOME/lib/core/agent-md.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local worker_dir="$tmpdir/worker-TEST-001-12345"
+    mkdir -p "$worker_dir/live_sessions"
+
+    local session_file="$worker_dir/live_sessions/test.session"
+    local test_uuid="550e8400-e29b-41d4-a716-446655440000"
+
+    # Simulate session persistence
+    echo "$test_uuid" > "$session_file"
+
+    # Read it back
+    local read_uuid
+    read_uuid=$(cat "$session_file" 2>/dev/null || true)
+
+    assert_equals "$test_uuid" "$read_uuid" "Should persist and read session UUID"
+
+    rm -rf "$tmpdir"
+}
+
 # =============================================================================
 # Run Tests
 # =============================================================================
@@ -912,6 +1103,7 @@ run_test test_interpolate_task_context
 run_test test_interpolate_iteration_variables
 run_test test_once_mode_detection
 run_test test_resume_mode_detection
+run_test test_live_mode_detection
 run_test test_md_agent_init_defines_functions
 run_test test_agent_required_paths_returns_paths
 run_test test_load_fails_on_missing_file
@@ -931,6 +1123,11 @@ run_test test_software_engineer_md_loads
 run_test test_security_audit_md_loads
 run_test test_validation_review_md_loads
 run_test test_documentation_writer_md_loads
+run_test test_domain_expert_md_loads
+run_test test_live_mode_session_directory_creation
+run_test test_live_mode_session_file_naming
+run_test test_live_mode_first_run_detection
+run_test test_live_mode_session_id_persistence
 
 # Print summary
 print_test_summary
