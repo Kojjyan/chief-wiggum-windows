@@ -333,7 +333,7 @@ test_full_lifecycle_sequence() {
 
     # Verify full sequence happened
     local line_count
-    line_count=$(wc -l < "$sequence_file")
+    line_count=$(wc -l < "$sequence_file" | tr -d '[:space:]')
     assert_greater_than "$line_count" 3 "Should have at least 4 lifecycle events"
 
     local result_file

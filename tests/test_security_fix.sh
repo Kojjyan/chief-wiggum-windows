@@ -173,8 +173,8 @@ test_find_security_audit_report_returns_most_recent() {
 ### CRITICAL
 - Old finding
 EOF
-    # Set older modification time
-    touch -d "2020-01-01" "$TEST_TMP_DIR/reports/1000000000-old-report.md"
+    # Set older modification time (using -t for BSD/GNU portability)
+    touch -t 202001010000.00 "$TEST_TMP_DIR/reports/1000000000-old-report.md"
 
     # Create a newer security report
     cat > "$TEST_TMP_DIR/reports/2000000000-new-report.md" << 'EOF'

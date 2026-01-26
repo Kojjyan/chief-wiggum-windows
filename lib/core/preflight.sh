@@ -400,7 +400,9 @@ check_hooks() {
     fi
 
     local count
-    count=$(find "$hooks_dir" -maxdepth 1 -name "*.sh" -perm +111 | wc -l)
+    # Use -perm /111 for portability (macOS and modern Linux)
+    # -perm +111 is deprecated and may not work on all systems
+    count=$(find "$hooks_dir" -maxdepth 1 -name "*.sh" -perm /111 2>/dev/null | wc -l | tr -d '[:space:]')
     _print_check "pass" "$name" "$count hook scripts executable"
     return 0
 }

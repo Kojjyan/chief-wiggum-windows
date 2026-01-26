@@ -285,7 +285,7 @@ test_agent_creates_logs() {
 
     # Check that log files were created
     local log_count
-    log_count=$(find "$WORKER_DIR/logs" -name "*.log" 2>/dev/null | wc -l)
+    log_count=$(find "$WORKER_DIR/logs" -name "*.log" 2>/dev/null | wc -l | tr -d '[:space:]')
 
     if [ "$log_count" -gt 0 ]; then
         assert_success "Agent should create log files (found $log_count)" true
@@ -356,7 +356,7 @@ Done!'
 
     # Check that a result file was created
     local result_count
-    result_count=$(find "$WORKER_DIR/results" -name "*.json" 2>/dev/null | wc -l)
+    result_count=$(find "$WORKER_DIR/results" -name "*.json" 2>/dev/null | wc -l | tr -d '[:space:]')
 
     if [ "$result_count" -gt 0 ]; then
         # Check the result value - stored in outputs.gate_result

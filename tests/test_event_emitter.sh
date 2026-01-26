@@ -227,7 +227,7 @@ test_events_query_by_type_filters_correctly() {
     local result
     result=$(events_query_by_type "task.started" "$TEST_DIR")
     local count
-    count=$(echo "$result" | wc -l)
+    count=$(echo "$result" | wc -l | tr -d '[:space:]')
 
     assert_equals "2" "$count" "Should return exactly 2 task.started events"
     assert_output_contains "$result" "TASK-A" "Should contain first started task"
@@ -249,7 +249,7 @@ test_events_query_by_task_filters_correctly() {
     local result
     result=$(events_query_by_task "TASK-ALPHA" "$TEST_DIR")
     local count
-    count=$(echo "$result" | wc -l)
+    count=$(echo "$result" | wc -l | tr -d '[:space:]')
 
     assert_equals "2" "$count" "Should return exactly 2 events for TASK-ALPHA"
     assert_output_contains "$result" "task.started" "Should contain started event"
@@ -270,7 +270,7 @@ test_events_query_by_worker_filters_correctly() {
     local result
     result=$(events_query_by_worker "worker-FIRST" "$TEST_DIR")
     local count
-    count=$(echo "$result" | wc -l)
+    count=$(echo "$result" | wc -l | tr -d '[:space:]')
 
     assert_equals "2" "$count" "Should return exactly 2 events for worker-FIRST"
     assert_output_contains "$result" "TASK-X" "Should contain events for worker-FIRST"

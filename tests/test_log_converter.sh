@@ -12,8 +12,9 @@ source "$TESTS_DIR/test-framework.sh"
 _source_log_converter_functions() {
     local script="$WIGGUM_HOME/lib/utils/log-converter.sh"
     # Extract everything from 'set -euo pipefail' up to '# --- Main ---'
+    # Use awk for portability across GNU and BSD systems
     local func_code
-    func_code=$(sed -n '/^set -euo pipefail$/,/^# --- Main ---$/{ /^# --- Main ---$/d; p }' "$script")
+    func_code=$(awk '/^set -euo pipefail$/,/^# --- Main ---$/ { if (!/^# --- Main ---$/) print }' "$script")
     eval "$func_code"
 }
 

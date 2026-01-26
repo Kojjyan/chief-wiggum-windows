@@ -218,12 +218,12 @@ test_ralph_loop_creates_logs() {
 
     # Log directory should contain iteration log
     local log_count
-    log_count=$(find "$OUTPUT_DIR/logs" -name "test-0-*.log" -not -name "*-summary.log" | wc -l)
+    log_count=$(find "$OUTPUT_DIR/logs" -name "test-0-*.log" -not -name "*-summary.log" | wc -l | tr -d '[:space:]')
     assert_greater_than "$log_count" 0 "Should have at least 1 iteration log file"
 
     # Summary log should also exist
     local summary_log_count
-    summary_log_count=$(find "$OUTPUT_DIR/logs" -name "*-summary.log" | wc -l)
+    summary_log_count=$(find "$OUTPUT_DIR/logs" -name "*-summary.log" | wc -l | tr -d '[:space:]')
     assert_greater_than "$summary_log_count" 0 "Should have at least 1 summary log file"
 }
 

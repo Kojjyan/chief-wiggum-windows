@@ -18,6 +18,7 @@ set -euo pipefail
 
 WIGGUM_HOME="${WIGGUM_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/platform.sh"
 
 _USAGE_TRACKER_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 _USAGE_TRACKER_DATA_DIR="${USAGE_DATA_DIR:-$WIGGUM_HOME/data}"
@@ -30,9 +31,9 @@ _usage_get_week_start() {
     local days_since_monday=$(( dow - 1 ))
     local seconds_since_monday=$(( days_since_monday * 86400 ))
 
-    # Get today's midnight
+    # Get today's midnight (portable across GNU/BSD)
     local today_midnight
-    today_midnight=$(date -d "$(date +%Y-%m-%d)" +%s)
+    today_midnight=$(date_today_midnight)
 
     monday_midnight=$(( today_midnight - seconds_since_monday ))
     echo "$monday_midnight"
@@ -62,9 +63,9 @@ _usage_get_threshold_boundary() {
         return
     fi
 
-    # Try to parse as ISO timestamp
+    # Try to parse as ISO timestamp (portable across GNU/BSD)
     local epoch
-    epoch=$(date -d "$boundary" +%s 2>/dev/null) || epoch=""
+    epoch=$(date_parse_epoch "$boundary" 2>/dev/null) || epoch=""
     echo "$epoch"
 }
 
@@ -490,7 +491,7 @@ rate_limit_wait_for_cycle_reset() {
         return 0
     fi
 
-    log "Rate limit reached. Waiting ${wait_seconds}s for 5h cycle reset ($(date -d @$cycle_end +%H:%M:%S))"
+    log "Rate limit reached. Waiting ${wait_seconds}s for 5h cycle reset ($(date_format_epoch "$cycle_end" "%H:%M:%S"))"
 
     local elapsed=0
     while [ "$elapsed" -lt "$wait_seconds" ]; do

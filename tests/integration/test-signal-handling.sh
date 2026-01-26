@@ -176,7 +176,7 @@ test_no_zombie_processes() {
 
     # Check no zombies from our test
     local zombies
-    zombies=$(ps -eo state,ppid 2>/dev/null | grep "^Z.*$$" | wc -l)
+    zombies=$(ps -eo state,ppid 2>/dev/null | grep "^Z.*$$" | wc -l | tr -d '[:space:]')
     assert_equals "0" "$zombies" "Should have no zombie processes"
 }
 

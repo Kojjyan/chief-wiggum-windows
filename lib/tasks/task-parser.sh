@@ -44,6 +44,15 @@ get_failed_tasks() {
         }' "$kanban"
 }
 
+get_in_progress_tasks() {
+    local kanban="$1"
+    # Extract task IDs - ONLY in-progress tasks (- [=]) matching the task format
+    awk '/^- \[=\] \*\*\[[A-Za-z]{2,10}-[0-9]{1,4}\]\*\*/{
+            match($0, /\[[A-Za-z]{2,10}-[0-9]{1,4}\]/)
+            print substr($0, RSTART+1, RLENGTH-2)
+        }' "$kanban"
+}
+
 get_pending_approval_tasks() {
     local kanban="$1"
     # Extract task IDs - ONLY pending approval tasks (- [P]) matching the task format
@@ -408,7 +417,7 @@ get_ready_tasks() {
 
             echo "$effective_pri|$task_id"
         fi
-    done | sort -t'|' -k1,1n | cut -d'|' -f2
+    done | LC_ALL=C sort -t'|' -k1,1 -n | cut -d'|' -f2
 }
 
 # Get blocked tasks (pending but dependencies not satisfied)

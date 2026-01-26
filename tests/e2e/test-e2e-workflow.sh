@@ -267,7 +267,7 @@ test_activity_log_events() {
 
     # Count events
     local event_count
-    event_count=$(wc -l < "$log_file")
+    event_count=$(wc -l < "$log_file" | tr -d '[:space:]')
     assert_equals "3" "$event_count" "Should have 3 logged events"
 
     # Verify JSON structure

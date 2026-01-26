@@ -5,34 +5,42 @@ set -euo pipefail
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
+source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 
 SKIP_CONFIRM=false
 
 show_help() {
     cat << EOF
-wiggum clean - Clean up worktrees and worker directories
+wiggum clean - Clean up worktrees, worker directories, or reset kanban tasks
 
 Usage: wiggum clean [options] <target>
+       wiggum clean kanban [all|<task-id>]
 
-Targets:
+Worker Targets:
   <pattern>           Clean workers matching pattern (e.g., TASK-001, 030)
   <p1>,<p2>,...       Clean multiple patterns (comma-separated)
   all                 Clean all worktrees and worker directories
   done                Clean workers whose PRs have been merged
+
+Kanban Targets:
+  kanban all          Reset resettable tasks (in-progress, pending approval, failed)
+  kanban <task-id>    Reset a specific task if it's in a resettable state
 
 Options:
   -y, --yes           Skip confirmation prompt
   -h, --help          Show this help message
 
 Description:
-  Removes git worktrees created by workers and cleans up the
+  Workers: Removes git worktrees created by workers and cleans up the
   .ralph/workers/ directory. This does not affect the main repository.
 
-  Pattern matching: searches for worker directories matching the pattern.
-  Proceeds only if exactly one match is found per pattern.
+  Kanban: Resets task statuses back to pending [ ]. Resettable states are:
+  [=] in-progress, [P] pending approval, [*] failed.
 
-  The 'done' target finds workers with merged PRs using the GitHub CLI (gh).
+  When using 'kanban all', you'll be prompted whether to also reset [P] and [*]
+  tasks, or only reset [=] in-progress tasks.
 
 Examples:
   wiggum clean TASK-001       # Clean workers matching TASK-001
@@ -41,6 +49,8 @@ Examples:
   wiggum clean all            # Clean up all worktrees and worker directories
   wiggum clean done           # Clean workers with merged PRs
   wiggum clean -y all         # Clean all without confirmation
+  wiggum clean kanban all     # Reset all resettable tasks in kanban
+  wiggum clean kanban 030     # Reset TASK-030 if it's resettable
 
 EOF
 }
@@ -196,7 +206,7 @@ resolve_patterns() {
         fi
 
         local match_count
-        match_count=$(echo "$matches" | wc -l)
+        match_count=$(echo "$matches" | wc -l | tr -d '[:space:]')
 
         if [ "$match_count" -gt 1 ]; then
             echo "Multiple workers match '$pattern':" >&2
@@ -230,8 +240,180 @@ do_clean() {
     git worktree list
 }
 
+# Status character to human-readable name
+status_name() {
+    local status="$1"
+    case "$status" in
+        " ") echo "pending" ;;
+        "=") echo "in-progress" ;;
+        "P") echo "pending approval" ;;
+        "x") echo "complete" ;;
+        "*") echo "failed" ;;
+        "N") echo "not planned" ;;
+        *)   echo "unknown" ;;
+    esac
+}
+
+# Reset kanban tasks to pending
+# Args: kanban_file tasks...
+do_kanban_reset() {
+    local kanban_file="$1"
+    shift
+    local tasks=("$@")
+
+    for task_id in "${tasks[@]}"; do
+        log "Resetting $task_id to pending"
+        update_kanban_status "$kanban_file" "$task_id" " "
+    done
+
+    log "✓ Reset ${#tasks[@]} task(s) to pending"
+}
+
+# Handle 'wiggum clean kanban all'
+do_kanban_all() {
+    local kanban_file="$RALPH_DIR/kanban.md"
+
+    if [ ! -f "$kanban_file" ]; then
+        echo "ERROR: No kanban file found at $kanban_file"
+        exit $EXIT_WORKER_NO_KANBAN
+    fi
+
+    # Get tasks in each resettable state
+    local wip_tasks failed_tasks pending_approval_tasks
+    wip_tasks=$(get_in_progress_tasks "$kanban_file")
+    failed_tasks=$(get_failed_tasks "$kanban_file")
+    pending_approval_tasks=$(get_pending_approval_tasks "$kanban_file")
+
+    local wip_count=0 failed_count=0 pa_count=0
+    [ -n "$wip_tasks" ] && wip_count=$(echo "$wip_tasks" | wc -l | tr -d '[:space:]')
+    [ -n "$failed_tasks" ] && failed_count=$(echo "$failed_tasks" | wc -l | tr -d '[:space:]')
+    [ -n "$pending_approval_tasks" ] && pa_count=$(echo "$pending_approval_tasks" | wc -l | tr -d '[:space:]')
+
+    # Show summary
+    echo "Resettable tasks in kanban:"
+    echo "  [=] In-progress:      $wip_count"
+    echo "  [P] Pending approval: $pa_count"
+    echo "  [*] Failed:           $failed_count"
+    echo ""
+
+    if [ "$wip_count" -eq 0 ] && [ "$pa_count" -eq 0 ] && [ "$failed_count" -eq 0 ]; then
+        echo "No tasks to reset."
+        exit $EXIT_OK
+    fi
+
+    # Build list of tasks to reset
+    local tasks_to_reset=()
+
+    # Always include in-progress tasks
+    if [ -n "$wip_tasks" ]; then
+        while IFS= read -r task; do
+            tasks_to_reset+=("$task")
+        done <<< "$wip_tasks"
+    fi
+
+    # Ask about P/* tasks if any exist
+    if [ "$pa_count" -gt 0 ] || [ "$failed_count" -gt 0 ]; then
+        if [ "$SKIP_CONFIRM" = true ]; then
+            # With -y, reset all resettable tasks
+            if [ -n "$failed_tasks" ]; then
+                while IFS= read -r task; do
+                    tasks_to_reset+=("$task")
+                done <<< "$failed_tasks"
+            fi
+            if [ -n "$pending_approval_tasks" ]; then
+                while IFS= read -r task; do
+                    tasks_to_reset+=("$task")
+                done <<< "$pending_approval_tasks"
+            fi
+        else
+            read -r -p "Also reset [P] pending approval and [*] failed tasks? [y/N] " response
+            case "$response" in
+                [yY][eE][sS]|[yY])
+                    if [ -n "$failed_tasks" ]; then
+                        while IFS= read -r task; do
+                            tasks_to_reset+=("$task")
+                        done <<< "$failed_tasks"
+                    fi
+                    if [ -n "$pending_approval_tasks" ]; then
+                        while IFS= read -r task; do
+                            tasks_to_reset+=("$task")
+                        done <<< "$pending_approval_tasks"
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+
+    if [ ${#tasks_to_reset[@]} -eq 0 ]; then
+        echo "No tasks selected for reset."
+        exit $EXIT_OK
+    fi
+
+    # Show what will be reset
+    echo "The following tasks will be reset to pending [ ]:"
+    for task in "${tasks_to_reset[@]}"; do
+        local status
+        status=$(get_task_status "$kanban_file" "$task")
+        echo "  [$status] $task"
+    done
+    echo ""
+
+    if ! confirm "Proceed with reset?"; then
+        echo "Aborted."
+        exit $EXIT_OK
+    fi
+
+    do_kanban_reset "$kanban_file" "${tasks_to_reset[@]}"
+}
+
+# Handle 'wiggum clean kanban <task-id>'
+do_kanban_task() {
+    local task_pattern="$1"
+    local kanban_file="$RALPH_DIR/kanban.md"
+
+    if [ ! -f "$kanban_file" ]; then
+        echo "ERROR: No kanban file found at $kanban_file"
+        exit $EXIT_WORKER_NO_KANBAN
+    fi
+
+    # Resolve task ID
+    local task_id
+    if ! task_id=$(resolve_task_id "$kanban_file" "$task_pattern"); then
+        exit $EXIT_WORKER_TASK_NOT_FOUND
+    fi
+
+    # Get current status
+    local status
+    status=$(get_task_status "$kanban_file" "$task_id")
+
+    # Check if resettable
+    case "$status" in
+        "="|"P"|"*")
+            # Resettable - proceed
+            local status_desc
+            status_desc=$(status_name "$status")
+            echo "Task $task_id is currently $status_desc [$status]"
+            echo ""
+            if ! confirm "Reset to pending [ ]?"; then
+                echo "Aborted."
+                exit $EXIT_OK
+            fi
+            do_kanban_reset "$kanban_file" "$task_id"
+            ;;
+        *)
+            # Not resettable
+            local status_desc
+            status_desc=$(status_name "$status")
+            echo "Task $task_id is $status_desc [$status] - not a resettable state."
+            echo "Resettable states: [=] in-progress, [P] pending approval, [*] failed"
+            exit $EXIT_USAGE
+            ;;
+    esac
+}
+
 # Parse options
 TARGET=""
+KANBAN_TARGET=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -y|--yes)
@@ -247,6 +429,14 @@ while [[ $# -gt 0 ]]; do
             echo ""
             show_help
             exit $EXIT_USAGE
+            ;;
+        kanban)
+            TARGET="kanban"
+            shift
+            if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; then
+                KANBAN_TARGET="$1"
+                shift
+            fi
             ;;
         *)
             if [ -z "$TARGET" ]; then
@@ -272,6 +462,23 @@ fi
 if [ ! -d "$RALPH_DIR" ]; then
     echo "ERROR: .ralph/ directory not found"
     exit $EXIT_CLEAN_NO_RALPH_DIR
+fi
+
+# Handle kanban subcommand
+if [ "$TARGET" = "kanban" ]; then
+    if [ -z "$KANBAN_TARGET" ]; then
+        echo "No kanban target specified. Use 'wiggum clean kanban all' or 'wiggum clean kanban <task-id>'."
+        echo ""
+        show_help
+        exit $EXIT_USAGE
+    fi
+
+    if [ "$KANBAN_TARGET" = "all" ]; then
+        do_kanban_all
+    else
+        do_kanban_task "$KANBAN_TARGET"
+    fi
+    exit $EXIT_OK
 fi
 
 # Determine workers to clean

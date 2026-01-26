@@ -85,6 +85,96 @@ find_sorted_by_mtime() {
 }
 
 # =============================================================================
+# PORTABLE DATE
+# =============================================================================
+
+# Parse a date string or epoch timestamp to epoch seconds
+# Works on both GNU (Linux) and BSD (macOS) date commands
+#
+# Usage: date_parse_epoch <date_string_or_epoch>
+# Examples:
+#   date_parse_epoch "2024-01-26"           -> epoch
+#   date_parse_epoch "2024-01-26T10:30:00"  -> epoch
+#   date_parse_epoch "@1706270400"          -> 1706270400
+#   date_parse_epoch "1706270400"           -> 1706270400 (if numeric)
+#
+# Returns: epoch timestamp on stdout, or empty on failure
+date_parse_epoch() {
+    local input="$1"
+
+    # If already an epoch timestamp (numeric), return as-is
+    if [[ "$input" =~ ^@?[0-9]+$ ]]; then
+        echo "${input#@}"
+        return 0
+    fi
+
+    # Try GNU date first (Linux)
+    local epoch
+    epoch=$(date -d "$input" +%s 2>/dev/null) && { echo "$epoch"; return 0; }
+
+    # Try BSD date (macOS) - handles ISO 8601 format
+    # Try common formats
+    for fmt in "%Y-%m-%d" "%Y-%m-%dT%H:%M:%S" "%Y-%m-%d %H:%M:%S"; do
+        epoch=$(date -j -f "$fmt" "$input" +%s 2>/dev/null) && { echo "$epoch"; return 0; }
+    done
+
+    # Failed to parse
+    return 1
+}
+
+# Format an epoch timestamp to a date string
+# Works on both GNU (Linux) and BSD (macOS) date commands
+#
+# Usage: date_format_epoch <epoch> <format>
+# Examples:
+#   date_format_epoch 1706270400 "%Y-%m-%d"       -> "2024-01-26"
+#   date_format_epoch 1706270400 "%H:%M:%S"       -> "10:30:00"
+#   date_format_epoch 1706270400 "%Y-%m-%dT%H:%M:%S" -> "2024-01-26T10:30:00"
+#
+# Returns: formatted date string on stdout
+date_format_epoch() {
+    local epoch="$1"
+    local format="$2"
+
+    # Try GNU date first (Linux)
+    date -d "@$epoch" +"$format" 2>/dev/null && return 0
+
+    # Try BSD date (macOS)
+    date -r "$epoch" +"$format" 2>/dev/null && return 0
+
+    # Failed
+    return 1
+}
+
+# Get today's midnight as epoch timestamp
+# Works on both GNU (Linux) and BSD (macOS)
+#
+# Usage: date_today_midnight
+# Returns: epoch timestamp for midnight today
+date_today_midnight() {
+    local today
+    today=$(date +%Y-%m-%d)
+
+    # Try GNU date first
+    date -d "$today" +%s 2>/dev/null && return 0
+
+    # Try BSD date
+    date -j -f "%Y-%m-%d" "$today" +%s 2>/dev/null && return 0
+
+    # Fallback: calculate manually
+    local now hour min sec
+    now=$(date +%s)
+    hour=$(date +%H)
+    min=$(date +%M)
+    sec=$(date +%S)
+    # Remove leading zeros for arithmetic
+    hour=$((10#$hour))
+    min=$((10#$min))
+    sec=$((10#$sec))
+    echo $(( now - (hour * 3600) - (min * 60) - sec ))
+}
+
+# =============================================================================
 # PORTABLE GREP (Perl regex)
 # =============================================================================
 
