@@ -3,6 +3,9 @@
 set -euo pipefail
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
+PROJECT_DIR="$(pwd)"
+RALPH_DIR="${RALPH_DIR:-$PROJECT_DIR/.ralph}"
+
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
@@ -32,20 +35,9 @@ Options:
   -y, --yes           Skip confirmation prompt
   -h, --help          Show this help message
 
-Description:
-  Workers: Removes git worktrees created by workers and cleans up the
-  .ralph/workers/ directory. This does not affect the main repository.
-
-  Kanban: Resets task statuses back to pending [ ]. Resettable states are:
-  [=] in-progress, [P] pending approval, [*] failed.
-
-  When using 'kanban all', you'll be prompted whether to also reset [P] and [*]
-  tasks, or only reset [=] in-progress tasks.
-
 Examples:
   wiggum clean TASK-001       # Clean workers matching TASK-001
   wiggum clean 030            # Clean workers matching "030"
-  wiggum clean TASK-001,002   # Clean workers for TASK-001 and those matching "002"
   wiggum clean all            # Clean up all worktrees and worker directories
   wiggum clean done           # Clean workers with merged PRs
   wiggum clean -y all         # Clean all without confirmation
@@ -61,108 +53,33 @@ log() {
 
 confirm() {
     local prompt="$1"
-    if [ "$SKIP_CONFIRM" = true ]; then
-        return 0
-    fi
+    [ "$SKIP_CONFIRM" = true ] && return 0
     read -r -p "$prompt [y/N] " response
-    case "$response" in
-        [yY][eE][sS]|[yY])
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# Check if a worker is running (wrapper around shared library)
-# Returns 0 if running, 1 if not
-check_worker_running() {
-    local worker_name="$1"
-    local worker_dir="$RALPH_DIR/workers/$worker_name"
-    is_worker_running "$worker_dir"
-}
-
-# Find matching worker directories for a pattern
-# Returns: matched directory names (one per line)
-find_matches() {
-    local pattern="$1"
-
-    if [ ! -d "$RALPH_DIR/workers" ]; then
-        return
-    fi
-
-    # List directories matching the pattern
-    for dir in "$RALPH_DIR/workers"/worker-*; do
-        if [ -d "$dir" ]; then
-            local dirname
-            dirname=$(basename "$dir")
-            if [[ "$dirname" =~ $pattern ]]; then
-                echo "$dirname"
-            fi
-        fi
-    done
-}
-
-# Find all worker directories
-find_all_workers() {
-    if [ ! -d "$RALPH_DIR/workers" ]; then
-        return
-    fi
-
-    for dir in "$RALPH_DIR/workers"/worker-*; do
-        if [ -d "$dir" ]; then
-            basename "$dir"
-        fi
-    done
+    [[ "$response" =~ ^[yY]([eE][sS])?$ ]]
 }
 
 # Check if a PR is merged
-# Args: <pr_url>
-# Returns: 0 if merged, 1 otherwise
 is_pr_merged() {
     local pr_url="$1"
+    [ -z "$pr_url" ] || [ "$pr_url" = "N/A" ] && return 1
+    command -v gh &>/dev/null || return 1
 
-    if [ -z "$pr_url" ] || [ "$pr_url" = "N/A" ]; then
-        return 1
-    fi
-
-    # Check if gh CLI is available
-    if ! command -v gh &> /dev/null; then
-        log "Warning: gh CLI not found, cannot check PR status"
-        return 1
-    fi
-
-    # Extract PR number and repo from URL
-    # URL format: https://github.com/owner/repo/pull/123
     local pr_state
     pr_state=$(gh pr view "$pr_url" --json state -q .state 2>/dev/null) || return 1
-
-    if [ "$pr_state" = "MERGED" ]; then
-        return 0
-    fi
-    return 1
+    [ "$pr_state" = "MERGED" ]
 }
 
 # Find workers with merged PRs
 find_workers_with_merged_prs() {
-    if [ ! -d "$RALPH_DIR/workers" ]; then
-        return
-    fi
+    [ -d "$RALPH_DIR/workers" ] || return
 
     for dir in "$RALPH_DIR/workers"/worker-*; do
-        if [ -d "$dir" ]; then
-            local worker_name
-            worker_name=$(basename "$dir")
-            local pr_url_file="$dir/pr_url.txt"
+        [ -d "$dir" ] || continue
+        local pr_url_file="$dir/pr_url.txt"
+        [ -f "$pr_url_file" ] || continue
 
-            if [ -f "$pr_url_file" ]; then
-                local pr_url
-                pr_url=$(cat "$pr_url_file")
-                if is_pr_merged "$pr_url"; then
-                    echo "$worker_name"
-                fi
-            fi
+        if is_pr_merged "$(cat "$pr_url_file")"; then
+            basename "$dir"
         fi
     done
 }
@@ -170,13 +87,11 @@ find_workers_with_merged_prs() {
 clean_worker() {
     local worker_dir="$RALPH_DIR/workers/$1"
 
-    # Remove worktree if exists
     if [ -d "$worker_dir/workspace" ]; then
         log "Removing worktree: $worker_dir/workspace"
         git worktree remove "$worker_dir/workspace" --force 2>/dev/null || true
     fi
 
-    # Remove worker directory
     if [ -d "$worker_dir" ]; then
         log "Removing worker directory: $1"
         rm -rf "$worker_dir"
@@ -184,21 +99,17 @@ clean_worker() {
 }
 
 # Resolve patterns to worker directories
-# Returns: list of workers to clean (one per line), or error message on stderr
 resolve_patterns() {
     local input="$1"
     local resolved=()
 
     IFS=',' read -ra patterns <<< "$input"
     for pattern in "${patterns[@]}"; do
-        # Trim whitespace
         pattern=$(echo "$pattern" | xargs)
-        if [ -z "$pattern" ]; then
-            continue
-        fi
+        [ -z "$pattern" ] && continue
 
         local matches
-        matches=$(find_matches "$pattern")
+        matches=$(find_workers_by_pattern "$RALPH_DIR" "$pattern")
 
         if [ -z "$matches" ]; then
             echo "No workers found matching: $pattern" >&2
@@ -210,7 +121,6 @@ resolve_patterns() {
 
         if [ "$match_count" -gt 1 ]; then
             echo "Multiple workers match '$pattern':" >&2
-            # shellcheck disable=SC2001  # Can't use param expansion for multiline prefix
             sed 's/^/  /' <<< "$matches" >&2
             echo "Please be more specific." >&2
             return 1
@@ -229,12 +139,8 @@ do_clean() {
         clean_worker "$worker"
     done
 
-    # Prune stale worktree references
     git worktree prune 2>/dev/null
-
-    log "✓ Cleaned ${#workers[@]} worker(s)"
-
-    # Show current status
+    log "Cleaned ${#workers[@]} worker(s)"
     echo ""
     log "Current status:"
     git worktree list
@@ -242,8 +148,7 @@ do_clean() {
 
 # Status character to human-readable name
 status_name() {
-    local status="$1"
-    case "$status" in
+    case "$1" in
         " ") echo "pending" ;;
         "=") echo "in-progress" ;;
         "P") echo "pending approval" ;;
@@ -255,7 +160,6 @@ status_name() {
 }
 
 # Reset kanban tasks to pending
-# Args: kanban_file tasks...
 do_kanban_reset() {
     local kanban_file="$1"
     shift
@@ -266,19 +170,18 @@ do_kanban_reset() {
         update_kanban_status "$kanban_file" "$task_id" " "
     done
 
-    log "✓ Reset ${#tasks[@]} task(s) to pending"
+    log "Reset ${#tasks[@]} task(s) to pending"
 }
 
 # Handle 'wiggum clean kanban all'
 do_kanban_all() {
     local kanban_file="$RALPH_DIR/kanban.md"
 
-    if [ ! -f "$kanban_file" ]; then
+    [ -f "$kanban_file" ] || {
         echo "ERROR: No kanban file found at $kanban_file"
         exit $EXIT_WORKER_NO_KANBAN
-    fi
+    }
 
-    # Get tasks in each resettable state
     local wip_tasks failed_tasks pending_approval_tasks
     wip_tasks=$(get_in_progress_tasks "$kanban_file")
     failed_tasks=$(get_failed_tasks "$kanban_file")
@@ -289,7 +192,6 @@ do_kanban_all() {
     [ -n "$failed_tasks" ] && failed_count=$(echo "$failed_tasks" | wc -l | tr -d '[:space:]')
     [ -n "$pending_approval_tasks" ] && pa_count=$(echo "$pending_approval_tasks" | wc -l | tr -d '[:space:]')
 
-    # Show summary
     echo "Resettable tasks in kanban:"
     echo "  [=] In-progress:      $wip_count"
     echo "  [P] Pending approval: $pa_count"
@@ -301,55 +203,28 @@ do_kanban_all() {
         exit $EXIT_OK
     fi
 
-    # Build list of tasks to reset
     local tasks_to_reset=()
 
-    # Always include in-progress tasks
-    if [ -n "$wip_tasks" ]; then
-        while IFS= read -r task; do
-            tasks_to_reset+=("$task")
-        done <<< "$wip_tasks"
-    fi
+    [ -n "$wip_tasks" ] && while IFS= read -r task; do
+        tasks_to_reset+=("$task")
+    done <<< "$wip_tasks"
 
-    # Ask about P/* tasks if any exist
     if [ "$pa_count" -gt 0 ] || [ "$failed_count" -gt 0 ]; then
-        if [ "$SKIP_CONFIRM" = true ]; then
-            # With -y, reset all resettable tasks
-            if [ -n "$failed_tasks" ]; then
-                while IFS= read -r task; do
-                    tasks_to_reset+=("$task")
-                done <<< "$failed_tasks"
-            fi
-            if [ -n "$pending_approval_tasks" ]; then
-                while IFS= read -r task; do
-                    tasks_to_reset+=("$task")
-                done <<< "$pending_approval_tasks"
-            fi
-        else
-            read -r -p "Also reset [P] pending approval and [*] failed tasks? [y/N] " response
-            case "$response" in
-                [yY][eE][sS]|[yY])
-                    if [ -n "$failed_tasks" ]; then
-                        while IFS= read -r task; do
-                            tasks_to_reset+=("$task")
-                        done <<< "$failed_tasks"
-                    fi
-                    if [ -n "$pending_approval_tasks" ]; then
-                        while IFS= read -r task; do
-                            tasks_to_reset+=("$task")
-                        done <<< "$pending_approval_tasks"
-                    fi
-                    ;;
-            esac
+        if [ "$SKIP_CONFIRM" = true ] || confirm "Also reset [P] pending approval and [*] failed tasks?"; then
+            [ -n "$failed_tasks" ] && while IFS= read -r task; do
+                tasks_to_reset+=("$task")
+            done <<< "$failed_tasks"
+            [ -n "$pending_approval_tasks" ] && while IFS= read -r task; do
+                tasks_to_reset+=("$task")
+            done <<< "$pending_approval_tasks"
         fi
     fi
 
-    if [ ${#tasks_to_reset[@]} -eq 0 ]; then
+    [ ${#tasks_to_reset[@]} -eq 0 ] && {
         echo "No tasks selected for reset."
         exit $EXIT_OK
-    fi
+    }
 
-    # Show what will be reset
     echo "The following tasks will be reset to pending [ ]:"
     for task in "${tasks_to_reset[@]}"; do
         local status
@@ -358,10 +233,10 @@ do_kanban_all() {
     done
     echo ""
 
-    if ! confirm "Proceed with reset?"; then
+    confirm "Proceed with reset?" || {
         echo "Aborted."
         exit $EXIT_OK
-    fi
+    }
 
     do_kanban_reset "$kanban_file" "${tasks_to_reset[@]}"
 }
@@ -371,40 +246,29 @@ do_kanban_task() {
     local task_pattern="$1"
     local kanban_file="$RALPH_DIR/kanban.md"
 
-    if [ ! -f "$kanban_file" ]; then
+    [ -f "$kanban_file" ] || {
         echo "ERROR: No kanban file found at $kanban_file"
         exit $EXIT_WORKER_NO_KANBAN
-    fi
+    }
 
-    # Resolve task ID
     local task_id
-    if ! task_id=$(resolve_task_id "$kanban_file" "$task_pattern"); then
-        exit $EXIT_WORKER_TASK_NOT_FOUND
-    fi
+    task_id=$(resolve_task_id "$kanban_file" "$task_pattern") || exit $EXIT_WORKER_TASK_NOT_FOUND
 
-    # Get current status
     local status
     status=$(get_task_status "$kanban_file" "$task_id")
 
-    # Check if resettable
     case "$status" in
         "="|"P"|"*")
-            # Resettable - proceed
-            local status_desc
-            status_desc=$(status_name "$status")
-            echo "Task $task_id is currently $status_desc [$status]"
+            echo "Task $task_id is currently $(status_name "$status") [$status]"
             echo ""
-            if ! confirm "Reset to pending [ ]?"; then
+            confirm "Reset to pending [ ]?" || {
                 echo "Aborted."
                 exit $EXIT_OK
-            fi
+            }
             do_kanban_reset "$kanban_file" "$task_id"
             ;;
         *)
-            # Not resettable
-            local status_desc
-            status_desc=$(status_name "$status")
-            echo "Task $task_id is $status_desc [$status] - not a resettable state."
+            echo "Task $task_id is $(status_name "$status") [$status] - not a resettable state."
             echo "Resettable states: [=] in-progress, [P] pending approval, [*] failed"
             exit $EXIT_USAGE
             ;;
@@ -426,64 +290,53 @@ while [[ $# -gt 0 ]]; do
             ;;
         -*)
             echo "Unknown option: $1"
-            echo ""
             show_help
             exit $EXIT_USAGE
             ;;
         kanban)
             TARGET="kanban"
             shift
-            if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; then
+            [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]] && {
                 KANBAN_TARGET="$1"
                 shift
-            fi
+            }
             ;;
         *)
-            if [ -z "$TARGET" ]; then
-                TARGET="$1"
-            else
+            [ -z "$TARGET" ] && TARGET="$1" || {
                 echo "Unexpected argument: $1"
                 exit $EXIT_USAGE
-            fi
+            }
             shift
             ;;
     esac
 done
 
-# Require a target
-if [ -z "$TARGET" ]; then
+[ -z "$TARGET" ] && {
     echo "No target specified. Use 'wiggum clean <pattern>' or 'wiggum clean all'."
-    echo ""
     show_help
     exit $EXIT_OK
-fi
+}
 
-# Check .ralph directory exists
-if [ ! -d "$RALPH_DIR" ]; then
+[ -d "$RALPH_DIR" ] || {
     echo "ERROR: .ralph/ directory not found"
     exit $EXIT_CLEAN_NO_RALPH_DIR
-fi
+}
 
 # Handle kanban subcommand
 if [ "$TARGET" = "kanban" ]; then
-    if [ -z "$KANBAN_TARGET" ]; then
+    [ -z "$KANBAN_TARGET" ] && {
         echo "No kanban target specified. Use 'wiggum clean kanban all' or 'wiggum clean kanban <task-id>'."
-        echo ""
         show_help
         exit $EXIT_USAGE
-    fi
+    }
 
-    if [ "$KANBAN_TARGET" = "all" ]; then
-        do_kanban_all
-    else
-        do_kanban_task "$KANBAN_TARGET"
-    fi
+    [ "$KANBAN_TARGET" = "all" ] && do_kanban_all || do_kanban_task "$KANBAN_TARGET"
     exit $EXIT_OK
 fi
 
 # Determine workers to clean
 if [ "$TARGET" = "all" ]; then
-    workers_to_clean=$(find_all_workers)
+    workers_to_clean=$(list_all_workers "$RALPH_DIR")
 elif [ "$TARGET" = "done" ]; then
     echo "Checking PR status for all workers (this may take a moment)..."
     workers_to_clean=$(find_workers_with_merged_prs)
@@ -491,47 +344,35 @@ else
     workers_to_clean=$(resolve_patterns "$TARGET") || exit $EXIT_CLEAN_PATTERN_NOT_FOUND
 fi
 
-if [ -z "$workers_to_clean" ]; then
+[ -z "$workers_to_clean" ] && {
     echo "No workers to clean."
     exit $EXIT_OK
-fi
+}
 
-# Convert to array
 mapfile -t workers_array <<< "$workers_to_clean"
 
 # Check for running workers
 running_workers=()
 for worker in "${workers_array[@]}"; do
-    if check_worker_running "$worker"; then
-        running_workers+=("$worker")
-    fi
+    is_worker_running "$RALPH_DIR/workers/$worker" && running_workers+=("$worker")
 done
 
-if [ ${#running_workers[@]} -gt 0 ]; then
+[ ${#running_workers[@]} -gt 0 ] && {
     echo "ERROR: Cannot clean running workers. Stop them first with 'wiggum stop <id>'."
     echo ""
     echo "Running workers:"
-    for worker in "${running_workers[@]}"; do
-        echo "  $worker"
-    done
+    printf '  %s\n' "${running_workers[@]}"
     exit $EXIT_CLEAN_WORKERS_RUNNING
-fi
+}
 
-# Show what will be cleaned and ask for confirmation
-if [ "$TARGET" = "done" ]; then
-    echo "The following workers have merged PRs and will be removed:"
-else
-    echo "The following worker directories will be removed:"
-fi
-for worker in "${workers_array[@]}"; do
-    echo "  $worker"
-done
+# Confirm and clean
+echo "The following worker directories will be removed:"
+printf '  %s\n' "${workers_array[@]}"
 echo ""
 
-if ! confirm "Proceed with cleanup?"; then
+confirm "Proceed with cleanup?" || {
     echo "Aborted."
     exit $EXIT_OK
-fi
+}
 
-# Do the cleanup
 do_clean "${workers_array[@]}"

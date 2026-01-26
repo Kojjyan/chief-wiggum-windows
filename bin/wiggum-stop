@@ -44,131 +44,6 @@ Examples:
 EOF
 }
 
-# Stop a single worker by directory
-stop_single_worker() {
-    local worker_dir="$1"
-    local worker_id
-    worker_id=$(basename "$worker_dir")
-
-    local pid
-    pid=$(get_worker_pid "$worker_dir") || return 1
-
-    echo "Stopping worker $worker_id (PID: $pid) and children..."
-    kill_process_tree "$pid" TERM
-
-    # Wait for graceful shutdown (up to 30 seconds)
-    local timeout=30
-    local elapsed=0
-    while kill -0 "$pid" 2>/dev/null && [ $elapsed -lt $timeout ]; do
-        sleep 1
-        ((elapsed++)) || true
-        echo -ne "\rWaiting for worker to stop... ${elapsed}s"
-    done
-    echo ""
-
-    if kill -0 "$pid" 2>/dev/null; then
-        echo "Warning: Worker did not stop gracefully within ${timeout}s"
-        echo "Use 'wiggum kill $worker_id' to force terminate"
-        return 1
-    else
-        echo "Worker $worker_id stopped successfully"
-        rm -f "$worker_dir/agent.pid"
-    fi
-}
-
-# Stop all workers
-stop_all_workers() {
-    # Check for active workers by scanning worker directories
-    if [ ! -d "$RALPH_DIR/workers" ]; then
-        echo "No wiggum workers found"
-        exit $EXIT_OK
-    fi
-
-    # Collect active workers using shared library
-    declare -A worker_pids_map=()  # pid -> worker_id (initialize empty)
-    scan_output=$(scan_active_workers "$RALPH_DIR") || {
-        scan_rc=$?
-        if [ "$scan_rc" -eq 2 ]; then
-            echo "Warning: Worker scan encountered lock contention, results may be incomplete" >&2
-        fi
-    }
-    while read -r pid _task_id worker_id; do
-        [ -n "$pid" ] || continue
-        worker_pids_map[$pid]="$worker_id"
-    done <<< "$scan_output"
-
-    # Check if any workers are running
-    if [ "${#worker_pids_map[@]}" -eq 0 ]; then
-        echo "No wiggum workers running"
-        exit $EXIT_OK
-    fi
-
-    echo "Stopping all workers..."
-
-    # Get all running PIDs
-    declare -a all_pids=()
-    for pid in "${!worker_pids_map[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            all_pids+=("$pid")
-        fi
-    done
-
-    # Stop the workers
-    local timeout=10
-
-    # Send TERM signal to all workers
-    for pid in "${all_pids[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            echo "Stopping ${worker_pids_map[$pid]} (PID $pid) and children"
-            kill_process_tree "$pid" TERM
-        fi
-    done
-
-    # Wait for workers to stop
-    echo "Waiting for workers to terminate..."
-    local elapsed=0
-    local all_stopped=false
-
-    while [ $elapsed -lt $timeout ]; do
-        all_stopped=true
-        for pid in "${all_pids[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                all_stopped=false
-                break
-            fi
-        done
-
-        if [ "$all_stopped" = true ]; then
-            break
-        fi
-
-        sleep 1
-        ((elapsed++)) || true
-    done
-
-    # Force kill any remaining workers
-    if [ "$all_stopped" = false ]; then
-        echo "Warning: Some workers did not stop gracefully, force killing..."
-        for pid in "${all_pids[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                echo "Force killing ${worker_pids_map[$pid]} (PID $pid) and children"
-                kill_process_tree "$pid" KILL
-            fi
-        done
-        sleep 1
-    fi
-
-    # Count successfully stopped workers
-    local stopped_count=0
-    for pid in "${all_pids[@]}"; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            ((stopped_count++)) || true
-        fi
-    done
-
-    echo "Stopped $stopped_count workers"
-}
-
 # Stop the orchestrator
 stop_orchestrator() {
     local orchestrator_lock="$RALPH_DIR/.orchestrator.pid"
@@ -181,35 +56,30 @@ stop_orchestrator() {
     local orchestrator_pid
     orchestrator_pid=$(cat "$orchestrator_lock" 2>/dev/null)
 
-    # Validate PID is a number
     if ! [[ "$orchestrator_pid" =~ ^[0-9]+$ ]]; then
         echo "Invalid orchestrator PID, cleaning lock file"
         rm -f "$orchestrator_lock"
         exit $EXIT_OK
     fi
 
-    # Check if process is running and is wiggum-run
     if kill -0 "$orchestrator_pid" 2>/dev/null; then
         if ps -p "$orchestrator_pid" -o args= 2>/dev/null | grep -q "wiggum-run"; then
             echo "Stopping orchestrator (PID: $orchestrator_pid)..."
             kill -TERM "$orchestrator_pid"
             echo "Orchestrator stopped"
-            exit $EXIT_OK
         else
             echo "Process $orchestrator_pid is not wiggum-run (PID reused?)"
             rm -f "$orchestrator_lock"
-            exit $EXIT_OK
         fi
     else
         echo "Orchestrator process not running, cleaning stale lock"
         rm -f "$orchestrator_lock"
-        exit $EXIT_OK
     fi
+    exit $EXIT_OK
 }
 
 # Main
 main() {
-    # Handle help
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         show_help
         exit $EXIT_OK
@@ -217,23 +87,41 @@ main() {
 
     # No arguments = stop all workers
     if [ $# -eq 0 ]; then
-        stop_all_workers
+        if [ ! -d "$RALPH_DIR/workers" ]; then
+            echo "No wiggum workers found"
+            exit $EXIT_OK
+        fi
+
+        echo "Stopping all workers..."
+        terminate_all_workers "$RALPH_DIR" TERM 10
+
+        if [ "$TERMINATE_ALL_FAILED" -gt 0 ]; then
+            echo "Warning: $TERMINATE_ALL_FAILED workers did not stop gracefully, force killing..."
+            force_kill_remaining_workers "$RALPH_DIR" > /dev/null
+        fi
+
+        echo "Stopped $TERMINATE_ALL_COUNT workers"
         exit $EXIT_OK
     fi
 
     local target="$1"
-    shift
 
-    # Check for special target: orchestrator
+    # Special target: orchestrator
     if [ "$target" = "orchestrator" ]; then
-        stop_orchestrator  # This function always exits
+        stop_orchestrator
     fi
 
-    # Otherwise, treat as worker ID pattern
+    # Resolve worker ID pattern
     local worker_dir
     worker_dir=$(resolve_worker_id "$RALPH_DIR" "$target") || exit $EXIT_ERROR
 
-    stop_single_worker "$worker_dir"
+    if terminate_single_worker "$worker_dir" TERM 30; then
+        echo "Worker $TERMINATE_WORKER_ID stopped successfully"
+    else
+        echo "Warning: Worker did not stop gracefully within 30s"
+        echo "Use 'wiggum kill $TERMINATE_WORKER_ID' to force terminate"
+        exit 1
+    fi
 }
 
 main "$@"

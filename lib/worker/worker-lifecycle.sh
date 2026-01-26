@@ -6,6 +6,8 @@
 #
 # Note: All agents use agent.pid for their PID file. Process validation uses
 # the "bash" pattern since agents run via run_agent() in subshells.
+#
+# shellcheck disable=SC2034  # Variables are exported for caller use (TERMINATE_*)
 set -euo pipefail
 
 source "$WIGGUM_HOME/lib/core/platform.sh"
@@ -349,4 +351,204 @@ wait_for_worker_pid() {
     done
 
     [ -f "$worker_dir/agent.pid" ]
+}
+
+# List all worker directory names in ralph_dir
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#
+# Returns: worker directory names (one per line)
+list_all_workers() {
+    local ralph_dir="$1"
+
+    [ -d "$ralph_dir/workers" ] || return 0
+
+    for dir in "$ralph_dir/workers"/worker-*; do
+        [ -d "$dir" ] && basename "$dir"
+    done
+}
+
+# Find workers matching a pattern
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#   pattern   - Pattern to match
+#
+# Returns: matching worker names (one per line)
+find_workers_by_pattern() {
+    local ralph_dir="$1"
+    local pattern="$2"
+
+    [ -d "$ralph_dir/workers" ] || return 0
+
+    for dir in "$ralph_dir/workers"/worker-*; do
+        [ -d "$dir" ] || continue
+        local dirname
+        dirname=$(basename "$dir")
+        if [[ "$dirname" =~ $pattern ]]; then
+            echo "$dirname"
+        fi
+    done
+}
+
+# Terminate a single worker with optional grace period
+#
+# Args:
+#   worker_dir - Worker directory path
+#   signal     - Signal to send (TERM for graceful, KILL for force)
+#   timeout    - Seconds to wait for graceful shutdown (only for TERM)
+#
+# Returns: 0 on success, 1 on failure
+# Sets: TERMINATE_WORKER_PID, TERMINATE_WORKER_ID for caller use
+terminate_single_worker() {
+    local worker_dir="$1"
+    local signal="${2:-TERM}"
+    local timeout="${3:-30}"
+
+    TERMINATE_WORKER_ID=$(basename "$worker_dir")
+    TERMINATE_WORKER_PID=""
+
+    local pid
+    pid=$(get_worker_pid "$worker_dir") || return 1
+    TERMINATE_WORKER_PID="$pid"
+
+    echo "Stopping worker $TERMINATE_WORKER_ID (PID: $pid)..."
+    kill_process_tree "$pid" "$signal"
+
+    if [ "$signal" = "KILL" ]; then
+        sleep 1
+    else
+        # Wait for graceful shutdown
+        local elapsed=0
+        while kill -0 "$pid" 2>/dev/null && [ $elapsed -lt "$timeout" ]; do
+            sleep 1
+            ((elapsed++)) || true
+        done
+    fi
+
+    if kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    rm -f "$worker_dir/agent.pid"
+    return 0
+}
+
+# Terminate all workers with a given signal
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#   signal    - Signal to send (TERM for graceful, KILL for force)
+#   timeout   - Seconds to wait for graceful shutdown (only for TERM)
+#
+# Returns: 0 on success
+# Sets: TERMINATE_ALL_COUNT (number of workers terminated)
+#       TERMINATE_ALL_FAILED (number that failed to terminate)
+terminate_all_workers() {
+    local ralph_dir="$1"
+    local signal="${2:-TERM}"
+    local timeout="${3:-10}"
+
+    TERMINATE_ALL_COUNT=0
+    TERMINATE_ALL_FAILED=0
+
+    if [ ! -d "$ralph_dir/workers" ]; then
+        return 0
+    fi
+
+    # Collect active workers
+    local -A worker_pids_map=()
+    local scan_output
+    scan_output=$(scan_active_workers "$ralph_dir") || {
+        local scan_rc=$?
+        if [ "$scan_rc" -eq 2 ]; then
+            echo "Warning: Worker scan encountered lock contention" >&2
+        fi
+    }
+
+    while read -r pid _task_id worker_id; do
+        [ -n "$pid" ] || continue
+        worker_pids_map[$pid]="$worker_id"
+    done <<< "$scan_output"
+
+    if [ "${#worker_pids_map[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    # Get running PIDs
+    local -a all_pids=()
+    for pid in "${!worker_pids_map[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            all_pids+=("$pid")
+        fi
+    done
+
+    # Send signal to all workers
+    for pid in "${all_pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping ${worker_pids_map[$pid]} (PID $pid)"
+            kill_process_tree "$pid" "$signal"
+        fi
+    done
+
+    # Wait for workers to stop
+    if [ "$signal" != "KILL" ]; then
+        local elapsed=0
+        while [ $elapsed -lt "$timeout" ]; do
+            local all_stopped=true
+            for pid in "${all_pids[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    all_stopped=false
+                    break
+                fi
+            done
+            [ "$all_stopped" = true ] && break
+            sleep 1
+            ((elapsed++)) || true
+        done
+    else
+        sleep 1
+    fi
+
+    # Count results and clean up PID files
+    for pid in "${all_pids[@]}"; do
+        local worker_id="${worker_pids_map[$pid]}"
+        local worker_dir="$ralph_dir/workers/$worker_id"
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+            ((++TERMINATE_ALL_COUNT)) || true
+            [ -f "$worker_dir/agent.pid" ] && rm -f "$worker_dir/agent.pid"
+        else
+            ((++TERMINATE_ALL_FAILED)) || true
+        fi
+    done
+
+    return 0
+}
+
+# Force kill remaining workers after graceful termination failed
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#
+# Returns: number of workers force-killed
+force_kill_remaining_workers() {
+    local ralph_dir="$1"
+    local killed=0
+
+    local scan_output
+    scan_output=$(scan_active_workers "$ralph_dir" 2>/dev/null) || true
+
+    while read -r pid _task_id worker_id; do
+        [ -n "$pid" ] || continue
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Force killing $worker_id (PID $pid)"
+            kill_process_tree "$pid" KILL
+            ((++killed)) || true
+        fi
+    done <<< "$scan_output"
+
+    sleep 1
+    echo "$killed"
 }
