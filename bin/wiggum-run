@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Chief Wiggum - Worker orchestration runner
+#
+# Orchestrates workers for executing software engineering tasks. Uses the
+# scheduler module for unified worker tracking, priority workers, and status display.
 set -euo pipefail
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
@@ -9,9 +12,6 @@ RALPH_DIR="${RALPH_DIR:-$PROJECT_DIR/.ralph}"
 # Source shared libraries
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
-source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
-source "$WIGGUM_HOME/lib/tasks/plan-parser.sh"
-source "$WIGGUM_HOME/lib/tasks/conflict-detection.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/utils/audit-logger.sh"
@@ -20,6 +20,12 @@ source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
 source "$WIGGUM_HOME/lib/git/worktree-helpers.sh"
+source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+source "$WIGGUM_HOME/lib/tasks/plan-parser.sh"
+source "$WIGGUM_HOME/lib/tasks/conflict-detection.sh"
+
+# Source scheduler module (unified worker management)
+source "$WIGGUM_HOME/lib/scheduler/scheduler.sh"
 
 # Default configuration
 MAX_WORKERS=4
@@ -32,6 +38,7 @@ FORCE_LOCK=false       # --force flag state for lock override
 MAX_SKIP_RETRIES=3     # Kanban update failures before permanent skip
 FIX_WORKER_TIMEOUT=1800  # Fix worker max runtime (seconds)
 FIX_WORKER_LIMIT=2     # Max concurrent fix workers
+RESOLVE_WORKER_TIMEOUT=1800  # Resolve worker max runtime (seconds)
 AGING_FACTOR=7         # Scheduling events per priority level promotion
 SIBLING_WIP_PENALTY=20000  # Fixed-point penalty when sibling is WIP (20000 = 2.0)
 PLAN_BONUS=15000           # Fixed-point bonus for tasks with plans (15000 = 1.5)
@@ -99,7 +106,7 @@ spawn_worker() {
             local stale_pid
             stale_pid=$(cat "$existing_dir/agent.pid" 2>/dev/null || true)
             if [ -n "$stale_pid" ] && kill -0 "$stale_pid" 2>/dev/null; then
-                # TRAP: Process is still running, refuse to spawn duplicate
+                # Process is still running, refuse to spawn duplicate
                 log_error "Worker for $task_id is still running (PID: $stale_pid)"
                 log_error "Use 'wiggum stop $task_id' or 'wiggum kill $task_id' first"
                 return 1
@@ -229,389 +236,53 @@ pre_worker_checks() {
     return 0
 }
 
-# Check for workers needing fixes and spawn fix workers
-check_and_spawn_fixes() {
-    local tasks_needing_fix="$RALPH_DIR/.tasks-needing-fix.txt"
-
-    if [ ! -s "$tasks_needing_fix" ]; then
-        return 0
-    fi
-
-    # Check fix worker capacity
-    if [ ${#active_fix_workers[@]} -ge "$FIX_WORKER_LIMIT" ]; then
-        log "Fix worker limit reached ($FIX_WORKER_LIMIT) - deferring new fixes"
-        return 0
-    fi
-
-    log "Checking for tasks needing PR comment fixes..."
-
-    while read -r task_id; do
-        [ -z "$task_id" ] && continue
-
-        # Re-check capacity inside loop
-        if [ ${#active_fix_workers[@]} -ge "$FIX_WORKER_LIMIT" ]; then
-            break
-        fi
-
-        local worker_dir
-        worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$task_id" 2>/dev/null)
-
-        if [ -z "$worker_dir" ] || [ ! -d "$worker_dir" ]; then
-            continue
-        fi
-
-        # Check for needs_fix state (use git-state.json)
-        if git_state_is "$worker_dir" "needs_fix"; then
-            # Guard: skip if agent is already running for this worker
-            if [ -f "$worker_dir/agent.pid" ]; then
-                local existing_pid
-                existing_pid=$(cat "$worker_dir/agent.pid")
-                if kill -0 "$existing_pid" 2>/dev/null; then
-                    log "Fix agent already running for $task_id (PID: $existing_pid) - skipping"
-                    continue
-                fi
-            fi
-
-            # Transition state to fixing
-            git_state_set "$worker_dir" "fixing" "wiggum-run.check_and_spawn_fixes" "Fix worker spawned"
-
-            log "Spawning fix worker for $task_id..."
-
-            # Call wiggum-review task fix synchronously (it returns immediately after async launch)
-            (
-                cd "$PROJECT_DIR" || exit 1
-                "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" fix 2>&1 | \
-                    sed "s/^/  [fix-$task_id] /"
-            )
-
-            # Read the agent PID from the worker directory
-            if [ -f "$worker_dir/agent.pid" ]; then
-                local agent_pid
-                agent_pid=$(cat "$worker_dir/agent.pid")
-                active_fix_workers[$agent_pid]="$task_id|$(date +%s)"
-                log "Fix worker spawned for $task_id (PID: $agent_pid)"
-            else
-                log "Warning: Fix agent for $task_id did not produce agent.pid"
-            fi
-        fi
-    done < "$tasks_needing_fix"
-
-    # Clear the tasks needing fix file after processing
-    : > "$tasks_needing_fix"
+# Handle main worker completion (callback for pool_cleanup_finished)
+_handle_main_worker_completion() {
+    local worker_dir="$1"
+    local task_id="$2"
+    activity_log "worker.completed" "" "$task_id" "worker_dir=$worker_dir"
+    log "Worker for $task_id finished"
+    scheduler_mark_event
 }
 
-# Create workspaces for orphaned PRs (PRs with comments but no local workspace)
-# Then queue them for fix processing
-create_orphan_pr_workspaces() {
-    local orphan_file="$RALPH_DIR/.prs-needing-workspace.jsonl"
-
-    if [ ! -s "$orphan_file" ]; then
-        return 0
-    fi
-
-    log "Processing orphaned PRs needing workspace creation..."
-
-    local processed=()
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-
-        local task_id pr_number branch
-        task_id=$(echo "$line" | jq -r '.task_id')
-        pr_number=$(echo "$line" | jq -r '.pr_number')
-        branch=$(echo "$line" | jq -r '.branch')
-
-        if [ -z "$task_id" ] || [ "$task_id" = "null" ]; then
-            continue
-        fi
-
-        # Check if workspace already exists now (might have been created elsewhere)
-        local existing_worker
-        existing_worker=$(find_worker_by_task_id "$RALPH_DIR" "$task_id" 2>/dev/null)
-        if [ -n "$existing_worker" ] && [ -d "$existing_worker/workspace" ]; then
-            log "  $task_id: workspace already exists, skipping"
-            processed+=("$task_id")
-            continue
-        fi
-
-        # Create worker directory
-        local timestamp worker_id worker_dir
-        timestamp=$(date +%s)
-        worker_id="worker-${task_id}-fix-${timestamp}"
-        worker_dir="$RALPH_DIR/workers/$worker_id"
-
-        mkdir -p "$worker_dir"
-        log "  $task_id: Creating workspace from branch $branch"
-
-        # Create worktree from PR branch
-        if ! setup_worktree_from_branch "$PROJECT_DIR" "$worker_dir" "$branch"; then
-            log_error "  $task_id: Failed to create workspace from branch $branch"
-            rm -rf "$worker_dir"
-            continue
-        fi
-
-        # Record branch and PR info
-        echo "$branch" > "$worker_dir/branch.txt"
-        git_state_set_pr "$worker_dir" "$pr_number"
-
-        # Sync comments from review directory if they exist
-        local review_comments="$RALPH_DIR/review/${task_id}-comments.json"
-        if [ -f "$review_comments" ]; then
-            cp "$review_comments" "$worker_dir/${task_id}-comments.json"
-        fi
-
-        # Also fetch fresh comments
-        "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" sync 2>/dev/null || true
-
-        # Queue for fix processing
-        echo "$task_id" >> "$RALPH_DIR/.tasks-needing-fix.txt"
-        git_state_set "$worker_dir" "needs_fix" "wiggum-run.create_orphan_pr_workspaces" "Workspace created from PR branch"
-
-        log "  $task_id: Workspace created, queued for fix"
-        processed+=("$task_id")
-    done < "$orphan_file"
-
-    # Remove processed entries from orphan file
-    if [ ${#processed[@]} -gt 0 ]; then
-        local temp_file
-        temp_file=$(mktemp)
-        while IFS= read -r line; do
-            local task_id
-            task_id=$(echo "$line" | jq -r '.task_id')
-            local skip=false
-            for p in "${processed[@]}"; do
-                if [ "$task_id" = "$p" ]; then
-                    skip=true
-                    break
-                fi
-            done
-            if [ "$skip" = false ]; then
-                echo "$line" >> "$temp_file"
-            fi
-        done < "$orphan_file"
-        mv "$temp_file" "$orphan_file"
-    fi
-}
-
-# Handle fix worker completion - verify push and transition state for merge
-# Args: worker_dir, task_id
-handle_fix_completion() {
+# Handle fix worker completion (callback for pool_cleanup_finished)
+_handle_fix_worker_completion() {
     local worker_dir="$1"
     local task_id="$2"
 
-    # Read the agent result to check push status
-    local result_file="$worker_dir/agent-result.json"
-    if [ ! -f "$result_file" ]; then
-        log_warn "No agent-result.json for $task_id - cannot verify fix completion"
-        return 1
-    fi
-
-    local gate_result push_succeeded
-    gate_result=$(jq -r '.status // "FAIL"' "$result_file" 2>/dev/null)
-    push_succeeded=$(jq -r '.outputs.push_succeeded // false' "$result_file" 2>/dev/null)
-
-    if [ "$gate_result" = "PASS" ] && [ "$push_succeeded" = "true" ]; then
-        git_state_set "$worker_dir" "fix_completed" "wiggum-run.handle_fix_completion" "Push verified"
-        git_state_set "$worker_dir" "needs_merge" "wiggum-run.handle_fix_completion" "Ready for merge attempt"
-        log "Fix completed for $task_id - ready for merge"
-        return 0
-    elif [ "$gate_result" = "PASS" ]; then
-        # Fix succeeded but push didn't - still mark as completed
-        git_state_set "$worker_dir" "fix_completed" "wiggum-run.handle_fix_completion" "Fix passed but push failed"
-        log_warn "Fix completed for $task_id but push failed"
-        return 0
-    else
-        git_state_set "$worker_dir" "failed" "wiggum-run.handle_fix_completion" "Fix agent returned: $gate_result"
-        log_error "Fix failed for $task_id (result: $gate_result)"
-        return 1
+    if handle_fix_worker_completion "$worker_dir" "$task_id"; then
+        # Fix succeeded - attempt merge if needed
+        if git_state_is "$worker_dir" "needs_merge"; then
+            attempt_pr_merge "$worker_dir" "$task_id" "$RALPH_DIR" || true
+        fi
     fi
 }
 
-# Attempt to merge a PR for a worker
-# Args: worker_dir, task_id
-# Returns: 0 on success, 1 on conflict (needs resolver), 2 on other failure
-attempt_pr_merge() {
+# Handle fix worker timeout (callback for pool_cleanup_finished)
+_handle_fix_worker_timeout() {
+    local worker_dir="$1"
+    local task_id="$2"
+    handle_fix_worker_timeout "$worker_dir" "$task_id" "$FIX_WORKER_TIMEOUT"
+}
+
+# Handle resolve worker completion (callback for pool_cleanup_finished)
+_handle_resolve_worker_completion() {
     local worker_dir="$1"
     local task_id="$2"
 
-    local pr_number
-    pr_number=$(git_state_get_pr "$worker_dir")
-
-    if [ "$pr_number" = "null" ] || [ -z "$pr_number" ]; then
-        # Try to find PR number from branch
-        local branch_file="$worker_dir/branch.txt"
-        if [ -f "$branch_file" ]; then
-            local branch
-            branch=$(cat "$branch_file")
-            pr_number=$(gh pr list --head "$branch" --state open --json number -q '.[0].number' 2>/dev/null || true)
-            if [ -n "$pr_number" ]; then
-                git_state_set_pr "$worker_dir" "$pr_number"
-            fi
+    if handle_resolve_worker_completion "$worker_dir" "$task_id"; then
+        # Resolution succeeded - attempt merge if needed
+        if git_state_is "$worker_dir" "needs_merge"; then
+            attempt_pr_merge "$worker_dir" "$task_id" "$RALPH_DIR" || true
         fi
     fi
-
-    if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
-        log_warn "No PR number found for $task_id - cannot attempt merge"
-        return 2
-    fi
-
-    git_state_set "$worker_dir" "merging" "wiggum-run.attempt_pr_merge" "Attempting merge of PR #$pr_number"
-    git_state_inc_merge_attempts "$worker_dir"
-
-    local merge_attempts
-    merge_attempts=$(git_state_get_merge_attempts "$worker_dir")
-    log "Attempting merge for $task_id PR #$pr_number (attempt $merge_attempts/$MAX_MERGE_ATTEMPTS)"
-
-    local merge_output merge_exit=0
-    merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1) || merge_exit=$?
-
-    if [ $merge_exit -eq 0 ]; then
-        git_state_set "$worker_dir" "merged" "wiggum-run.attempt_pr_merge" "PR #$pr_number merged successfully"
-        log "PR #$pr_number merged successfully for $task_id"
-
-        # Update kanban status to complete
-        if [ -f "$RALPH_DIR/kanban.md" ]; then
-            update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" "x"
-        fi
-        return 0
-    fi
-
-    # Check if failure is due to merge conflict
-    if echo "$merge_output" | grep -qiE "(conflict|cannot be merged|out of date)"; then
-        git_state_set_error "$worker_dir" "Merge conflict: $merge_output"
-        git_state_set "$worker_dir" "merge_conflict" "wiggum-run.attempt_pr_merge" "Merge failed due to conflict"
-
-        if [ "$merge_attempts" -lt "$MAX_MERGE_ATTEMPTS" ]; then
-            git_state_set "$worker_dir" "needs_resolve" "wiggum-run.attempt_pr_merge" "Conflict resolver required"
-            log "Merge conflict for $task_id - will spawn resolver"
-            return 1
-        else
-            git_state_set "$worker_dir" "failed" "wiggum-run.attempt_pr_merge" "Max merge attempts ($MAX_MERGE_ATTEMPTS) exceeded"
-            log_error "Max merge attempts exceeded for $task_id"
-            return 2
-        fi
-    fi
-
-    # Other merge failure
-    git_state_set_error "$worker_dir" "Merge failed: $merge_output"
-    git_state_set "$worker_dir" "failed" "wiggum-run.attempt_pr_merge" "Merge failed: ${merge_output:0:100}"
-    log_error "Merge failed for $task_id: $merge_output"
-    return 2
 }
 
-# Check for workers needing conflict resolution and spawn resolver workers
-check_and_spawn_resolvers() {
-    # Use same limit as fix workers (shared pool for priority workers)
-    local total_priority_workers=$(( ${#active_fix_workers[@]} + ${#active_resolve_workers[@]} ))
-    if [ "$total_priority_workers" -ge "$FIX_WORKER_LIMIT" ]; then
-        return 0
-    fi
-
-    [ -d "$RALPH_DIR/workers" ] || return 0
-
-    for worker_dir in "$RALPH_DIR/workers"/worker-*; do
-        [ -d "$worker_dir" ] || continue
-
-        # Re-check capacity
-        total_priority_workers=$(( ${#active_fix_workers[@]} + ${#active_resolve_workers[@]} ))
-        if [ "$total_priority_workers" -ge "$FIX_WORKER_LIMIT" ]; then
-            break
-        fi
-
-        # Check for needs_resolve state
-        git_state_is "$worker_dir" "needs_resolve" || continue
-
-        local worker_id
-        worker_id=$(basename "$worker_dir")
-        local task_id
-        task_id=$(get_task_id_from_worker "$worker_id")
-
-        # Guard: skip if agent is already running
-        if [ -f "$worker_dir/agent.pid" ]; then
-            local existing_pid
-            existing_pid=$(cat "$worker_dir/agent.pid")
-            if kill -0 "$existing_pid" 2>/dev/null; then
-                log "Resolver already running for $task_id (PID: $existing_pid) - skipping"
-                continue
-            fi
-        fi
-
-        # Transition state
-        git_state_set "$worker_dir" "resolving" "wiggum-run.check_and_spawn_resolvers" "Resolver spawned"
-
-        log "Spawning conflict resolver for $task_id..."
-
-        # Call wiggum-review task resolve asynchronously
-        (
-            cd "$PROJECT_DIR" || exit 1
-            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" resolve 2>&1 | \
-                sed "s/^/  [resolve-$task_id] /"
-        ) &
-        local resolver_pid=$!
-
-        active_resolve_workers[$resolver_pid]="$task_id|$(date +%s)"
-        log "Resolver spawned for $task_id (PID: $resolver_pid)"
-    done
-}
-
-# Handle resolver completion - check result and transition state
-# Args: worker_dir, task_id
-handle_resolve_completion() {
+# Handle resolve worker timeout (callback for pool_cleanup_finished)
+_handle_resolve_worker_timeout() {
     local worker_dir="$1"
     local task_id="$2"
-
-    # Check if conflicts are resolved
-    local workspace="$worker_dir/workspace"
-    if [ ! -d "$workspace" ]; then
-        git_state_set "$worker_dir" "failed" "wiggum-run.handle_resolve_completion" "Workspace not found"
-        return 1
-    fi
-
-    local remaining_conflicts
-    remaining_conflicts=$(git -C "$workspace" diff --name-only --diff-filter=U 2>/dev/null || true)
-
-    if [ -z "$remaining_conflicts" ]; then
-        git_state_set "$worker_dir" "resolved" "wiggum-run.handle_resolve_completion" "All conflicts resolved"
-
-        # Need to commit and push the resolution
-        log "Conflicts resolved for $task_id - committing resolution..."
-
-        (
-            cd "$PROJECT_DIR" || exit 1
-            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" commit 2>&1 | sed "s/^/  [commit-$task_id] /"
-            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" push 2>&1 | sed "s/^/  [push-$task_id] /"
-        )
-
-        # Ready for another merge attempt
-        git_state_set "$worker_dir" "needs_merge" "wiggum-run.handle_resolve_completion" "Ready for merge retry"
-        return 0
-    else
-        local count
-        count=$(echo "$remaining_conflicts" | wc -l)
-        git_state_set "$worker_dir" "failed" "wiggum-run.handle_resolve_completion" "$count files still have conflicts"
-        log_error "Resolver failed for $task_id - $count files still have conflicts"
-        return 1
-    fi
-}
-
-# Detect orphan workers (running PIDs not tracked in active_workers)
-# Re-tracks them with a warning
-detect_orphan_workers() {
-    [ -d "$RALPH_DIR/workers" ] || return 0
-
-    scan_output=$(scan_active_workers "$RALPH_DIR") || {
-        scan_rc=$?
-        if [ "$scan_rc" -eq 2 ]; then
-            log_warn "Worker scan encountered lock contention, results may be incomplete"
-        fi
-    }
-    while read -r worker_pid task_id _worker_id; do
-        [ -n "$worker_pid" ] || continue
-        # Check if this PID is already tracked
-        if [ -z "${active_workers[$worker_pid]+x}" ]; then
-            log "WARNING: Detected orphan worker for $task_id (PID: $worker_pid) - re-tracking"
-            active_workers[$worker_pid]="$task_id"
-        fi
-    done <<< "$scan_output"
+    handle_resolve_worker_timeout "$worker_dir" "$task_id" "$RESOLVE_WORKER_TIMEOUT"
 }
 
 main() {
@@ -763,32 +434,12 @@ main() {
     fi
     log "Kanban validation passed"
 
+    # Initialize scheduler
+    scheduler_init "$RALPH_DIR" "$PROJECT_DIR" "$AGING_FACTOR" "$SIBLING_WIP_PENALTY" "$PLAN_BONUS" "$DEP_BONUS_PER_TASK"
+
     # Check for self and circular dependencies
     log "Checking for dependency cycles..."
-    local dep_errors
-    declare -gA cyclic_tasks=()  # task_id -> error type (SELF or CYCLE)
-    if dep_errors=$(detect_circular_dependencies "$RALPH_DIR/kanban.md"); then
-        log "No dependency cycles detected"
-    else
-        # Parse errors and populate cyclic_tasks for skipping
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^SELF:(.+)$ ]]; then
-                local task_id="${BASH_REMATCH[1]}"
-                cyclic_tasks[$task_id]="SELF"
-                log_error "Self-dependency detected: $task_id depends on itself - will be skipped"
-            elif [[ "$line" =~ ^CYCLE:(.+)$ ]]; then
-                local cycle_members="${BASH_REMATCH[1]}"
-                for task_id in $cycle_members; do
-                    cyclic_tasks[$task_id]="CYCLE"
-                done
-                log_error "Circular dependency detected involving:$cycle_members - will be skipped"
-            fi
-        done <<< "$dep_errors"
-
-        if [ ${#cyclic_tasks[@]} -gt 0 ]; then
-            log_warn "Skipping ${#cyclic_tasks[@]} task(s) due to dependency errors"
-        fi
-    fi
+    scheduler_detect_cycles || true
 
     # Check for clean git status
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
@@ -866,47 +517,11 @@ main() {
     echo "=========================================="
     echo ""
 
-    # Track active workers
-    declare -A active_workers=()         # PID -> task_id mapping
-    declare -A active_fix_workers=()     # PID -> "task_id|start_time"
-    declare -A active_resolve_workers=() # PID -> "task_id|start_time"
-    declare -A skip_tasks=()             # task_id -> consecutive failure count
-    local all_pids=()
-
-    # Restore active workers from existing worker directories (using shared library)
-    if [ -d "$RALPH_DIR/workers" ]; then
-        log "Scanning for active workers from previous runs..."
-        scan_output=$(scan_active_workers "$RALPH_DIR") || {
-            scan_rc=$?
-            if [ "$scan_rc" -eq 2 ]; then
-                log_warn "Worker scan encountered lock contention, results may be incomplete"
-            fi
-        }
-        while read -r worker_pid task_id _worker_id; do
-            [ -n "$worker_pid" ] || continue
-            active_workers[$worker_pid]="$task_id"
-            all_pids+=("$worker_pid")
-            log "Restored tracking for $task_id (PID: $worker_pid)"
-        done <<< "$scan_output"
-
-        # Migrate legacy .needs-fix markers to git-state.json
-        for worker_dir in "$RALPH_DIR/workers"/worker-*; do
-            [ -d "$worker_dir" ] || continue
-            if [ -f "$worker_dir/.needs-fix" ] && [ ! -f "$worker_dir/git-state.json" ]; then
-                local migrated_task_id
-                migrated_task_id=$(get_task_id_from_worker "$(basename "$worker_dir")")
-                git_state_set "$worker_dir" "needs_fix" "wiggum-run.migration" "Migrated from .needs-fix marker"
-                rm -f "$worker_dir/.needs-fix"
-                log "Migrated legacy .needs-fix for $migrated_task_id to git-state.json"
-            fi
-        done
-    fi
+    # Restore active workers from existing worker directories
+    scheduler_restore_workers
 
     local iteration=0
     local sync_counter=0
-    local ready_since_file="$RALPH_DIR/.task-ready-since"
-    # Initialize ready-since file if it doesn't exist
-    touch "$ready_since_file"
 
     # Main orchestration loop
     while true; do
@@ -922,117 +537,36 @@ main() {
             usage_tracker_write_shared "$RALPH_DIR" > /dev/null 2>&1 || true
 
             # Decay skip counts - give tasks another chance
-            for skip_id in "${!skip_tasks[@]}"; do
-                skip_tasks[$skip_id]=$(( ${skip_tasks[$skip_id]} - 1 ))
-                if [ "${skip_tasks[$skip_id]}" -le 0 ]; then
-                    unset "skip_tasks[$skip_id]"
-                fi
-            done
+            scheduler_decay_skip_counts
 
             # Create workspaces for orphaned PRs (PRs needing fixes but no local workspace)
-            create_orphan_pr_workspaces
+            create_orphan_pr_workspaces "$RALPH_DIR" "$PROJECT_DIR"
 
             # Check for and spawn fix workers after sync
-            check_and_spawn_fixes
+            spawn_fix_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
         fi
 
-        # Get tasks ready to run (pending with satisfied dependencies, sorted by priority)
-        # Includes: aging bonus, sibling WIP penalty, plan bonus, dependency bonus
-        local ready_tasks
-        ready_tasks=$(get_ready_tasks "$RALPH_DIR/kanban.md" "$ready_since_file" "$AGING_FACTOR" "$SIBLING_WIP_PENALTY" "$RALPH_DIR" "$PLAN_BONUS" "$DEP_BONUS_PER_TASK")
+        # Tick scheduler to update task lists
+        scheduler_tick
 
-        # Track if scheduling events occurred (used for aging updates)
-        local scheduling_event=false
-
-        local blocked_tasks
-        blocked_tasks=$(get_blocked_tasks "$RALPH_DIR/kanban.md")
-        local all_pending
-        all_pending=$(get_todo_tasks "$RALPH_DIR/kanban.md")
-
-        # Clean up finished workers
-        for pid in "${!active_workers[@]}"; do
-            if ! kill -0 "$pid" 2>/dev/null; then
-                activity_log "worker.completed" "" "${active_workers[$pid]}" "pid=$pid"
-                log "Worker for ${active_workers[$pid]} finished (PID: $pid)"
-                unset "active_workers[$pid]"
-                scheduling_event=true  # Worker finished = scheduling opportunity
-            fi
-        done
+        # Clean up finished main workers
+        pool_cleanup_finished "main" 0 _handle_main_worker_completion ""
 
         # Detect orphan workers not in our tracking
-        detect_orphan_workers
+        scheduler_detect_orphan_workers
 
-        # Clean up finished/timed-out fix workers and handle completion workflow
-        local now
-        now=$(date +%s)
-        for fix_pid in "${!active_fix_workers[@]}"; do
-            local fix_info="${active_fix_workers[$fix_pid]}"
-            local fix_task_id="${fix_info%%|*}"
-            local fix_start="${fix_info##*|}"
-
-            if ! kill -0 "$fix_pid" 2>/dev/null; then
-                # Check agent-result.json for structured status
-                local fix_worker_dir
-                fix_worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$fix_task_id" 2>/dev/null)
-                if [ -n "$fix_worker_dir" ]; then
-                    # Handle fix completion - verify push and transition state
-                    if handle_fix_completion "$fix_worker_dir" "$fix_task_id"; then
-                        # Fix succeeded - attempt merge
-                        if git_state_is "$fix_worker_dir" "needs_merge"; then
-                            attempt_pr_merge "$fix_worker_dir" "$fix_task_id" || true
-                        fi
-                    fi
-                else
-                    log "Fix worker for $fix_task_id finished (PID: $fix_pid)"
-                fi
-                unset "active_fix_workers[$fix_pid]"
-            elif [ $(( now - fix_start )) -ge "$FIX_WORKER_TIMEOUT" ]; then
-                log "WARNING: Fix worker for $fix_task_id timed out after ${FIX_WORKER_TIMEOUT}s - killing (PID: $fix_pid)"
-                kill "$fix_pid" 2>/dev/null || true
-                if [ -n "$fix_worker_dir" ]; then
-                    git_state_set "$fix_worker_dir" "failed" "wiggum-run" "Fix worker timed out after ${FIX_WORKER_TIMEOUT}s"
-                fi
-                unset "active_fix_workers[$fix_pid]"
-            fi
-        done
+        # Clean up finished/timed-out fix workers
+        pool_cleanup_finished "fix" "$FIX_WORKER_TIMEOUT" _handle_fix_worker_completion _handle_fix_worker_timeout
 
         # Clean up finished/timed-out resolve workers
-        for resolve_pid in "${!active_resolve_workers[@]}"; do
-            local resolve_info="${active_resolve_workers[$resolve_pid]}"
-            local resolve_task_id="${resolve_info%%|*}"
-            local resolve_start="${resolve_info##*|}"
-
-            if ! kill -0 "$resolve_pid" 2>/dev/null; then
-                local resolve_worker_dir
-                resolve_worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$resolve_task_id" 2>/dev/null)
-                if [ -n "$resolve_worker_dir" ]; then
-                    # Handle resolve completion
-                    if handle_resolve_completion "$resolve_worker_dir" "$resolve_task_id"; then
-                        # Resolution succeeded - attempt merge
-                        if git_state_is "$resolve_worker_dir" "needs_merge"; then
-                            attempt_pr_merge "$resolve_worker_dir" "$resolve_task_id" || true
-                        fi
-                    fi
-                else
-                    log "Resolve worker for $resolve_task_id finished (PID: $resolve_pid)"
-                fi
-                unset "active_resolve_workers[$resolve_pid]"
-            elif [ $(( now - resolve_start )) -ge "$RESOLVE_WORKER_TIMEOUT" ]; then
-                log "WARNING: Resolve worker for $resolve_task_id timed out after ${RESOLVE_WORKER_TIMEOUT}s - killing (PID: $resolve_pid)"
-                kill "$resolve_pid" 2>/dev/null || true
-                if [ -n "$resolve_worker_dir" ]; then
-                    git_state_set "$resolve_worker_dir" "failed" "wiggum-run" "Resolve worker timed out after ${RESOLVE_WORKER_TIMEOUT}s"
-                fi
-                unset "active_resolve_workers[$resolve_pid]"
-            fi
-        done
+        pool_cleanup_finished "resolve" "$RESOLVE_WORKER_TIMEOUT" _handle_resolve_worker_completion _handle_resolve_worker_timeout
 
         # Check for workers needing conflict resolution and spawn resolvers
-        check_and_spawn_resolvers
+        spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
 
         # Check if we're done (no pending tasks and no active workers)
-        if [ -z "$all_pending" ] && [ ${#active_workers[@]} -eq 0 ]; then
-            log "All tasks completed!"
+        if scheduler_is_complete; then
+            display_final_summary "$RALPH_DIR"
             break
         fi
 
@@ -1049,30 +583,25 @@ main() {
         fi
 
         # Spawn workers for ready tasks (up to MAX_WORKERS limit)
-        for task_id in $ready_tasks; do
-            # Check if we're at max capacity
-            if [ ${#active_workers[@]} -ge "$MAX_WORKERS" ]; then
-                break
-            fi
-
-            # Skip tasks with dependency cycles (self-dependency or circular)
-            if [ -n "${cyclic_tasks[$task_id]+x}" ]; then
-                continue
-            fi
-
-            # Skip tasks that have recently failed kanban updates
-            if [ -n "${skip_tasks[$task_id]+x}" ] && [ "${skip_tasks[$task_id]}" -gt 0 ]; then
-                if [ "${skip_tasks[$task_id]}" -ge "$MAX_SKIP_RETRIES" ]; then
-                    log_error "Task $task_id permanently skipped after $MAX_SKIP_RETRIES consecutive kanban failures"
-                fi
-                continue
-            fi
-
-            # Skip if file conflict with active worker
-            if has_file_conflict "$RALPH_DIR" "$task_id" active_workers; then
-                local conflicts
-                conflicts=$(get_conflicting_files "$RALPH_DIR" "$task_id" active_workers | tr '\n' ',' | sed 's/,$//')
-                log "Deferring $task_id - file conflict: $conflicts"
+        for task_id in $SCHED_READY_TASKS; do
+            # Check if we can spawn this task
+            if ! scheduler_can_spawn_task "$task_id" "$MAX_WORKERS"; then
+                case "$SCHED_SKIP_REASON" in
+                    at_capacity) break ;;  # Stop trying when at capacity
+                    file_conflict)
+                        # Build conflict info for logging
+                        local -A _temp_workers=()
+                        _build_workers() {
+                            local pid="$1" type="$2" tid="$3"
+                            [ "$type" = "main" ] && _temp_workers[$pid]="$tid"
+                        }
+                        pool_foreach "main" _build_workers
+                        local conflicts
+                        conflicts=$(get_conflicting_files "$RALPH_DIR" "$task_id" _temp_workers | tr '\n' ',' | sed 's/,$//')
+                        log "Deferring $task_id - file conflict: $conflicts"
+                        ;;
+                    *) ;;  # Skip silently for cyclic_dependency, skip_count
+                esac
                 continue
             fi
 
@@ -1090,8 +619,13 @@ main() {
             log "Assigning $task_id (Priority: ${task_priority:-MEDIUM}) to new worker"
             if ! update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" "="; then
                 log_error "Failed to mark $task_id as in-progress"
-                skip_tasks[$task_id]=$(( ${skip_tasks[$task_id]:-0} + 1 ))
-                log "Task $task_id skip count: ${skip_tasks[$task_id]}/$MAX_SKIP_RETRIES"
+                scheduler_increment_skip "$task_id"
+                local skip_count
+                skip_count=$(scheduler_get_skip_count "$task_id")
+                log "Task $task_id skip count: $skip_count/$MAX_SKIP_RETRIES"
+                if [ "$skip_count" -ge "$MAX_SKIP_RETRIES" ]; then
+                    log_error "Task $task_id permanently skipped after $MAX_SKIP_RETRIES consecutive kanban failures"
+                fi
                 continue
             fi
 
@@ -1102,14 +636,11 @@ main() {
                 continue
             fi
 
-            active_workers[$SPAWNED_WORKER_PID]="$task_id"
-            all_pids+=("$SPAWNED_WORKER_PID")
-            scheduling_event=true  # Task spawned = other ready tasks were passed over
+            pool_add "$SPAWNED_WORKER_PID" "main" "$task_id"
+            scheduler_mark_event
 
             # Remove from ready-since tracking (task is no longer waiting)
-            if [ -f "$ready_since_file" ]; then
-                sed_inplace "/^${task_id}|/d" "$ready_since_file"
-            fi
+            scheduler_remove_from_aging "$task_id"
 
             # Log task assignment to audit log
             audit_log_task_assigned "$task_id" "$SPAWNED_WORKER_ID" "$SPAWNED_WORKER_PID"
@@ -1117,187 +648,29 @@ main() {
             log "Spawned worker $SPAWNED_WORKER_ID for $task_id (PID: $SPAWNED_WORKER_PID)"
         done
 
-        # Update ready-since tracking only when scheduling events occurred
-        # (task spawned or worker finished = tasks still waiting were passed over)
-        if [ "$scheduling_event" = true ]; then
-            local new_ready_since
-            new_ready_since=$(mktemp)
-            # Re-fetch ready tasks to get current state after spawning
-            local current_ready
-            current_ready=$(get_ready_tasks "$RALPH_DIR/kanban.md" "$ready_since_file" "$AGING_FACTOR" "$SIBLING_WIP_PENALTY" "$RALPH_DIR" "$PLAN_BONUS" "$DEP_BONUS_PER_TASK")
-            for task_id in $current_ready; do
-                local prev_count
-                prev_count=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)
-                prev_count=${prev_count:-0}
-                echo "$task_id|$(( prev_count + 1 ))" >> "$new_ready_since"
-            done
-            mv "$new_ready_since" "$ready_since_file"
-        fi
+        # Update aging tracking when scheduling events occurred
+        scheduler_update_aging
 
         # Show status only when scheduling events occur
-        if [ "$scheduling_event" = true ]; then
-            echo ""
-            echo "=== Status Update (iteration $iteration) ==="
-            echo "Active workers: ${#active_workers[@]}/$MAX_WORKERS"
-
-            # Show which tasks are being worked on
-            if [ ${#active_workers[@]} -gt 0 ]; then
-                echo "In Progress:"
-                for pid in "${!active_workers[@]}"; do
-                    echo "  - ${active_workers[$pid]} (PID: $pid)"
-                done
-            fi
-
-            # Show active fix workers
-            if [ ${#active_fix_workers[@]} -gt 0 ]; then
-                echo "Fix Workers:"
-                for fix_pid in "${!active_fix_workers[@]}"; do
-                    local fix_info="${active_fix_workers[$fix_pid]}"
-                    local fix_task_id="${fix_info%%|*}"
-                    local fix_start="${fix_info##*|}"
-                    local fix_elapsed=$(( $(date +%s) - fix_start ))
-                    echo "  - $fix_task_id (PID: $fix_pid, ${fix_elapsed}s elapsed)"
-                done
-            fi
-
-            # Show active resolve workers
-            if [ ${#active_resolve_workers[@]} -gt 0 ]; then
-                echo "Resolve Workers:"
-                for resolve_pid in "${!active_resolve_workers[@]}"; do
-                    local resolve_info="${active_resolve_workers[$resolve_pid]}"
-                    local resolve_task_id="${resolve_info%%|*}"
-                    local resolve_start="${resolve_info##*|}"
-                    local resolve_elapsed=$(( $(date +%s) - resolve_start ))
-                    echo "  - $resolve_task_id (PID: $resolve_pid, ${resolve_elapsed}s elapsed)"
-                done
-            fi
-
-            # Show blocked tasks waiting on dependencies
-            if [ -n "$blocked_tasks" ]; then
-                echo "Blocked (waiting on dependencies):"
-                for task_id in $blocked_tasks; do
-                    local waiting_on
-                    waiting_on=$(get_unsatisfied_dependencies "$RALPH_DIR/kanban.md" "$task_id" | tr '\n' ',' | sed 's/,$//')
-                    echo "  - $task_id (waiting on: $waiting_on)"
-                done
-            fi
-
-            # Show tasks skipped due to dependency cycles
-            if [ ${#cyclic_tasks[@]} -gt 0 ]; then
-                echo "Skipped (dependency cycle):"
-                for task_id in "${!cyclic_tasks[@]}"; do
-                    local error_type="${cyclic_tasks[$task_id]}"
-                    if [ "$error_type" = "SELF" ]; then
-                        echo "  - $task_id (self-dependency)"
-                    else
-                        echo "  - $task_id (circular dependency)"
-                    fi
-                done
-            fi
-
-            # Show tasks deferred due to file conflicts
-            local deferred_conflicts=()
-            for task_id in $ready_tasks; do
-                if has_file_conflict "$RALPH_DIR" "$task_id" active_workers; then
-                    deferred_conflicts+=("$task_id")
-                fi
-            done
-            if [ ${#deferred_conflicts[@]} -gt 0 ]; then
-                echo "Deferred (file conflict):"
-                for task_id in "${deferred_conflicts[@]}"; do
-                    local conflicting_tasks
-                    conflicting_tasks=$(get_conflicting_tasks "$RALPH_DIR" "$task_id" active_workers | tr '\n' ',' | sed 's/,$//')
-                    echo "  - $task_id (conflicts with: $conflicting_tasks)"
-                done
-            fi
-
-            # Show top 7 ready tasks with priority scores (excluding in-progress and deferred)
-            local ready_count
-            ready_count=$(echo "$ready_tasks" | grep -c . 2>/dev/null || true)
-            ready_count=${ready_count:-0}
-            # Subtract in-progress and deferred tasks from count
-            ready_count=$((ready_count - ${#active_workers[@]} - ${#deferred_conflicts[@]}))
-            if [ "$ready_count" -gt 0 ]; then
-                echo "Ready ($ready_count tasks, top 7 by priority):"
-                # Get priority scores for display
-                local all_metadata
-                all_metadata=$(get_all_tasks_with_metadata "$RALPH_DIR/kanban.md")
-                local display_count=0
-                for task_id in $ready_tasks; do
-                    [ "$display_count" -ge 7 ] && break
-                    # Skip in-progress tasks
-                    local is_active=false
-                    for pid in "${!active_workers[@]}"; do
-                        if [ "$task_id" = "${active_workers[$pid]}" ]; then
-                            is_active=true
-                            break
-                        fi
-                    done
-                    [ "$is_active" = true ] && continue
-
-                    # Skip deferred tasks
-                    local is_deferred=false
-                    for deferred in "${deferred_conflicts[@]}"; do
-                        if [ "$task_id" = "$deferred" ]; then
-                            is_deferred=true
-                            break
-                        fi
-                    done
-                    [ "$is_deferred" = true ] && continue
-
-                    local priority iters_waiting effective_pri
-                    priority=$(echo "$all_metadata" | awk -F'|' -v t="$task_id" '$1 == t { print $3 }')
-                    iters_waiting=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)
-                    iters_waiting=${iters_waiting:-0}
-                    effective_pri=$(get_effective_priority "$priority" "$iters_waiting" "$AGING_FACTOR")
-                    # Apply plan bonus
-                    if task_has_plan "$RALPH_DIR" "$task_id"; then
-                        effective_pri=$((effective_pri - PLAN_BONUS))
-                    fi
-                    # Apply dep bonus
-                    local dep_depth
-                    dep_depth=$(get_dependency_depth "$RALPH_DIR/kanban.md" "$task_id")
-                    effective_pri=$((effective_pri - dep_depth * DEP_BONUS_PER_TASK))
-                    [[ "$effective_pri" -lt 0 ]] && effective_pri=0 || true
-                    echo "  - $task_id (score: $effective_pri)"
-                    ((++display_count))
-                done
-            fi
-
-            # Show recent errors only (not info)
-            if [ -f "$RALPH_DIR/logs/workers.log" ]; then
-                local recent_errors
-                recent_errors=$(grep -i "ERROR\|WARN" "$RALPH_DIR/logs/workers.log" 2>/dev/null | tail -n 5 || true)
-                if [ -n "$recent_errors" ]; then
-                    echo ""
-                    echo "Recent errors:"
-                    echo "$recent_errors" | sed 's/^/  /'
-                fi
-            fi
-            echo "=========================================="
+        if [ "$SCHED_SCHEDULING_EVENT" = true ]; then
+            local cyclic_ref
+            cyclic_ref=$(scheduler_get_cyclic_tasks_ref)
+            display_orchestrator_status \
+                "$iteration" \
+                "$MAX_WORKERS" \
+                "$SCHED_READY_TASKS" \
+                "$SCHED_BLOCKED_TASKS" \
+                "$cyclic_ref" \
+                "$RALPH_DIR" \
+                "$(scheduler_get_ready_since_file)" \
+                "$AGING_FACTOR" \
+                "$PLAN_BONUS" \
+                "$DEP_BONUS_PER_TASK"
         fi
 
         # Wait a bit before checking again
         sleep 5
     done
-
-    echo ""
-    echo "=========================================="
-    log "Chief Wiggum finished - all tasks complete!"
-    echo ""
-
-    # Show final summary
-    local completed_count
-    completed_count=$(grep -c '^\- \[x\]' "$RALPH_DIR/kanban.md" 2>/dev/null || echo "0")
-    echo "Summary:"
-    echo "  - Total tasks completed: $completed_count"
-    echo "  - Changelog: .ralph/changelog.md"
-    echo ""
-    echo "Next steps:"
-    echo "  - Review completed work: wiggum review list"
-    echo "  - Merge PRs: wiggum review merge-all"
-    echo "  - Clean up: wiggum clean"
-    echo ""
 }
 
 main "$@"

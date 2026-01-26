@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+# scheduler.sh - Main scheduling interface
+#
+# Provides the high-level scheduling interface that ties together:
+#   - worker-pool.sh: Unified worker tracking
+#   - priority-workers.sh: Fix/resolve worker management
+#   - merge-manager.sh: PR merge workflow
+#   - status-display.sh: Status output formatting
+#
+# This module encapsulates the scheduling logic from wiggum-run's main loop.
+#
+# shellcheck disable=SC2034  # Global variables are exported for caller use
+# shellcheck disable=SC2329  # Functions are invoked indirectly via callbacks
+set -euo pipefail
+
+[ -n "${_SCHEDULER_LOADED:-}" ] && return 0
+_SCHEDULER_LOADED=1
+
+# Source all scheduler components
+source "$WIGGUM_HOME/lib/scheduler/worker-pool.sh"
+source "$WIGGUM_HOME/lib/scheduler/priority-workers.sh"
+source "$WIGGUM_HOME/lib/scheduler/merge-manager.sh"
+source "$WIGGUM_HOME/lib/scheduler/status-display.sh"
+source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+source "$WIGGUM_HOME/lib/tasks/conflict-detection.sh"
+source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
+source "$WIGGUM_HOME/lib/core/logger.sh"
+
+# Scheduler configuration (set by scheduler_init)
+declare -g _SCHED_RALPH_DIR=""
+declare -g _SCHED_PROJECT_DIR=""
+declare -g _SCHED_READY_SINCE_FILE=""
+declare -g _SCHED_AGING_FACTOR=7
+declare -g _SCHED_SIBLING_WIP_PENALTY=20000
+declare -g _SCHED_PLAN_BONUS=15000
+declare -g _SCHED_DEP_BONUS_PER_TASK=7000
+
+# Scheduler state (updated by scheduler_tick)
+declare -g SCHED_READY_TASKS=""
+declare -g SCHED_BLOCKED_TASKS=""
+declare -g SCHED_PENDING_TASKS=""
+declare -g SCHED_SCHEDULING_EVENT=false
+
+# Cyclic tasks tracking (task_id -> error type)
+declare -gA _SCHED_CYCLIC_TASKS=()
+
+# Skip tasks tracking (task_id -> consecutive failure count)
+declare -gA _SCHED_SKIP_TASKS=()
+
+# Initialize the scheduler
+#
+# Args:
+#   ralph_dir            - Ralph directory path
+#   project_dir          - Project directory path
+#   aging_factor         - Aging factor for priority calculation (default: 7)
+#   sibling_wip_penalty  - Penalty when sibling is WIP (default: 20000)
+#   plan_bonus           - Bonus for tasks with plans (default: 15000)
+#   dep_bonus_per_task   - Bonus per blocking task (default: 7000)
+scheduler_init() {
+    _SCHED_RALPH_DIR="$1"
+    _SCHED_PROJECT_DIR="$2"
+    _SCHED_AGING_FACTOR="${3:-7}"
+    _SCHED_SIBLING_WIP_PENALTY="${4:-20000}"
+    _SCHED_PLAN_BONUS="${5:-15000}"
+    _SCHED_DEP_BONUS_PER_TASK="${6:-7000}"
+
+    _SCHED_READY_SINCE_FILE="$_SCHED_RALPH_DIR/.task-ready-since"
+
+    # Initialize ready-since file if it doesn't exist
+    touch "$_SCHED_READY_SINCE_FILE"
+
+    # Initialize worker pool
+    pool_init
+
+    # Reset state
+    SCHED_READY_TASKS=""
+    SCHED_BLOCKED_TASKS=""
+    SCHED_PENDING_TASKS=""
+    SCHED_SCHEDULING_EVENT=false
+    _SCHED_CYCLIC_TASKS=()
+    _SCHED_SKIP_TASKS=()
+}
+
+# Detect and register cyclic dependencies
+#
+# Populates _SCHED_CYCLIC_TASKS with tasks that should be skipped
+# due to self-dependency or circular dependencies.
+#
+# Returns: 0 if no cycles, 1 if cycles detected
+scheduler_detect_cycles() {
+    local dep_errors
+
+    _SCHED_CYCLIC_TASKS=()
+
+    if dep_errors=$(detect_circular_dependencies "$_SCHED_RALPH_DIR/kanban.md"); then
+        log "No dependency cycles detected"
+        return 0
+    fi
+
+    # Parse errors and populate cyclic_tasks for skipping
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^SELF:(.+)$ ]]; then
+            local task_id="${BASH_REMATCH[1]}"
+            _SCHED_CYCLIC_TASKS[$task_id]="SELF"
+            log_error "Self-dependency detected: $task_id depends on itself - will be skipped"
+        elif [[ "$line" =~ ^CYCLE:(.+)$ ]]; then
+            local cycle_members="${BASH_REMATCH[1]}"
+            for task_id in $cycle_members; do
+                _SCHED_CYCLIC_TASKS[$task_id]="CYCLE"
+            done
+            log_error "Circular dependency detected involving:$cycle_members - will be skipped"
+        fi
+    done <<< "$dep_errors"
+
+    if [ ${#_SCHED_CYCLIC_TASKS[@]} -gt 0 ]; then
+        log_warn "Skipping ${#_SCHED_CYCLIC_TASKS[@]} task(s) due to dependency errors"
+        return 1
+    fi
+
+    return 0
+}
+
+# Restore scheduler state from existing worker directories
+#
+# Call this after scheduler_init to recover tracking state when
+# the orchestrator restarts.
+scheduler_restore_workers() {
+    if [ -d "$_SCHED_RALPH_DIR/workers" ]; then
+        log "Scanning for active workers from previous runs..."
+        pool_restore_from_workers "$_SCHED_RALPH_DIR"
+
+        local restored_count
+        restored_count=$(pool_count)
+        if [ "$restored_count" -gt 0 ]; then
+            log "Restored tracking for $restored_count worker(s)"
+        fi
+
+        # Migrate legacy .needs-fix markers to git-state.json
+        for worker_dir in "$_SCHED_RALPH_DIR/workers"/worker-*; do
+            [ -d "$worker_dir" ] || continue
+            if [ -f "$worker_dir/.needs-fix" ] && [ ! -f "$worker_dir/git-state.json" ]; then
+                local migrated_task_id
+                migrated_task_id=$(get_task_id_from_worker "$(basename "$worker_dir")")
+                git_state_set "$worker_dir" "needs_fix" "scheduler.migration" "Migrated from .needs-fix marker"
+                rm -f "$worker_dir/.needs-fix"
+                log "Migrated legacy .needs-fix for $migrated_task_id to git-state.json"
+            fi
+        done
+    fi
+}
+
+# One tick of the scheduling loop
+#
+# Updates SCHED_READY_TASKS, SCHED_BLOCKED_TASKS, SCHED_PENDING_TASKS
+# and SCHED_SCHEDULING_EVENT.
+scheduler_tick() {
+    SCHED_SCHEDULING_EVENT=false
+
+    # Get tasks ready to run (pending with satisfied dependencies, sorted by priority)
+    SCHED_READY_TASKS=$(get_ready_tasks \
+        "$_SCHED_RALPH_DIR/kanban.md" \
+        "$_SCHED_READY_SINCE_FILE" \
+        "$_SCHED_AGING_FACTOR" \
+        "$_SCHED_SIBLING_WIP_PENALTY" \
+        "$_SCHED_RALPH_DIR" \
+        "$_SCHED_PLAN_BONUS" \
+        "$_SCHED_DEP_BONUS_PER_TASK")
+
+    SCHED_BLOCKED_TASKS=$(get_blocked_tasks "$_SCHED_RALPH_DIR/kanban.md")
+    SCHED_PENDING_TASKS=$(get_todo_tasks "$_SCHED_RALPH_DIR/kanban.md")
+}
+
+# Check if a task can be spawned
+#
+# Applies all filters: cyclic deps, skip count, file conflicts, capacity
+#
+# Args:
+#   task_id     - Task identifier
+#   max_workers - Maximum workers allowed
+#
+# Returns: 0 if can spawn, 1 if should skip (sets SCHED_SKIP_REASON)
+scheduler_can_spawn_task() {
+    local task_id="$1"
+    local max_workers="$2"
+
+    SCHED_SKIP_REASON=""
+
+    # Check capacity
+    local main_count
+    main_count=$(pool_count "main")
+    if [ "$main_count" -ge "$max_workers" ]; then
+        SCHED_SKIP_REASON="at_capacity"
+        return 1
+    fi
+
+    # Skip tasks with dependency cycles
+    if [ -n "${_SCHED_CYCLIC_TASKS[$task_id]+x}" ]; then
+        SCHED_SKIP_REASON="cyclic_dependency"
+        return 1
+    fi
+
+    # Skip tasks that have recently failed kanban updates
+    if [ -n "${_SCHED_SKIP_TASKS[$task_id]+x}" ] && [ "${_SCHED_SKIP_TASKS[$task_id]}" -gt 0 ]; then
+        SCHED_SKIP_REASON="skip_count"
+        return 1
+    fi
+
+    # Build temporary workers map for conflict detection
+    local -A _temp_workers=()
+    _build_workers_map() {
+        local pid="$1" type="$2" tid="$3"
+        if [ "$type" = "main" ]; then
+            _temp_workers[$pid]="$tid"
+        fi
+    }
+    pool_foreach "main" _build_workers_map
+
+    # Skip if file conflict with active worker
+    if has_file_conflict "$_SCHED_RALPH_DIR" "$task_id" _temp_workers; then
+        SCHED_SKIP_REASON="file_conflict"
+        return 1
+    fi
+
+    return 0
+}
+
+# Increment skip count for a task
+#
+# Args:
+#   task_id - Task identifier
+scheduler_increment_skip() {
+    local task_id="$1"
+    _SCHED_SKIP_TASKS[$task_id]=$(( ${_SCHED_SKIP_TASKS[$task_id]:-0} + 1 ))
+}
+
+# Get skip count for a task
+#
+# Args:
+#   task_id - Task identifier
+#
+# Returns: echoes skip count
+scheduler_get_skip_count() {
+    local task_id="$1"
+    echo "${_SCHED_SKIP_TASKS[$task_id]:-0}"
+}
+
+# Decay skip counts (called periodically to give tasks another chance)
+scheduler_decay_skip_counts() {
+    for skip_id in "${!_SCHED_SKIP_TASKS[@]}"; do
+        _SCHED_SKIP_TASKS[$skip_id]=$(( ${_SCHED_SKIP_TASKS[$skip_id]} - 1 ))
+        if [ "${_SCHED_SKIP_TASKS[$skip_id]}" -le 0 ]; then
+            unset "_SCHED_SKIP_TASKS[$skip_id]"
+        fi
+    done
+}
+
+# Mark that a scheduling event occurred
+scheduler_mark_event() {
+    SCHED_SCHEDULING_EVENT=true
+}
+
+# Update aging tracking after scheduling events
+#
+# Should be called when scheduling events occurred (task spawned or worker finished)
+scheduler_update_aging() {
+    if [ "$SCHED_SCHEDULING_EVENT" != true ]; then
+        return 0
+    fi
+
+    local new_ready_since
+    new_ready_since=$(mktemp)
+
+    # Re-fetch ready tasks to get current state after spawning
+    local current_ready
+    current_ready=$(get_ready_tasks \
+        "$_SCHED_RALPH_DIR/kanban.md" \
+        "$_SCHED_READY_SINCE_FILE" \
+        "$_SCHED_AGING_FACTOR" \
+        "$_SCHED_SIBLING_WIP_PENALTY" \
+        "$_SCHED_RALPH_DIR" \
+        "$_SCHED_PLAN_BONUS" \
+        "$_SCHED_DEP_BONUS_PER_TASK")
+
+    for task_id in $current_ready; do
+        local prev_count
+        prev_count=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$_SCHED_READY_SINCE_FILE" 2>/dev/null)
+        prev_count=${prev_count:-0}
+        echo "$task_id|$(( prev_count + 1 ))" >> "$new_ready_since"
+    done
+
+    mv "$new_ready_since" "$_SCHED_READY_SINCE_FILE"
+}
+
+# Remove a task from ready-since tracking (e.g., when spawned)
+#
+# Args:
+#   task_id - Task identifier
+scheduler_remove_from_aging() {
+    local task_id="$1"
+
+    if [ -f "$_SCHED_READY_SINCE_FILE" ]; then
+        # Use platform-appropriate sed in-place
+        if [[ "$OSTYPE" == darwin* ]]; then
+            sed -i "" "/^${task_id}|/d" "$_SCHED_READY_SINCE_FILE"
+        else
+            sed -i "/^${task_id}|/d" "$_SCHED_READY_SINCE_FILE"
+        fi
+    fi
+}
+
+# Check if all tasks are complete
+#
+# Returns: 0 if complete (no pending tasks and no workers), 1 otherwise
+scheduler_is_complete() {
+    if [ -z "$SCHED_PENDING_TASKS" ]; then
+        local worker_count
+        worker_count=$(pool_count)
+        [ "$worker_count" -eq 0 ]
+    else
+        return 1
+    fi
+}
+
+# Detect orphan workers (running PIDs not tracked in pool)
+# Re-tracks them with a warning
+scheduler_detect_orphan_workers() {
+    [ -d "$_SCHED_RALPH_DIR/workers" ] || return 0
+
+    local scan_output
+    scan_output=$(scan_active_workers "$_SCHED_RALPH_DIR") || {
+        local scan_rc=$?
+        if [ "$scan_rc" -eq 2 ]; then
+            log_warn "Worker scan encountered lock contention, results may be incomplete"
+        fi
+    }
+
+    while read -r worker_pid task_id worker_id; do
+        [ -n "$worker_pid" ] || continue
+
+        # Check if this PID is already tracked
+        if ! pool_get "$worker_pid" > /dev/null 2>&1; then
+            log "WARNING: Detected orphan worker for $task_id (PID: $worker_pid) - re-tracking"
+
+            # Determine worker type from worker_id pattern
+            local type="main"
+            if [[ "$worker_id" == *"-fix-"* ]]; then
+                type="fix"
+            elif [[ "$worker_id" == *"-resolve-"* ]]; then
+                type="resolve"
+            fi
+
+            pool_add "$worker_pid" "$type" "$task_id"
+        fi
+    done <<< "$scan_output"
+}
+
+# Get reference to cyclic tasks array (for status display)
+#
+# Returns: name of the array variable
+scheduler_get_cyclic_tasks_ref() {
+    echo "_SCHED_CYCLIC_TASKS"
+}
+
+# Get scheduler configuration values
+scheduler_get_ralph_dir() { echo "$_SCHED_RALPH_DIR"; }
+scheduler_get_project_dir() { echo "$_SCHED_PROJECT_DIR"; }
+scheduler_get_ready_since_file() { echo "$_SCHED_READY_SINCE_FILE"; }
+scheduler_get_aging_factor() { echo "$_SCHED_AGING_FACTOR"; }
+scheduler_get_plan_bonus() { echo "$_SCHED_PLAN_BONUS"; }
+scheduler_get_dep_bonus_per_task() { echo "$_SCHED_DEP_BONUS_PER_TASK"; }
