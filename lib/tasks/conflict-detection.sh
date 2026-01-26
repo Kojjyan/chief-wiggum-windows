@@ -24,6 +24,10 @@ has_file_conflict() {
 
     for worker_pid in "${!active_workers_ref[@]}"; do
         local worker_task="${active_workers_ref[$worker_pid]}"
+
+        # Skip self (task that was just spawned checking against itself)
+        [ "$worker_task" = "$task_id" ] && continue
+
         local worker_files
         worker_files=$(get_task_critical_files "$ralph_dir" "$worker_task")
 
@@ -58,6 +62,10 @@ get_conflicting_files() {
 
     for worker_pid in "${!active_workers_ref[@]}"; do
         local worker_task="${active_workers_ref[$worker_pid]}"
+
+        # Skip self (task that was just spawned checking against itself)
+        [ "$worker_task" = "$task_id" ] && continue
+
         local worker_files
         worker_files=$(get_task_critical_files "$ralph_dir" "$worker_task")
 
@@ -90,6 +98,10 @@ get_conflicting_tasks() {
 
     for worker_pid in "${!active_workers_ref[@]}"; do
         local worker_task="${active_workers_ref[$worker_pid]}"
+
+        # Skip self (task that was just spawned checking against itself)
+        [ "$worker_task" = "$task_id" ] && continue
+
         local worker_files
         worker_files=$(get_task_critical_files "$ralph_dir" "$worker_task")
 

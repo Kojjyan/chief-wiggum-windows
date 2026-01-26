@@ -19,12 +19,13 @@ source "$WIGGUM_HOME/lib/utils/activity-log.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
+source "$WIGGUM_HOME/lib/git/worktree-helpers.sh"
 
 # Default configuration
 MAX_WORKERS=4
 MAX_ITERATIONS=20       # Max outer loop iterations per worker
 MAX_TURNS=50           # Max turns per Claude session
-SYNC_INTERVAL=6        # Run sync every N iterations (30 seconds at 5s sleep)
+SYNC_INTERVAL=36       # Run sync every N iterations (3 minutes at 5s sleep)
 AGENT_TYPE="system.task-worker"  # Default agent type (can be overridden with 'plan' mode)
 PID_WAIT_TIMEOUT=300   # Deciseconds to wait for agent.pid (30 seconds)
 FORCE_LOCK=false       # --force flag state for lock override
@@ -143,17 +144,32 @@ spawn_worker() {
 
 # Run periodic sync to update PR statuses and detect new comments
 run_periodic_sync() {
-    log "Running periodic PR sync..."
+    # Call wiggum review sync and capture output
+    local sync_output sync_exit=0
+    sync_output=$("$WIGGUM_HOME/bin/wiggum-review" sync 2>&1) || sync_exit=$?
 
-    # Call wiggum review sync
-    if "$WIGGUM_HOME/bin/wiggum-review" sync 2>&1 | sed 's/^/  [sync] /'; then
+    if [ $sync_exit -ne 0 ]; then
+        log_error "Periodic sync failed"
+        echo "$sync_output" | sed 's/^/  [sync] /'
+        return
+    fi
+
+    # Parse sync results - only show output if something happened
+    local merged_count comments_count
+    merged_count=$(echo "$sync_output" | sed -n 's/.*Merged PRs updated: \([0-9]*\).*/\1/p' | head -1)
+    comments_count=$(echo "$sync_output" | sed -n 's/.*Tasks with new comments: \([0-9]*\).*/\1/p' | head -1)
+    merged_count=${merged_count:-0}
+    comments_count=${comments_count:-0}
+
+    if [ "$comments_count" -gt 0 ]; then
+        log "PR sync: $comments_count task(s) with new comments"
+        echo "$sync_output" | sed 's/^/  [sync] /'
+
         # Check for tasks needing fixes
         local tasks_needing_fix="$RALPH_DIR/.tasks-needing-fix.txt"
         if [ -s "$tasks_needing_fix" ]; then
             log "Tasks need comment fixes - will spawn fix workers"
         fi
-    else
-        log_error "Periodic sync failed"
     fi
 }
 
@@ -282,6 +298,98 @@ check_and_spawn_fixes() {
 
     # Clear the tasks needing fix file after processing
     : > "$tasks_needing_fix"
+}
+
+# Create workspaces for orphaned PRs (PRs with comments but no local workspace)
+# Then queue them for fix processing
+create_orphan_pr_workspaces() {
+    local orphan_file="$RALPH_DIR/.prs-needing-workspace.jsonl"
+
+    if [ ! -s "$orphan_file" ]; then
+        return 0
+    fi
+
+    log "Processing orphaned PRs needing workspace creation..."
+
+    local processed=()
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+
+        local task_id pr_number branch
+        task_id=$(echo "$line" | jq -r '.task_id')
+        pr_number=$(echo "$line" | jq -r '.pr_number')
+        branch=$(echo "$line" | jq -r '.branch')
+
+        if [ -z "$task_id" ] || [ "$task_id" = "null" ]; then
+            continue
+        fi
+
+        # Check if workspace already exists now (might have been created elsewhere)
+        local existing_worker
+        existing_worker=$(find_worker_by_task_id "$RALPH_DIR" "$task_id" 2>/dev/null)
+        if [ -n "$existing_worker" ] && [ -d "$existing_worker/workspace" ]; then
+            log "  $task_id: workspace already exists, skipping"
+            processed+=("$task_id")
+            continue
+        fi
+
+        # Create worker directory
+        local timestamp worker_id worker_dir
+        timestamp=$(date +%s)
+        worker_id="worker-${task_id}-fix-${timestamp}"
+        worker_dir="$RALPH_DIR/workers/$worker_id"
+
+        mkdir -p "$worker_dir"
+        log "  $task_id: Creating workspace from branch $branch"
+
+        # Create worktree from PR branch
+        if ! setup_worktree_from_branch "$PROJECT_DIR" "$worker_dir" "$branch"; then
+            log_error "  $task_id: Failed to create workspace from branch $branch"
+            rm -rf "$worker_dir"
+            continue
+        fi
+
+        # Record branch and PR info
+        echo "$branch" > "$worker_dir/branch.txt"
+        git_state_set_pr "$worker_dir" "$pr_number"
+
+        # Sync comments from review directory if they exist
+        local review_comments="$RALPH_DIR/review/${task_id}-comments.json"
+        if [ -f "$review_comments" ]; then
+            cp "$review_comments" "$worker_dir/${task_id}-comments.json"
+        fi
+
+        # Also fetch fresh comments
+        "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" sync 2>/dev/null || true
+
+        # Queue for fix processing
+        echo "$task_id" >> "$RALPH_DIR/.tasks-needing-fix.txt"
+        git_state_set "$worker_dir" "needs_fix" "wiggum-run.create_orphan_pr_workspaces" "Workspace created from PR branch"
+
+        log "  $task_id: Workspace created, queued for fix"
+        processed+=("$task_id")
+    done < "$orphan_file"
+
+    # Remove processed entries from orphan file
+    if [ ${#processed[@]} -gt 0 ]; then
+        local temp_file
+        temp_file=$(mktemp)
+        while IFS= read -r line; do
+            local task_id
+            task_id=$(echo "$line" | jq -r '.task_id')
+            local skip=false
+            for p in "${processed[@]}"; do
+                if [ "$task_id" = "$p" ]; then
+                    skip=true
+                    break
+                fi
+            done
+            if [ "$skip" = false ]; then
+                echo "$line" >> "$temp_file"
+            fi
+        done < "$orphan_file"
+        mv "$temp_file" "$orphan_file"
+    fi
 }
 
 # Handle fix worker completion - verify push and transition state for merge
@@ -821,6 +929,9 @@ main() {
                 fi
             done
 
+            # Create workspaces for orphaned PRs (PRs needing fixes but no local workspace)
+            create_orphan_pr_workspaces
+
             # Check for and spawn fix workers after sync
             check_and_spawn_fixes
         fi
@@ -1100,10 +1211,12 @@ main() {
                 done
             fi
 
-            # Show top 7 ready tasks with priority scores
+            # Show top 7 ready tasks with priority scores (excluding deferred)
             local ready_count
             ready_count=$(echo "$ready_tasks" | grep -c . 2>/dev/null || true)
             ready_count=${ready_count:-0}
+            # Subtract deferred tasks from count
+            ready_count=$((ready_count - ${#deferred_conflicts[@]}))
             if [ "$ready_count" -gt 0 ]; then
                 echo "Ready ($ready_count tasks, top 7 by priority):"
                 # Get priority scores for display
@@ -1112,6 +1225,16 @@ main() {
                 local display_count=0
                 for task_id in $ready_tasks; do
                     [ "$display_count" -ge 7 ] && break
+                    # Skip deferred tasks
+                    local is_deferred=false
+                    for deferred in "${deferred_conflicts[@]}"; do
+                        if [ "$task_id" = "$deferred" ]; then
+                            is_deferred=true
+                            break
+                        fi
+                    done
+                    [ "$is_deferred" = true ] && continue
+
                     local priority iters_waiting effective_pri
                     priority=$(echo "$all_metadata" | awk -F'|' -v t="$task_id" '$1 == t { print $3 }')
                     iters_waiting=$(awk -F'|' -v t="$task_id" '$1 == t { print $2 }' "$ready_since_file" 2>/dev/null)

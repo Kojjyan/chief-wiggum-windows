@@ -112,6 +112,79 @@ EOF
     log_debug "Wrote hooks config to $workspace/.claude/settings.local.json"
 }
 
+# Setup a git worktree from a specific remote branch
+#
+# Used for resuming work on PRs where the local workspace was cleaned up.
+# Fetches the branch from origin and creates a worktree tracking it.
+#
+# Args:
+#   project_dir - The project root directory (must be a git repo)
+#   worker_dir  - The worker directory to create workspace in
+#   branch      - The remote branch name (e.g., task/TASK-001-description)
+#
+# Returns: 0 on success, 1 on failure
+# Sets: WORKTREE_PATH to the created workspace path
+setup_worktree_from_branch() {
+    local project_dir="$1"
+    local worker_dir="$2"
+    local branch="$3"
+
+    if [ -z "$project_dir" ] || [ -z "$worker_dir" ] || [ -z "$branch" ]; then
+        log_error "setup_worktree_from_branch: missing required parameters"
+        return 1
+    fi
+
+    cd "$project_dir" || {
+        log_error "setup_worktree_from_branch: cannot access project directory: $project_dir"
+        return 1
+    }
+
+    local workspace="$worker_dir/workspace"
+
+    # Check if workspace already exists
+    if [ -d "$workspace" ]; then
+        log_debug "Worktree already exists at $workspace, reusing"
+        WORKTREE_PATH="$workspace"
+        export WORKER_WORKSPACE="$workspace"
+        _write_workspace_hooks_config "$workspace"
+        return 0
+    fi
+
+    # Fetch the branch from origin
+    log_debug "Fetching branch $branch from origin"
+    if ! git fetch origin "$branch" 2>&1 | tee -a "$worker_dir/worker.log"; then
+        log_error "setup_worktree_from_branch: failed to fetch branch $branch"
+        return 1
+    fi
+
+    # Create worktree tracking the remote branch
+    log_debug "Creating git worktree at $workspace from origin/$branch"
+    if ! git worktree add "$workspace" "origin/$branch" 2>&1 | tee -a "$worker_dir/worker.log"; then
+        log_error "setup_worktree_from_branch: failed to create worktree from $branch"
+        return 1
+    fi
+
+    # Setup local branch tracking remote
+    (
+        cd "$workspace" || exit 1
+        git checkout -B "$branch" "origin/$branch" 2>&1 | tee -a "$worker_dir/worker.log"
+    )
+
+    if [ ! -d "$workspace" ]; then
+        log_error "setup_worktree_from_branch: workspace not created at $workspace"
+        return 1
+    fi
+
+    # Setup environment for workspace boundary enforcement
+    export WORKER_WORKSPACE="$workspace"
+    _write_workspace_hooks_config "$workspace"
+
+    WORKTREE_PATH="$workspace"
+    export WORKTREE_PATH
+    log_debug "Worktree created successfully at $workspace from branch $branch"
+    return 0
+}
+
 # Cleanup git worktree
 #
 # Args:
