@@ -14,6 +14,7 @@ source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 source "$WIGGUM_HOME/lib/git/pr-comments.sh"
 source "$WIGGUM_HOME/lib/git/git-operations.sh"
 source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
+source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
 
 # Recompute usage at startup (ensures rate limit checks use fresh data)
@@ -350,9 +351,9 @@ cmd_global_sync() {
                 sync_pr_comments "$task_id" "$output_dir"
                 echo "$task_id" >> "$tasks_needing_fix"
 
-                # Create .needs-fix marker if worker exists
+                # Set needs_fix state if worker exists
                 if [ -n "$worker_dir" ] && [ -d "$worker_dir" ]; then
-                    touch "$worker_dir/.needs-fix"
+                    git_state_set "$worker_dir" "needs_fix" "wiggum-review.sync" "New PR comments detected"
                 fi
                 ((++comments_count))
             else

@@ -48,6 +48,14 @@ fi
 MAX_WORKERS="${WIGGUM_MAX_WORKERS:-4}"
 export MAX_WORKERS
 
+# Resolve worker timeout (seconds) - max runtime for conflict resolver workers
+RESOLVE_WORKER_TIMEOUT="${WIGGUM_RESOLVE_TIMEOUT:-1800}"
+export RESOLVE_WORKER_TIMEOUT
+
+# Maximum merge attempts before giving up
+MAX_MERGE_ATTEMPTS="${WIGGUM_MAX_MERGE_ATTEMPTS:-3}"
+export MAX_MERGE_ATTEMPTS
+
 # GitHub CLI timeout (seconds)
 WIGGUM_GH_TIMEOUT="${WIGGUM_GH_TIMEOUT:-30}"
 export WIGGUM_GH_TIMEOUT

@@ -17,6 +17,7 @@ source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/utils/audit-logger.sh"
 source "$WIGGUM_HOME/lib/utils/activity-log.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
+source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/claude/usage-tracker.sh"
 
 # Default configuration
@@ -243,8 +244,8 @@ check_and_spawn_fixes() {
             continue
         fi
 
-        # Check for .needs-fix marker
-        if [ -f "$worker_dir/.needs-fix" ]; then
+        # Check for needs_fix state (use git-state.json)
+        if git_state_is "$worker_dir" "needs_fix"; then
             # Guard: skip if agent is already running for this worker
             if [ -f "$worker_dir/agent.pid" ]; then
                 local existing_pid
@@ -254,6 +255,9 @@ check_and_spawn_fixes() {
                     continue
                 fi
             fi
+
+            # Transition state to fixing
+            git_state_set "$worker_dir" "fixing" "wiggum-run.check_and_spawn_fixes" "Fix worker spawned"
 
             log "Spawning fix worker for $task_id..."
 
@@ -278,6 +282,207 @@ check_and_spawn_fixes() {
 
     # Clear the tasks needing fix file after processing
     : > "$tasks_needing_fix"
+}
+
+# Handle fix worker completion - verify push and transition state for merge
+# Args: worker_dir, task_id
+handle_fix_completion() {
+    local worker_dir="$1"
+    local task_id="$2"
+
+    # Read the agent result to check push status
+    local result_file="$worker_dir/agent-result.json"
+    if [ ! -f "$result_file" ]; then
+        log_warn "No agent-result.json for $task_id - cannot verify fix completion"
+        return 1
+    fi
+
+    local gate_result push_succeeded
+    gate_result=$(jq -r '.status // "FAIL"' "$result_file" 2>/dev/null)
+    push_succeeded=$(jq -r '.outputs.push_succeeded // false' "$result_file" 2>/dev/null)
+
+    if [ "$gate_result" = "PASS" ] && [ "$push_succeeded" = "true" ]; then
+        git_state_set "$worker_dir" "fix_completed" "wiggum-run.handle_fix_completion" "Push verified"
+        git_state_set "$worker_dir" "needs_merge" "wiggum-run.handle_fix_completion" "Ready for merge attempt"
+        log "Fix completed for $task_id - ready for merge"
+        return 0
+    elif [ "$gate_result" = "PASS" ]; then
+        # Fix succeeded but push didn't - still mark as completed
+        git_state_set "$worker_dir" "fix_completed" "wiggum-run.handle_fix_completion" "Fix passed but push failed"
+        log_warn "Fix completed for $task_id but push failed"
+        return 0
+    else
+        git_state_set "$worker_dir" "failed" "wiggum-run.handle_fix_completion" "Fix agent returned: $gate_result"
+        log_error "Fix failed for $task_id (result: $gate_result)"
+        return 1
+    fi
+}
+
+# Attempt to merge a PR for a worker
+# Args: worker_dir, task_id
+# Returns: 0 on success, 1 on conflict (needs resolver), 2 on other failure
+attempt_pr_merge() {
+    local worker_dir="$1"
+    local task_id="$2"
+
+    local pr_number
+    pr_number=$(git_state_get_pr "$worker_dir")
+
+    if [ "$pr_number" = "null" ] || [ -z "$pr_number" ]; then
+        # Try to find PR number from branch
+        local branch_file="$worker_dir/branch.txt"
+        if [ -f "$branch_file" ]; then
+            local branch
+            branch=$(cat "$branch_file")
+            pr_number=$(gh pr list --head "$branch" --state open --json number -q '.[0].number' 2>/dev/null || true)
+            if [ -n "$pr_number" ]; then
+                git_state_set_pr "$worker_dir" "$pr_number"
+            fi
+        fi
+    fi
+
+    if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+        log_warn "No PR number found for $task_id - cannot attempt merge"
+        return 2
+    fi
+
+    git_state_set "$worker_dir" "merging" "wiggum-run.attempt_pr_merge" "Attempting merge of PR #$pr_number"
+    git_state_inc_merge_attempts "$worker_dir"
+
+    local merge_attempts
+    merge_attempts=$(git_state_get_merge_attempts "$worker_dir")
+    log "Attempting merge for $task_id PR #$pr_number (attempt $merge_attempts/$MAX_MERGE_ATTEMPTS)"
+
+    local merge_output merge_exit=0
+    merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1) || merge_exit=$?
+
+    if [ $merge_exit -eq 0 ]; then
+        git_state_set "$worker_dir" "merged" "wiggum-run.attempt_pr_merge" "PR #$pr_number merged successfully"
+        log "PR #$pr_number merged successfully for $task_id"
+
+        # Update kanban status to complete
+        if [ -f "$RALPH_DIR/kanban.md" ]; then
+            update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" "x"
+        fi
+        return 0
+    fi
+
+    # Check if failure is due to merge conflict
+    if echo "$merge_output" | grep -qiE "(conflict|cannot be merged|out of date)"; then
+        git_state_set_error "$worker_dir" "Merge conflict: $merge_output"
+        git_state_set "$worker_dir" "merge_conflict" "wiggum-run.attempt_pr_merge" "Merge failed due to conflict"
+
+        if [ "$merge_attempts" -lt "$MAX_MERGE_ATTEMPTS" ]; then
+            git_state_set "$worker_dir" "needs_resolve" "wiggum-run.attempt_pr_merge" "Conflict resolver required"
+            log "Merge conflict for $task_id - will spawn resolver"
+            return 1
+        else
+            git_state_set "$worker_dir" "failed" "wiggum-run.attempt_pr_merge" "Max merge attempts ($MAX_MERGE_ATTEMPTS) exceeded"
+            log_error "Max merge attempts exceeded for $task_id"
+            return 2
+        fi
+    fi
+
+    # Other merge failure
+    git_state_set_error "$worker_dir" "Merge failed: $merge_output"
+    git_state_set "$worker_dir" "failed" "wiggum-run.attempt_pr_merge" "Merge failed: ${merge_output:0:100}"
+    log_error "Merge failed for $task_id: $merge_output"
+    return 2
+}
+
+# Check for workers needing conflict resolution and spawn resolver workers
+check_and_spawn_resolvers() {
+    # Use same limit as fix workers (shared pool for priority workers)
+    local total_priority_workers=$(( ${#active_fix_workers[@]} + ${#active_resolve_workers[@]} ))
+    if [ "$total_priority_workers" -ge "$FIX_WORKER_LIMIT" ]; then
+        return 0
+    fi
+
+    [ -d "$RALPH_DIR/workers" ] || return 0
+
+    for worker_dir in "$RALPH_DIR/workers"/worker-*; do
+        [ -d "$worker_dir" ] || continue
+
+        # Re-check capacity
+        total_priority_workers=$(( ${#active_fix_workers[@]} + ${#active_resolve_workers[@]} ))
+        if [ "$total_priority_workers" -ge "$FIX_WORKER_LIMIT" ]; then
+            break
+        fi
+
+        # Check for needs_resolve state
+        git_state_is "$worker_dir" "needs_resolve" || continue
+
+        local worker_id
+        worker_id=$(basename "$worker_dir")
+        local task_id
+        task_id=$(get_task_id_from_worker "$worker_id")
+
+        # Guard: skip if agent is already running
+        if [ -f "$worker_dir/agent.pid" ]; then
+            local existing_pid
+            existing_pid=$(cat "$worker_dir/agent.pid")
+            if kill -0 "$existing_pid" 2>/dev/null; then
+                log "Resolver already running for $task_id (PID: $existing_pid) - skipping"
+                continue
+            fi
+        fi
+
+        # Transition state
+        git_state_set "$worker_dir" "resolving" "wiggum-run.check_and_spawn_resolvers" "Resolver spawned"
+
+        log "Spawning conflict resolver for $task_id..."
+
+        # Call wiggum-review task resolve asynchronously
+        (
+            cd "$PROJECT_DIR" || exit 1
+            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" resolve 2>&1 | \
+                sed "s/^/  [resolve-$task_id] /"
+        ) &
+        local resolver_pid=$!
+
+        active_resolve_workers[$resolver_pid]="$task_id|$(date +%s)"
+        log "Resolver spawned for $task_id (PID: $resolver_pid)"
+    done
+}
+
+# Handle resolver completion - check result and transition state
+# Args: worker_dir, task_id
+handle_resolve_completion() {
+    local worker_dir="$1"
+    local task_id="$2"
+
+    # Check if conflicts are resolved
+    local workspace="$worker_dir/workspace"
+    if [ ! -d "$workspace" ]; then
+        git_state_set "$worker_dir" "failed" "wiggum-run.handle_resolve_completion" "Workspace not found"
+        return 1
+    fi
+
+    local remaining_conflicts
+    remaining_conflicts=$(git -C "$workspace" diff --name-only --diff-filter=U 2>/dev/null || true)
+
+    if [ -z "$remaining_conflicts" ]; then
+        git_state_set "$worker_dir" "resolved" "wiggum-run.handle_resolve_completion" "All conflicts resolved"
+
+        # Need to commit and push the resolution
+        log "Conflicts resolved for $task_id - committing resolution..."
+
+        (
+            cd "$PROJECT_DIR" || exit 1
+            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" commit 2>&1 | sed "s/^/  [commit-$task_id] /"
+            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" push 2>&1 | sed "s/^/  [push-$task_id] /"
+        )
+
+        # Ready for another merge attempt
+        git_state_set "$worker_dir" "needs_merge" "wiggum-run.handle_resolve_completion" "Ready for merge retry"
+        return 0
+    else
+        local count
+        count=$(echo "$remaining_conflicts" | wc -l)
+        git_state_set "$worker_dir" "failed" "wiggum-run.handle_resolve_completion" "$count files still have conflicts"
+        log_error "Resolver failed for $task_id - $count files still have conflicts"
+        return 1
+    fi
 }
 
 # Detect orphan workers (running PIDs not tracked in active_workers)
@@ -541,9 +746,10 @@ main() {
     echo ""
 
     # Track active workers
-    declare -A active_workers=()      # PID -> task_id mapping
-    declare -A active_fix_workers=()  # PID -> "task_id|start_time"
-    declare -A skip_tasks=()          # task_id -> consecutive failure count
+    declare -A active_workers=()         # PID -> task_id mapping
+    declare -A active_fix_workers=()     # PID -> "task_id|start_time"
+    declare -A active_resolve_workers=() # PID -> "task_id|start_time"
+    declare -A skip_tasks=()             # task_id -> consecutive failure count
     local all_pids=()
 
     # Restore active workers from existing worker directories (using shared library)
@@ -561,6 +767,18 @@ main() {
             all_pids+=("$worker_pid")
             log "Restored tracking for $task_id (PID: $worker_pid)"
         done <<< "$scan_output"
+
+        # Migrate legacy .needs-fix markers to git-state.json
+        for worker_dir in "$RALPH_DIR/workers"/worker-*; do
+            [ -d "$worker_dir" ] || continue
+            if [ -f "$worker_dir/.needs-fix" ] && [ ! -f "$worker_dir/git-state.json" ]; then
+                local migrated_task_id
+                migrated_task_id=$(get_task_id_from_worker "$(basename "$worker_dir")")
+                git_state_set "$worker_dir" "needs_fix" "wiggum-run.migration" "Migrated from .needs-fix marker"
+                rm -f "$worker_dir/.needs-fix"
+                log "Migrated legacy .needs-fix for $migrated_task_id to git-state.json"
+            fi
+        done
     fi
 
     local iteration=0
@@ -626,7 +844,7 @@ main() {
         # Detect orphan workers not in our tracking
         detect_orphan_workers
 
-        # Clean up finished/timed-out fix workers
+        # Clean up finished/timed-out fix workers and handle completion workflow
         local now
         now=$(date +%s)
         for fix_pid in "${!active_fix_workers[@]}"; do
@@ -638,10 +856,14 @@ main() {
                 # Check agent-result.json for structured status
                 local fix_worker_dir
                 fix_worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$fix_task_id" 2>/dev/null)
-                if [ -n "$fix_worker_dir" ] && [ -f "$fix_worker_dir/agent-result.json" ]; then
-                    local fix_status
-                    fix_status=$(grep -oP '"status"\s*:\s*"\K[^"]+' "$fix_worker_dir/agent-result.json" 2>/dev/null || echo "unknown")
-                    log "Fix worker for $fix_task_id finished (PID: $fix_pid) - result: $fix_status"
+                if [ -n "$fix_worker_dir" ]; then
+                    # Handle fix completion - verify push and transition state
+                    if handle_fix_completion "$fix_worker_dir" "$fix_task_id"; then
+                        # Fix succeeded - attempt merge
+                        if git_state_is "$fix_worker_dir" "needs_merge"; then
+                            attempt_pr_merge "$fix_worker_dir" "$fix_task_id" || true
+                        fi
+                    fi
                 else
                     log "Fix worker for $fix_task_id finished (PID: $fix_pid)"
                 fi
@@ -649,9 +871,46 @@ main() {
             elif [ $(( now - fix_start )) -ge "$FIX_WORKER_TIMEOUT" ]; then
                 log "WARNING: Fix worker for $fix_task_id timed out after ${FIX_WORKER_TIMEOUT}s - killing (PID: $fix_pid)"
                 kill "$fix_pid" 2>/dev/null || true
+                if [ -n "$fix_worker_dir" ]; then
+                    git_state_set "$fix_worker_dir" "failed" "wiggum-run" "Fix worker timed out after ${FIX_WORKER_TIMEOUT}s"
+                fi
                 unset "active_fix_workers[$fix_pid]"
             fi
         done
+
+        # Clean up finished/timed-out resolve workers
+        for resolve_pid in "${!active_resolve_workers[@]}"; do
+            local resolve_info="${active_resolve_workers[$resolve_pid]}"
+            local resolve_task_id="${resolve_info%%|*}"
+            local resolve_start="${resolve_info##*|}"
+
+            if ! kill -0 "$resolve_pid" 2>/dev/null; then
+                local resolve_worker_dir
+                resolve_worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$resolve_task_id" 2>/dev/null)
+                if [ -n "$resolve_worker_dir" ]; then
+                    # Handle resolve completion
+                    if handle_resolve_completion "$resolve_worker_dir" "$resolve_task_id"; then
+                        # Resolution succeeded - attempt merge
+                        if git_state_is "$resolve_worker_dir" "needs_merge"; then
+                            attempt_pr_merge "$resolve_worker_dir" "$resolve_task_id" || true
+                        fi
+                    fi
+                else
+                    log "Resolve worker for $resolve_task_id finished (PID: $resolve_pid)"
+                fi
+                unset "active_resolve_workers[$resolve_pid]"
+            elif [ $(( now - resolve_start )) -ge "$RESOLVE_WORKER_TIMEOUT" ]; then
+                log "WARNING: Resolve worker for $resolve_task_id timed out after ${RESOLVE_WORKER_TIMEOUT}s - killing (PID: $resolve_pid)"
+                kill "$resolve_pid" 2>/dev/null || true
+                if [ -n "$resolve_worker_dir" ]; then
+                    git_state_set "$resolve_worker_dir" "failed" "wiggum-run" "Resolve worker timed out after ${RESOLVE_WORKER_TIMEOUT}s"
+                fi
+                unset "active_resolve_workers[$resolve_pid]"
+            fi
+        done
+
+        # Check for workers needing conflict resolution and spawn resolvers
+        check_and_spawn_resolvers
 
         # Check if we're done (no pending tasks and no active workers)
         if [ -z "$all_pending" ] && [ ${#active_workers[@]} -eq 0 ]; then
@@ -756,6 +1015,18 @@ main() {
                 local fix_start="${fix_info##*|}"
                 local fix_elapsed=$(( $(date +%s) - fix_start ))
                 echo "  - $fix_task_id (PID: $fix_pid, ${fix_elapsed}s elapsed)"
+            done
+        fi
+
+        # Show active resolve workers
+        if [ ${#active_resolve_workers[@]} -gt 0 ]; then
+            echo "Resolve Workers:"
+            for resolve_pid in "${!active_resolve_workers[@]}"; do
+                local resolve_info="${active_resolve_workers[$resolve_pid]}"
+                local resolve_task_id="${resolve_info%%|*}"
+                local resolve_start="${resolve_info##*|}"
+                local resolve_elapsed=$(( $(date +%s) - resolve_start ))
+                echo "  - $resolve_task_id (PID: $resolve_pid, ${resolve_elapsed}s elapsed)"
             done
         fi
 
