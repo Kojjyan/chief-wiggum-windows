@@ -877,7 +877,14 @@ _md_run_once() {
     local step_id="${WIGGUM_STEP_ID:-agent}"
     local log_timestamp
     log_timestamp=$(date +%s)
-    local log_file="$worker_dir/logs/${step_id}-${log_timestamp}.log"
+    local run_id="${step_id}-${log_timestamp}"
+
+    # Set RALPH_RUN_ID for result extraction compatibility
+    export RALPH_RUN_ID="$run_id"
+
+    # Create log directory (matching ralph_loop convention)
+    mkdir -p "$worker_dir/logs/$run_id"
+    local log_file="$worker_dir/logs/$run_id/${step_id}-0-${log_timestamp}.log"
 
     # Interpolate prompts
     local system_prompt
@@ -931,7 +938,14 @@ _md_run_resume() {
     local step_id="${WIGGUM_STEP_ID:-agent}"
     local log_timestamp
     log_timestamp=$(date +%s)
-    local log_file="$worker_dir/logs/${step_id}-${log_timestamp}.log"
+    local run_id="${step_id}-${log_timestamp}"
+
+    # Set RALPH_RUN_ID for result extraction compatibility
+    export RALPH_RUN_ID="$run_id"
+
+    # Create log directory (matching ralph_loop convention)
+    mkdir -p "$worker_dir/logs/$run_id"
+    local log_file="$worker_dir/logs/$run_id/${step_id}-0-${log_timestamp}.log"
 
     # Interpolate user prompt only (no system prompt for resume)
     local user_prompt
