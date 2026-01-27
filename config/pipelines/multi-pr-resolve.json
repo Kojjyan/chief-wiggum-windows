@@ -3,14 +3,6 @@
   "description": "Sequential merge execution for coordinated multi-PR conflict resolution",
   "steps": [
     {
-      "id": "wait-turn",
-      "agent": "workflow.batch-wait-turn",
-      "on_result": {
-        "SKIP": "next",
-        "FAIL": "signal-failed"
-      }
-    },
-    {
       "id": "sync-main",
       "agent": "workflow.git-sync-main",
       "on_result": {

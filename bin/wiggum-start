@@ -200,6 +200,7 @@ do_start() {
     export _WORKER_PROJECT_DIR="$PROJECT_DIR"
     export _WORKER_MAX_ITERATIONS="$MAX_ITERATIONS"
     export _WORKER_MAX_TURNS="$MAX_TURNS"
+    export _WORKER_PIPELINE="${WIGGUM_PIPELINE:-}"
 
     # shellcheck disable=SC2016
     setsid bash -c '
@@ -209,8 +210,10 @@ do_start() {
         _log_ts "INFO: WIGGUM_HOME=$_WORKER_WIGGUM_HOME"
         _log_ts "INFO: worker_dir=$_WORKER_DIR"
         _log_ts "INFO: AGENT_TYPE=$_WORKER_AGENT_TYPE"
+        _log_ts "INFO: PIPELINE=${_WORKER_PIPELINE:-default}"
 
         export WIGGUM_HOME="$_WORKER_WIGGUM_HOME"
+        [ -n "$_WORKER_PIPELINE" ] && export WIGGUM_PIPELINE="$_WORKER_PIPELINE"
 
         if ! source "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>&1; then
             _log_ts "ERROR: Failed to source agent-registry.sh"
