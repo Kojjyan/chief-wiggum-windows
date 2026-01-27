@@ -4,7 +4,7 @@
 # Manages a queue of PRs that failed to merge due to conflicts. Groups related
 # conflicts by shared files and coordinates batch resolution via LLM planner.
 #
-# Queue file: .ralph/conflict-queue.json
+# Queue file: .ralph/batches/queue.json
 # Format:
 # {
 #   "queue": [
@@ -29,8 +29,9 @@ source "$WIGGUM_HOME/lib/core/file-lock.sh"
 #   ralph_dir - Ralph directory path
 conflict_queue_init() {
     local ralph_dir="$1"
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
 
+    mkdir -p "$ralph_dir/batches"
     if [ ! -f "$queue_file" ]; then
         echo '{"queue":[],"batches":{}}' > "$queue_file"
     fi
@@ -53,11 +54,11 @@ conflict_queue_add() {
     local pr_number="$4"
     local affected_files="$5"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     conflict_queue_init "$ralph_dir"
 
     # Use file lock for concurrent access
-    local lock_file="$ralph_dir/.conflict-queue.lock"
+    local lock_file="$ralph_dir/batches/.queue.lock"
 
     (
         flock -x 200
@@ -104,10 +105,10 @@ conflict_queue_remove() {
     local ralph_dir="$1"
     local task_id="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || return 0
 
-    local lock_file="$ralph_dir/.conflict-queue.lock"
+    local lock_file="$ralph_dir/batches/.queue.lock"
 
     (
         flock -x 200
@@ -130,7 +131,7 @@ conflict_queue_remove() {
 conflict_queue_group_related() {
     local ralph_dir="$1"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || { echo "[]"; return 0; }
 
     # Get unbatched queue entries
@@ -240,8 +241,8 @@ conflict_queue_create_batch() {
     local ralph_dir="$1"
     local task_ids="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
-    local lock_file="$ralph_dir/.conflict-queue.lock"
+    local queue_file="$ralph_dir/batches/queue.json"
+    local lock_file="$ralph_dir/batches/.queue.lock"
 
     local batch_id
     batch_id="batch-$(date +%s)"
@@ -299,8 +300,8 @@ conflict_queue_update_batch_status() {
     local batch_id="$2"
     local status="$3"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
-    local lock_file="$ralph_dir/.conflict-queue.lock"
+    local queue_file="$ralph_dir/batches/queue.json"
+    local lock_file="$ralph_dir/batches/.queue.lock"
 
     (
         flock -x 200
@@ -323,7 +324,7 @@ conflict_queue_get_batch() {
     local ralph_dir="$1"
     local batch_id="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || { echo "null"; return 1; }
 
     jq --arg batch_id "$batch_id" '.batches[$batch_id]' "$queue_file"
@@ -340,7 +341,7 @@ conflict_queue_get_batch_status() {
     local ralph_dir="$1"
     local batch_id="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || { echo "unknown"; return 1; }
 
     jq -r --arg batch_id "$batch_id" '.batches[$batch_id].status // "unknown"' "$queue_file"
@@ -357,7 +358,7 @@ conflict_queue_get_batch_tasks() {
     local ralph_dir="$1"
     local batch_id="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || return 1
 
     jq -r --arg batch_id "$batch_id" '.batches[$batch_id].task_ids[]' "$queue_file"
@@ -372,7 +373,7 @@ conflict_queue_get_batch_tasks() {
 conflict_queue_get_pending_batches() {
     local ralph_dir="$1"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || { echo "[]"; return 0; }
 
     jq '[.batches | to_entries[] | select(.value.status == "pending") | .key]' "$queue_file"
@@ -391,7 +392,7 @@ conflict_queue_build_batch_file() {
     local batch_id="$2"
     local output_file="$3"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
 
     local batch
     batch=$(jq --arg batch_id "$batch_id" '.batches[$batch_id]' "$queue_file")
@@ -476,8 +477,8 @@ conflict_queue_cleanup_batch() {
     local ralph_dir="$1"
     local batch_id="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
-    local lock_file="$ralph_dir/.conflict-queue.lock"
+    local queue_file="$ralph_dir/batches/queue.json"
+    local lock_file="$ralph_dir/batches/.queue.lock"
 
     (
         flock -x 200
@@ -502,7 +503,7 @@ conflict_queue_cleanup_batch() {
 conflict_queue_stats() {
     local ralph_dir="$1"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || { echo '{"queued":0,"batched":0,"batches":0}'; return 0; }
 
     jq '{

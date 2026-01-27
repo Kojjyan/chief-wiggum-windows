@@ -327,7 +327,7 @@ _extract_plan_for_task() {
 # Setup batch coordination files after plans are created
 #
 # Creates:
-#   - .ralph/batch-coordination-{batch_id}.json : Shared coordination file
+#   - .ralph/batches/{batch_id}/coordination.json : Shared coordination file
 #   - {worker_dir}/batch-context.json : Per-worker context
 #
 # Args:

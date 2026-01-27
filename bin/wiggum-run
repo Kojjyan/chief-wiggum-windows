@@ -386,7 +386,7 @@ _check_and_spawn_multi_pr_planner() {
     local batch_id task_ids
 
     # First, check for existing "pending" batches (created by Phase 5 of PR merge optimizer)
-    local queue_file="$RALPH_DIR/conflict-queue.json"
+    local queue_file="$RALPH_DIR/batches/queue.json"
     if [ -f "$queue_file" ]; then
         batch_id=$(jq -r '[.batches | to_entries[] | select(.value.status == "pending")] | .[0].key // empty' "$queue_file")
         if [ -n "$batch_id" ]; then

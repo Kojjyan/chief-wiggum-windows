@@ -1357,7 +1357,7 @@ _create_multi_resolve_batch() {
     local ralph_dir="$1"
     local state_file="$2"
 
-    local queue_file="$ralph_dir/conflict-queue.json"
+    local queue_file="$ralph_dir/batches/queue.json"
     [ -f "$queue_file" ] || return 0
 
     # Get unbatched tasks from the conflict queue

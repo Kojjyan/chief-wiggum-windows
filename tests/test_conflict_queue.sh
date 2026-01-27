@@ -30,14 +30,14 @@ teardown() {
 test_conflict_queue_init_creates_file() {
     conflict_queue_init "$RALPH_DIR"
 
-    assert_file_exists "$RALPH_DIR/conflict-queue.json" "Queue file should exist"
+    assert_file_exists "$RALPH_DIR/batches/queue.json" "Queue file should exist"
 }
 
 test_conflict_queue_init_creates_valid_json() {
     conflict_queue_init "$RALPH_DIR"
 
     local content
-    content=$(cat "$RALPH_DIR/conflict-queue.json")
+    content=$(cat "$RALPH_DIR/batches/queue.json")
     assert_output_contains "$content" '"queue":[]' "Should have empty queue"
     assert_output_contains "$content" '"batches":{}' "Should have empty batches"
 }
@@ -49,7 +49,7 @@ test_conflict_queue_init_idempotent() {
 
     # Should not overwrite existing data
     local content
-    content=$(cat "$RALPH_DIR/conflict-queue.json")
+    content=$(cat "$RALPH_DIR/batches/queue.json")
     assert_output_contains "$content" "TASK-001" "Data should be preserved"
 }
 
@@ -62,7 +62,7 @@ test_conflict_queue_add_success() {
     conflict_queue_add "$RALPH_DIR" "TASK-001" "$RALPH_DIR/workers/worker-TASK-001" "42" '["src/api.ts"]'
 
     local content
-    content=$(cat "$RALPH_DIR/conflict-queue.json")
+    content=$(cat "$RALPH_DIR/batches/queue.json")
     assert_output_contains "$content" "TASK-001" "Should contain task_id"
     assert_output_contains "$content" "42" "Should contain PR number"
 }
@@ -72,7 +72,7 @@ test_conflict_queue_add_multiple_files() {
     conflict_queue_add "$RALPH_DIR" "TASK-001" "$RALPH_DIR/workers/worker-TASK-001" "42" '["src/api.ts","src/types.ts"]'
 
     local count
-    count=$(jq '.queue | length' "$RALPH_DIR/conflict-queue.json")
+    count=$(jq '.queue | length' "$RALPH_DIR/batches/queue.json")
     assert_equals "1" "$count" "Queue should have 1 entry"
 }
 
@@ -82,7 +82,7 @@ test_conflict_queue_add_prevents_duplicates() {
     conflict_queue_add "$RALPH_DIR" "TASK-001" "$RALPH_DIR/workers/worker-TASK-001" "42" '["src/api.ts"]'
 
     local count
-    count=$(jq '.queue | length' "$RALPH_DIR/conflict-queue.json")
+    count=$(jq '.queue | length' "$RALPH_DIR/batches/queue.json")
     assert_equals "1" "$count" "Should not add duplicates"
 }
 
@@ -92,7 +92,7 @@ test_conflict_queue_add_multiple_tasks() {
     conflict_queue_add "$RALPH_DIR" "TASK-002" "$RALPH_DIR/workers/worker-TASK-002" "43" '["src/api.ts"]'
 
     local count
-    count=$(jq '.queue | length' "$RALPH_DIR/conflict-queue.json")
+    count=$(jq '.queue | length' "$RALPH_DIR/batches/queue.json")
     assert_equals "2" "$count" "Should have 2 entries"
 }
 
@@ -106,7 +106,7 @@ test_conflict_queue_remove_success() {
     conflict_queue_remove "$RALPH_DIR" "TASK-001"
 
     local count
-    count=$(jq '.queue | length' "$RALPH_DIR/conflict-queue.json")
+    count=$(jq '.queue | length' "$RALPH_DIR/batches/queue.json")
     assert_equals "0" "$count" "Queue should be empty after remove"
 }
 
@@ -209,7 +209,7 @@ test_conflict_queue_create_batch_marks_tasks() {
     batch_id=$(conflict_queue_create_batch "$RALPH_DIR" '["TASK-001","TASK-002"]' 2>/dev/null | head -1)
 
     local task1_batch
-    task1_batch=$(jq -r '.queue[] | select(.task_id == "TASK-001") | .batch_id' "$RALPH_DIR/conflict-queue.json")
+    task1_batch=$(jq -r '.queue[] | select(.task_id == "TASK-001") | .batch_id' "$RALPH_DIR/batches/queue.json")
     assert_equals "$batch_id" "$task1_batch" "Task 1 should be marked with batch_id"
 }
 
@@ -227,7 +227,7 @@ test_conflict_queue_update_batch_status() {
     conflict_queue_update_batch_status "$RALPH_DIR" "$batch_id" "planning"
 
     local status
-    status=$(jq -r ".batches.\"$batch_id\".status" "$RALPH_DIR/conflict-queue.json")
+    status=$(jq -r ".batches.\"$batch_id\".status" "$RALPH_DIR/batches/queue.json")
     assert_equals "planning" "$status" "Status should be updated"
 }
 
@@ -307,8 +307,8 @@ test_conflict_queue_cleanup_batch() {
     conflict_queue_cleanup_batch "$RALPH_DIR" "$batch_id"
 
     local queue_count batch_count
-    queue_count=$(jq '.queue | length' "$RALPH_DIR/conflict-queue.json")
-    batch_count=$(jq '.batches | length' "$RALPH_DIR/conflict-queue.json")
+    queue_count=$(jq '.queue | length' "$RALPH_DIR/batches/queue.json")
+    batch_count=$(jq '.batches | length' "$RALPH_DIR/batches/queue.json")
 
     assert_equals "0" "$queue_count" "Queue should be empty"
     assert_equals "0" "$batch_count" "Batches should be empty"

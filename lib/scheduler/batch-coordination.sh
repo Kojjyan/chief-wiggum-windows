@@ -6,7 +6,7 @@
 # multiple isolated workers to execute in sequence. Each worker polls until it's
 # their turn, executes, then signals completion for the next worker.
 #
-# Coordination file location: .ralph/batch-coordination-{batch_id}.json
+# Coordination file location: .ralph/batches/{batch_id}/coordination.json
 # Worker context file: {worker_dir}/batch-context.json
 #
 # Usage:
@@ -38,7 +38,7 @@ source "$WIGGUM_HOME/lib/core/file-lock.sh"
 batch_coord_get_path() {
     local batch_id="$1"
     local project_dir="$2"
-    echo "$project_dir/.ralph/batch-coordination-${batch_id}.json"
+    echo "$project_dir/.ralph/batches/${batch_id}/coordination.json"
 }
 
 # Initialize a new coordination file for a batch
