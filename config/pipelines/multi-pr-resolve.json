@@ -1,6 +1,6 @@
 {
   "name": "multi-pr-resolve",
-  "description": "Resolve conflicts with main, commit, and merge PR (for batch coordination)",
+  "description": "Resolve conflicts with main, run tests, commit, and merge PR (for batch coordination)",
   "steps": [
     {
       "id": "sync-main",

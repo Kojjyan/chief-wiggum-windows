@@ -1,6 +1,6 @@
 {
   "name": "fix",
-  "description": "Fix pipeline: PR comment fix -> sync main -> resolve conflicts -> push -> merge",
+  "description": "Fix pipeline: PR comment fix -> sync main -> resolve conflicts -> test -> push -> merge",
   "steps": [
     {
       "id": "pr-fix",
@@ -21,10 +21,25 @@
           "agent": "workflow.git-conflict-resolver",
           "max": 3,
           "on_result": {
-            "PASS": { "jump": "commit-push" },
+            "PASS": { "jump": "test-run" },
             "FAIL": { "jump": "abort" }
           }
         }
+      }
+    },
+    {
+      "id": "test-run",
+      "agent": "engineering.test-runner",
+      "max": 3,
+      "readonly": true,
+      "on_result": {
+        "FIX": {
+          "id": "test-fix",
+          "agent": "engineering.generic-fix",
+          "max": 2,
+          "commit_after": true
+        },
+        "FAIL": { "jump": "abort" }
       }
     },
     {

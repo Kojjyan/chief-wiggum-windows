@@ -71,6 +71,12 @@ test_fix_pipeline_has_merge_step() {
     assert_equals "merge" "$has_merge" "Should have merge step"
 }
 
+test_fix_pipeline_has_test_run_step() {
+    local has_test_run
+    has_test_run=$(jq -r '.steps[] | select(.id == "test-run") | .id' "$PIPELINE_FILE")
+    assert_equals "test-run" "$has_test_run" "Should have test-run step"
+}
+
 # =============================================================================
 # Agent Assignment Tests
 # =============================================================================
@@ -99,6 +105,12 @@ test_merge_step_uses_correct_agent() {
     assert_equals "workflow.pr-merge" "$agent" "merge should use workflow.pr-merge"
 }
 
+test_test_run_step_uses_correct_agent() {
+    local agent
+    agent=$(jq -r '.steps[] | select(.id == "test-run") | .agent' "$PIPELINE_FILE")
+    assert_equals "engineering.test-runner" "$agent" "test-run should use engineering.test-runner"
+}
+
 # =============================================================================
 # on_result Handler Tests
 # =============================================================================
@@ -115,10 +127,10 @@ test_sync_main_fail_has_inline_resolver() {
     assert_equals "workflow.git-conflict-resolver" "$inline_agent" "FAIL should spawn resolver"
 }
 
-test_resolver_pass_jumps_to_commit_push() {
+test_resolver_pass_jumps_to_test_run() {
     local jump_target
     jump_target=$(jq -r '.steps[] | select(.id == "sync-main") | .on_result.FAIL.on_result.PASS.jump' "$PIPELINE_FILE")
-    assert_equals "commit-push" "$jump_target" "Resolver PASS should jump to commit-push"
+    assert_equals "test-run" "$jump_target" "Resolver PASS should jump to test-run"
 }
 
 test_resolver_fail_jumps_to_abort() {
@@ -131,6 +143,18 @@ test_merge_fail_jumps_to_sync_main() {
     local jump_target
     jump_target=$(jq -r '.steps[] | select(.id == "merge") | .on_result.FAIL.jump' "$PIPELINE_FILE")
     assert_equals "sync-main" "$jump_target" "Merge FAIL should jump to sync-main for retry"
+}
+
+test_test_run_fix_has_inline_generic_fix() {
+    local inline_agent
+    inline_agent=$(jq -r '.steps[] | select(.id == "test-run") | .on_result.FIX.agent' "$PIPELINE_FILE")
+    assert_equals "engineering.generic-fix" "$inline_agent" "test-run FIX should spawn generic-fix"
+}
+
+test_test_run_fail_jumps_to_abort() {
+    local jump_target
+    jump_target=$(jq -r '.steps[] | select(.id == "test-run") | .on_result.FAIL.jump' "$PIPELINE_FILE")
+    assert_equals "abort" "$jump_target" "test-run FAIL should abort"
 }
 
 # =============================================================================
@@ -167,6 +191,18 @@ test_merge_has_max() {
     assert_greater_than "$max" "0" "merge should have max iterations"
 }
 
+test_test_run_has_max() {
+    local max
+    max=$(jq '.steps[] | select(.id == "test-run") | .max' "$PIPELINE_FILE")
+    assert_greater_than "$max" "0" "test-run should have max iterations"
+}
+
+test_test_run_is_readonly() {
+    local readonly_val
+    readonly_val=$(jq '.steps[] | select(.id == "test-run") | .readonly' "$PIPELINE_FILE")
+    assert_equals "true" "$readonly_val" "test-run should be readonly"
+}
+
 # =============================================================================
 # Pipeline Flow Tests
 # =============================================================================
@@ -178,6 +214,7 @@ test_pipeline_step_order() {
 
     assert_output_contains "$step_ids" "pr-fix" "Should have pr-fix"
     assert_output_contains "$step_ids" "sync-main" "Should have sync-main"
+    assert_output_contains "$step_ids" "test-run" "Should have test-run"
     assert_output_contains "$step_ids" "commit-push" "Should have commit-push"
     assert_output_contains "$step_ids" "merge" "Should have merge"
 }
@@ -229,20 +266,26 @@ run_test test_fix_pipeline_has_pr_fix_step
 run_test test_fix_pipeline_has_sync_main_step
 run_test test_fix_pipeline_has_commit_push_step
 run_test test_fix_pipeline_has_merge_step
+run_test test_fix_pipeline_has_test_run_step
 run_test test_pr_fix_step_uses_correct_agent
 run_test test_sync_main_step_uses_correct_agent
 run_test test_commit_push_step_uses_correct_agent
 run_test test_merge_step_uses_correct_agent
+run_test test_test_run_step_uses_correct_agent
 run_test test_pr_fix_skip_jumps_to_sync_main
 run_test test_sync_main_fail_has_inline_resolver
-run_test test_resolver_pass_jumps_to_commit_push
+run_test test_resolver_pass_jumps_to_test_run
 run_test test_resolver_fail_jumps_to_abort
 run_test test_merge_fail_jumps_to_sync_main
+run_test test_test_run_fix_has_inline_generic_fix
+run_test test_test_run_fail_jumps_to_abort
 run_test test_pr_fix_has_max
 run_test test_sync_main_has_max
 run_test test_resolver_has_max
 run_test test_commit_push_has_max
 run_test test_merge_has_max
+run_test test_test_run_has_max
+run_test test_test_run_is_readonly
 run_test test_pipeline_step_order
 run_test test_pipeline_has_commit_after_on_pr_fix
 run_test test_pipeline_loader_can_load_fix
