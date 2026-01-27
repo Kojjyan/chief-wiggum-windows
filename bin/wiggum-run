@@ -34,7 +34,8 @@ source "$WIGGUM_HOME/lib/scheduler/pr-merge-optimizer.sh"
 MAX_WORKERS=4
 MAX_ITERATIONS=20       # Max outer loop iterations per worker
 MAX_TURNS=50           # Max turns per Claude session
-SYNC_INTERVAL=36       # Run sync every N iterations (3 minutes at 5s sleep)
+SYNC_INTERVAL=3        # Run sync every N iterations (3 minutes at 60s sleep)
+PR_SYNC_INTERVAL=30    # Run PR optimization every N iterations (30 minutes at 60s sleep)
 AGENT_TYPE="system.task-worker"  # Default agent type (can be overridden with 'plan' mode)
 PID_WAIT_TIMEOUT=300   # Deciseconds to wait for agent.pid (30 seconds)
 FORCE_LOCK=false       # --force flag state for lock override
@@ -802,6 +803,13 @@ main() {
         exit $EXIT_RUN_GIT_DIRTY
     fi
 
+    # Pull latest changes from main before starting
+    log "Pulling latest changes from origin/main..."
+    if ! git pull --ff-only origin main 2>&1; then
+        log_error "Git pull failed. Please resolve any issues before running."
+        exit $EXIT_GIT
+    fi
+
     # Pre-flight checks: Ensure SSH keys are cached and gh is authenticated
     log "Running pre-flight checks..."
 
@@ -878,28 +886,15 @@ main() {
     # Resume any stopped WIP workers before starting new ones
     _schedule_resume_workers
 
-    # Queue pending tasks with existing PRs for fix pipeline (sync→fix→push→merge)
-    _schedule_pending_pr_fixes
-
-    # Immediately check for conflict batches after PR optimization
-    # (don't wait for SYNC_INTERVAL - workers need resolution plan promptly)
-    _check_and_spawn_multi_pr_planner
-
-    # Spawn resolve workers for any that are now ready
-    spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
-
     local iteration=0
     local sync_counter=0
+    local pr_sync_counter=0
 
     # Main orchestration loop
     while true; do
-        ((++iteration))
-        ((++sync_counter))
-
-        # Run periodic sync every SYNC_INTERVAL iterations
-        if [ $sync_counter -ge $SYNC_INTERVAL ]; then
+        # Run periodic sync at iteration 0 (immediately) and every SYNC_INTERVAL
+        if [ $sync_counter -eq 0 ]; then
             run_periodic_sync
-            sync_counter=0
 
             # Update shared usage data periodically
             usage_tracker_write_shared "$RALPH_DIR" > /dev/null 2>&1 || true
@@ -912,10 +907,27 @@ main() {
 
             # Check for and spawn fix workers after sync
             spawn_fix_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
+        fi
+
+        # Run PR optimization at iteration 0 (immediately) and every PR_SYNC_INTERVAL
+        if [ $pr_sync_counter -eq 0 ]; then
+            # Queue pending tasks with existing PRs for fix pipeline (sync→fix→push→merge)
+            _schedule_pending_pr_fixes
 
             # Check for conflict batches and spawn multi-PR planner if needed
             _check_and_spawn_multi_pr_planner
+
+            # Spawn resolve workers for any that are ready
+            spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
         fi
+
+        ((++iteration))
+        ((++sync_counter))
+        ((++pr_sync_counter))
+
+        # Reset counters at interval
+        [ $sync_counter -ge $SYNC_INTERVAL ] && sync_counter=0
+        [ $pr_sync_counter -ge $PR_SYNC_INTERVAL ] && pr_sync_counter=0
 
         # Tick scheduler to update task lists
         scheduler_tick
@@ -931,9 +943,6 @@ main() {
 
         # Clean up finished/timed-out resolve workers
         pool_cleanup_finished "resolve" "$RESOLVE_WORKER_TIMEOUT" _handle_resolve_worker_completion _handle_resolve_worker_timeout
-
-        # Check for workers needing conflict resolution and spawn resolvers
-        spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
 
         # Check if we're done (no pending tasks and no active workers)
         if scheduler_is_complete; then
@@ -1039,8 +1048,8 @@ main() {
                 "$DEP_BONUS_PER_TASK"
         fi
 
-        # Wait a bit before checking again
-        sleep 5
+        # Wait before next iteration
+        sleep 60
     done
 }
 
