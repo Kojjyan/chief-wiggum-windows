@@ -51,6 +51,7 @@ MAX_TURNS=50
 AGENT_TYPE="system.task-worker"
 WORKER_DIR=""
 QUIET_MODE=false
+FOREGROUND_MODE=false
 
 # Output message respecting quiet mode
 _msg() {
@@ -79,6 +80,7 @@ Options:
   --worker-dir DIR  Use existing worker directory instead of creating new one.
                     Useful for running a different pipeline on an existing worker.
   -q, --quiet       Suppress output (for use by orchestrator)
+  -f, --foreground  Run in foreground (blocking). Default is to daemonize.
   -h, --help        Show this help message
 
 Examples:
@@ -187,11 +189,6 @@ do_start() {
         _msg "Starting worker $worker_id for task $task_id"
     fi
 
-    # Launch agent in background
-    # run_agent writes PID to agent.pid - orchestrator can poll for it
-    # Use setsid to create a new session/process group for the worker
-    # This prevents SIGINT from the orchestrator from killing workers
-    #
     # Security: Pass variables via environment exports, not string interpolation.
     # This prevents command injection if any variable contains shell metacharacters.
     export _WORKER_WIGGUM_HOME="$WIGGUM_HOME"
@@ -202,54 +199,70 @@ do_start() {
     export _WORKER_MAX_TURNS="$MAX_TURNS"
     export _WORKER_PIPELINE="${WIGGUM_PIPELINE:-}"
 
-    # shellcheck disable=SC2016
-    setsid bash -c '
-        set -euo pipefail
-        _log_ts() { echo "[$(date -Iseconds)] $*"; }
-        _log_ts "INFO: Worker subprocess starting"
-        _log_ts "INFO: WIGGUM_HOME=$_WORKER_WIGGUM_HOME"
-        _log_ts "INFO: worker_dir=$_WORKER_DIR"
-        _log_ts "INFO: AGENT_TYPE=$_WORKER_AGENT_TYPE"
-        _log_ts "INFO: PIPELINE=${_WORKER_PIPELINE:-default}"
+    if [ "$FOREGROUND_MODE" = "true" ]; then
+        # Run in foreground (blocking) - used by orchestrator for proper PID tracking
+        _msg "Running worker in foreground..."
 
         export WIGGUM_HOME="$_WORKER_WIGGUM_HOME"
         [ -n "$_WORKER_PIPELINE" ] && export WIGGUM_PIPELINE="$_WORKER_PIPELINE"
 
-        if ! source "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>&1; then
-            _log_ts "ERROR: Failed to source agent-registry.sh"
-            exit 1
-        fi
-
-        _log_ts "INFO: Running agent $_WORKER_AGENT_TYPE"
+        source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
         run_agent "$_WORKER_AGENT_TYPE" "$_WORKER_DIR" "$_WORKER_PROJECT_DIR" 30 "$_WORKER_MAX_ITERATIONS" "$_WORKER_MAX_TURNS"
-        local _exit_code=$?
-        if [ $_exit_code -ne 0 ]; then
-            _log_ts "ERROR: run_agent failed with exit code $_exit_code"
-            exit 1
-        fi
-    ' >> "$RALPH_DIR/logs/workers.log" 2>&1 &
-
-    # Wait briefly for agent.pid to be created
-    local wait_count=0
-    while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 10 ]; do
-        sleep 0.1
-        ((wait_count++)) || true
-    done
-
-    if [ -f "$worker_dir/agent.pid" ]; then
-        local worker_pid
-        worker_pid=$(cat "$worker_dir/agent.pid")
-        _msg "Worker running (PID: $worker_pid)"
     else
-        # Brief wait then check if agent failed
-        sleep 0.3
-        if tail -5 "$RALPH_DIR/logs/workers.log" 2>/dev/null | grep -q "ERROR:"; then
-            echo "ERROR: Worker failed to start. Check .ralph/logs/workers.log" >&2
+        # Launch agent in background (daemonize)
+        # run_agent writes PID to agent.pid - orchestrator can poll for it
+        # Use setsid to create a new session/process group for the worker
+        # This prevents SIGINT from the orchestrator from killing workers
+
+        # shellcheck disable=SC2016
+        setsid bash -c '
+            set -euo pipefail
+            _log_ts() { echo "[$(date -Iseconds)] $*"; }
+            _log_ts "INFO: Worker subprocess starting"
+            _log_ts "INFO: WIGGUM_HOME=$_WORKER_WIGGUM_HOME"
+            _log_ts "INFO: worker_dir=$_WORKER_DIR"
+            _log_ts "INFO: AGENT_TYPE=$_WORKER_AGENT_TYPE"
+            _log_ts "INFO: PIPELINE=${_WORKER_PIPELINE:-default}"
+
+            export WIGGUM_HOME="$_WORKER_WIGGUM_HOME"
+            [ -n "$_WORKER_PIPELINE" ] && export WIGGUM_PIPELINE="$_WORKER_PIPELINE"
+
+            if ! source "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>&1; then
+                _log_ts "ERROR: Failed to source agent-registry.sh"
+                exit 1
+            fi
+
+            _log_ts "INFO: Running agent $_WORKER_AGENT_TYPE"
+            run_agent "$_WORKER_AGENT_TYPE" "$_WORKER_DIR" "$_WORKER_PROJECT_DIR" 30 "$_WORKER_MAX_ITERATIONS" "$_WORKER_MAX_TURNS"
+            local _exit_code=$?
+            if [ $_exit_code -ne 0 ]; then
+                _log_ts "ERROR: run_agent failed with exit code $_exit_code"
+                exit 1
+            fi
+        ' >> "$RALPH_DIR/logs/workers.log" 2>&1 &
+
+        # Wait briefly for agent.pid to be created
+        local wait_count=0
+        while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 10 ]; do
+            sleep 0.1
+            ((wait_count++)) || true
+        done
+
+        if [ -f "$worker_dir/agent.pid" ]; then
+            local worker_pid
+            worker_pid=$(cat "$worker_dir/agent.pid")
+            _msg "Worker running (PID: $worker_pid)"
         else
-            _msg "Worker started (PID file pending)"
+            # Brief wait then check if agent failed
+            sleep 0.3
+            if tail -5 "$RALPH_DIR/logs/workers.log" 2>/dev/null | grep -q "ERROR:"; then
+                echo "ERROR: Worker failed to start. Check .ralph/logs/workers.log" >&2
+            else
+                _msg "Worker started (PID file pending)"
+            fi
         fi
+        _msg "Use 'wiggum monitor' to follow progress"
     fi
-    _msg "Use 'wiggum monitor' to follow progress"
 }
 
 # Main
@@ -304,6 +317,10 @@ main() {
                 ;;
             -q|--quiet)
                 QUIET_MODE=true
+                shift
+                ;;
+            -f|--foreground)
+                FOREGROUND_MODE=true
                 shift
                 ;;
             plan)

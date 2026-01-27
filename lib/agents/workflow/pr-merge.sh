@@ -95,9 +95,9 @@ agent_run() {
         return 1
     fi
 
-    # Attempt merge
+    # Attempt merge (don't delete branch - worktrees conflict with local branch deletion)
     local merge_output merge_exit=0
-    merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1) || merge_exit=$?
+    merge_output=$(gh pr merge "$pr_number" --merge 2>&1) || merge_exit=$?
 
     if [ $merge_exit -eq 0 ]; then
         log "PR #$pr_number merged successfully"
