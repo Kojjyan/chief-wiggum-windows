@@ -236,6 +236,11 @@ _spawn_batch_resolve_worker() {
     position=$(batch_coord_read_worker_context "$worker_dir" "position")
     total=$(batch_coord_read_worker_context "$worker_dir" "total")
 
+    # Only spawn if it's this worker's turn in the batch sequence
+    if ! batch_coord_is_my_turn "$batch_id" "$task_id" "$project_dir"; then
+        return 0  # Not my turn yet, skip spawning
+    fi
+
     # Transition state
     git_state_set "$worker_dir" "resolving" "priority-workers.spawn_resolve_workers" "Batch resolver spawned (batch: $batch_id, position: $((position + 1))/$total)"
 
