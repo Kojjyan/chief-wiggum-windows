@@ -16,6 +16,7 @@ source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/platform.sh"
 source "$WIGGUM_HOME/lib/scheduler/conflict-queue.sh"
+source "$WIGGUM_HOME/lib/scheduler/batch-coordination.sh"
 
 # Check for tasks needing fixes and spawn fix workers
 #
@@ -118,6 +119,10 @@ spawn_fix_workers() {
 # Scans worker directories for needs_resolve state and spawns resolver
 # workers up to the combined priority worker limit.
 #
+# For workers with batch-context.json (part of multi-PR batch), uses the
+# multi-pr-resolve pipeline for coordinated sequential resolution.
+# For simple single-PR conflicts, uses the standard resolve command.
+#
 # Args:
 #   ralph_dir   - Ralph directory path
 #   project_dir - Project directory path
@@ -126,6 +131,7 @@ spawn_fix_workers() {
 # Requires:
 #   - pool_* functions from worker-pool.sh
 #   - git_state_* functions from git-state.sh
+#   - batch_coord_* functions from batch-coordination.sh
 #   - WIGGUM_HOME environment variable
 spawn_resolve_workers() {
     local ralph_dir="$1"
@@ -173,22 +179,80 @@ spawn_resolve_workers() {
             fi
         fi
 
-        # Transition state
-        git_state_set "$worker_dir" "resolving" "priority-workers.spawn_resolve_workers" "Resolver spawned"
-
-        log "Spawning conflict resolver for $task_id..."
-
-        # Call wiggum-review task resolve asynchronously
-        (
-            cd "$project_dir" || exit 1
-            "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" resolve 2>&1 | \
-                sed "s/^/  [resolve-$task_id] /"
-        ) &
-        local resolver_pid=$!
-
-        pool_add "$resolver_pid" "resolve" "$task_id"
-        log "Resolver spawned for $task_id (PID: $resolver_pid)"
+        # Check if this is a batch worker (part of multi-PR resolution)
+        if batch_coord_has_worker_context "$worker_dir"; then
+            _spawn_batch_resolve_worker "$ralph_dir" "$project_dir" "$worker_dir" "$task_id"
+        else
+            _spawn_simple_resolve_worker "$ralph_dir" "$project_dir" "$worker_dir" "$task_id"
+        fi
     done
+}
+
+# Spawn a simple (non-batch) resolver worker
+#
+# Args:
+#   ralph_dir   - Ralph directory path
+#   project_dir - Project directory path
+#   worker_dir  - Worker directory path
+#   task_id     - Task identifier
+_spawn_simple_resolve_worker() {
+    local ralph_dir="$1"
+    local project_dir="$2"
+    local worker_dir="$3"
+    local task_id="$4"
+
+    # Transition state
+    git_state_set "$worker_dir" "resolving" "priority-workers.spawn_resolve_workers" "Simple resolver spawned"
+
+    log "Spawning simple conflict resolver for $task_id..."
+
+    # Call wiggum-review task resolve asynchronously
+    (
+        cd "$project_dir" || exit 1
+        "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" resolve 2>&1 | \
+            sed "s/^/  [resolve-$task_id] /"
+    ) &
+    local resolver_pid=$!
+
+    pool_add "$resolver_pid" "resolve" "$task_id"
+    log "Simple resolver spawned for $task_id (PID: $resolver_pid)"
+}
+
+# Spawn a batch resolver worker using multi-pr-resolve pipeline
+#
+# Args:
+#   ralph_dir   - Ralph directory path
+#   project_dir - Project directory path
+#   worker_dir  - Worker directory path
+#   task_id     - Task identifier
+_spawn_batch_resolve_worker() {
+    local ralph_dir="$1"
+    local project_dir="$2"
+    local worker_dir="$3"
+    local task_id="$4"
+
+    local batch_id position total
+    batch_id=$(batch_coord_read_worker_context "$worker_dir" "batch_id")
+    position=$(batch_coord_read_worker_context "$worker_dir" "position")
+    total=$(batch_coord_read_worker_context "$worker_dir" "total")
+
+    # Transition state
+    git_state_set "$worker_dir" "resolving" "priority-workers.spawn_resolve_workers" "Batch resolver spawned (batch: $batch_id, position: $((position + 1))/$total)"
+
+    log "Spawning batch resolver for $task_id (batch: $batch_id, position $((position + 1)) of $total)..."
+
+    # Launch worker using multi-pr-resolve pipeline
+    (
+        cd "$project_dir" || exit 1
+        export WIGGUM_PIPELINE="multi-pr-resolve"
+        "$WIGGUM_HOME/bin/wiggum-resume" "$(basename "$worker_dir")" --quiet \
+            --pipeline multi-pr-resolve 2>&1 | \
+            sed "s/^/  [batch-resolve-$task_id] /"
+    ) &
+    local resolver_pid=$!
+
+    pool_add "$resolver_pid" "resolve" "$task_id"
+    log "Batch resolver spawned for $task_id (PID: $resolver_pid)"
 }
 
 # Create workspaces for orphaned PRs (PRs with comments but no local workspace)

@@ -606,12 +606,12 @@ _try_merge_pr() {
     fi
 }
 
-# Schedule fix pipeline for pending tasks with existing PRs
+# Check PRs waiting for merge and route based on their state
 #
-# Called at startup to handle pending tasks [ ] that have existing workers
-# with PRs. Implements the following routing logic:
+# Called at startup to handle pending-approval [P] tasks that have PRs
+# waiting to be merged. Implements the following routing logic:
 #
-#   Pending task with existing PR
+#   Pending-approval task [P] with PR
 #       │
 #       ├─→ Sync PR (get latest comments)
 #       │
@@ -635,6 +635,7 @@ _try_merge_pr() {
 #   - Are already running
 #   - Don't have a PR number recorded
 #   - Are terminal failures
+#   - Have task status other than "P" (pending approval)
 _schedule_pending_pr_fixes() {
     [ -d "$RALPH_DIR/workers" ] || return 0
 
@@ -659,10 +660,10 @@ _schedule_pending_pr_fixes() {
         local task_id
         task_id=$(get_task_id_from_worker "$(basename "$worker_dir")")
 
-        # Check if task is pending
+        # Check if task has PR waiting for merge (status "P" = pending approval)
         local task_status
         task_status=$(get_task_status "$RALPH_DIR/kanban.md" "$task_id")
-        [ "$task_status" = " " ] || continue
+        [ "$task_status" = "P" ] || continue
 
         # Check if worker has a PR recorded
         local pr_number
@@ -674,7 +675,7 @@ _schedule_pending_pr_fixes() {
 
     [ ${#pending_with_pr[@]} -gt 0 ] || return 0
 
-    log "Found ${#pending_with_pr[@]} pending task(s) with existing PRs - routing..."
+    log "Found ${#pending_with_pr[@]} pending-approval task(s) with PRs - checking for conflicts..."
     echo ""
 
     # Initialize conflict registry
