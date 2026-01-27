@@ -468,6 +468,18 @@ pr_merge_gather_all() {
         # Sync PR comments
         "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" sync 2>/dev/null || true
 
+        # Check if PR is already merged on GitHub (sync may have detected this)
+        local pr_state
+        pr_state=$(timeout "${WIGGUM_GH_TIMEOUT:-30}" gh pr view "$pr_number" --json state -q '.state' 2>/dev/null || echo "UNKNOWN")
+        if [ "$pr_state" = "MERGED" ]; then
+            log "  $task_id (PR #$pr_number): Already merged - cleaning up"
+            # Update kanban to complete
+            update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x" 2>/dev/null || true
+            # Clean up worktree
+            _cleanup_merged_worktree "$worker_dir"
+            continue
+        fi
+
         # Gather PR data
         log "  Gathering data for $task_id (PR #$pr_number)..."
         local pr_data
@@ -1042,6 +1054,14 @@ _attempt_merge() {
     if [ "$pr_state" = "MERGED" ]; then
         log "    ✓ Merged PR #$pr_number"
 
+        # Update kanban status to complete
+        local kanban_file
+        kanban_file=$(dirname "$state_file")/kanban.md
+        if [ -f "$kanban_file" ]; then
+            update_kanban_status "$kanban_file" "$task_id" "x" 2>/dev/null || true
+            log "      Kanban: [$task_id] → [x]"
+        fi
+
         # Clean up worktree now that PR is merged (keep logs/results)
         local worker_dir
         worker_dir=$(jq -r --arg t "$task_id" '.prs[$t].worker_dir' "$state_file")
@@ -1184,9 +1204,6 @@ pr_merge_execute() {
 
                     ((++merged_count))
                     ((++merged_this_pass))
-
-                    # Update kanban status to complete
-                    update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x" 2>/dev/null || true
 
                     # Refresh merge status for remaining PRs
                     _refresh_merge_status "$ralph_dir"

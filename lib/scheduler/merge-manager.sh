@@ -19,6 +19,37 @@ source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/scheduler/conflict-queue.sh"
 
+# Clean up worktree after PR is merged (keeps logs/results/reports)
+#
+# Args:
+#   worker_dir - Worker directory path
+_cleanup_merged_pr_worktree() {
+    local worker_dir="$1"
+    local workspace="$worker_dir/workspace"
+
+    [ -d "$workspace" ] || return 0
+
+    # Get the worktree path for git worktree remove
+    local main_repo
+    main_repo=$(git -C "$workspace" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+
+    if [ -n "$main_repo" ] && [ -d "$main_repo" ]; then
+        git -C "$main_repo" worktree remove --force "$workspace" 2>/dev/null || true
+    fi
+
+    # If worktree remove didn't work, just remove the directory
+    if [ -d "$workspace" ]; then
+        rm -rf "$workspace"
+    fi
+
+    # Mark cleanup in worker state
+    if [ -d "$worker_dir" ]; then
+        echo "merged_and_cleaned" > "$worker_dir/.cleanup_status"
+    fi
+
+    log "Worktree cleaned up for $(basename "$worker_dir")"
+}
+
 # Attempt to merge a PR for a worker
 #
 # Args:
@@ -75,6 +106,24 @@ attempt_pr_merge() {
         if [ -f "$ralph_dir/kanban.md" ]; then
             update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x"
         fi
+
+        # Clean up worktree
+        _cleanup_merged_pr_worktree "$worker_dir"
+        return 0
+    fi
+
+    # Check if PR was already merged (gh returns error but this is actually success)
+    if echo "$merge_output" | grep -qi "already merged"; then
+        git_state_set "$worker_dir" "merged" "merge-manager.attempt_pr_merge" "PR #$pr_number was already merged"
+        log "PR #$pr_number was already merged for $task_id"
+
+        # Update kanban status to complete
+        if [ -f "$ralph_dir/kanban.md" ]; then
+            update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x"
+        fi
+
+        # Clean up worktree
+        _cleanup_merged_pr_worktree "$worker_dir"
         return 0
     fi
 
