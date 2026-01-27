@@ -247,17 +247,30 @@ _spawn_batch_resolve_worker() {
     log "Spawning batch resolver for $task_id (batch: $batch_id, position $((position + 1)) of $total)..."
 
     # Launch worker using multi-pr-resolve pipeline
-    # Use wiggum-start --worker-dir --foreground to run in foreground for proper PID tracking
+    # wiggum-start daemonizes the worker - we track via agent.pid
     (
         cd "$project_dir" || exit 1
         "$WIGGUM_HOME/bin/wiggum-start" --worker-dir "$worker_dir" \
-            --pipeline multi-pr-resolve --quiet --foreground 2>&1 | \
+            --pipeline multi-pr-resolve --quiet 2>&1 | \
             sed "s/^/  [batch-resolve-$task_id] /"
-    ) &
-    local resolver_pid=$!
+    )
 
-    pool_add "$resolver_pid" "resolve" "$task_id"
-    log "Batch resolver spawned for $task_id (PID: $resolver_pid)"
+    # Wait for agent.pid to appear and use that for tracking
+    local wait_count=0
+    while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 30 ]; do
+        sleep 0.1
+        ((wait_count++)) || true
+    done
+
+    if [ -f "$worker_dir/agent.pid" ]; then
+        local resolver_pid
+        resolver_pid=$(cat "$worker_dir/agent.pid")
+        pool_add "$resolver_pid" "resolve" "$task_id"
+        log "Batch resolver spawned for $task_id (PID: $resolver_pid)"
+    else
+        log_error "Failed to get worker PID for $task_id - agent.pid not created"
+        git_state_set "$worker_dir" "failed" "priority-workers.spawn_resolve_workers" "Worker failed to start"
+    fi
 }
 
 # Create workspaces for orphaned PRs (PRs with comments but no local workspace)
