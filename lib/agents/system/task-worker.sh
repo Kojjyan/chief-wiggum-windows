@@ -216,25 +216,13 @@ agent_run() {
         fi
     fi
 
-    log "DEBUG: Resolving pipeline (WIGGUM_PIPELINE=${WIGGUM_PIPELINE:-unset})"
     local pipeline_file
-    pipeline_file=$(pipeline_resolve "$project_dir" "$task_id" "${WIGGUM_PIPELINE:-}") || {
-        log_error "pipeline_resolve failed with exit code $?"
-    }
-    log "DEBUG: Pipeline resolved to: ${pipeline_file:-builtin}"
-    log "DEBUG: About to load pipeline..."
+    pipeline_file=$(pipeline_resolve "$project_dir" "$task_id" "${WIGGUM_PIPELINE:-}") || true
     if [ -n "$pipeline_file" ]; then
-        pipeline_load "$pipeline_file" || {
-            log_error "pipeline_load failed with exit code $?"
-            return 1
-        }
+        pipeline_load "$pipeline_file"
     else
-        pipeline_load_builtin_defaults || {
-            log_error "pipeline_load_builtin_defaults failed with exit code $?"
-            return 1
-        }
+        pipeline_load_builtin_defaults
     fi
-    log "DEBUG: Pipeline loaded successfully, step count=$(pipeline_step_count)"
 
     # Set context for pipeline steps
     export PIPELINE_PLAN_FILE="${plan_file:-}"
