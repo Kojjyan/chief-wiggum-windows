@@ -21,6 +21,24 @@
       }
     },
     {
+      "id": "test-run",
+      "agent": "engineering.test-runner",
+      "max": 3,
+      "readonly": true,
+      "on_result": {
+        "FIX": {
+          "id": "test-fix",
+          "agent": "engineering.generic-fix",
+          "max": 2,
+          "commit_after": true
+        },
+        "FAIL": {
+          "agent": "workflow.batch-signal-failed",
+          "on_result": {"PASS": {"jump": "abort"}}
+        }
+      }
+    },
+    {
       "id": "commit-push",
       "agent": "workflow.git-commit-push",
       "on_result": {
