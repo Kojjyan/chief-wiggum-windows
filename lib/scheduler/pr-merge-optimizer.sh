@@ -1042,10 +1042,10 @@ _attempt_merge() {
     local gh_timeout="${WIGGUM_GH_TIMEOUT:-30}"
 
     # Try to merge via gh CLI
-    # Note: --delete-branch may fail for worktree branches (can't delete local branch in use)
-    # but the merge itself may have succeeded. Check PR state afterward.
+    # Don't use --delete-branch: worktrees conflict with local branch deletion
+    # Branch cleanup happens when worktree is removed
     local merge_output
-    merge_output=$(timeout "$gh_timeout" gh pr merge "$pr_number" --merge --delete-branch 2>&1) || true
+    merge_output=$(timeout "$gh_timeout" gh pr merge "$pr_number" --merge 2>&1) || true
 
     # Check if PR is now merged (handles case where merge succeeded but branch delete failed)
     local pr_state

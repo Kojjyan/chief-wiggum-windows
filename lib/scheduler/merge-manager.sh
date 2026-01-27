@@ -96,7 +96,9 @@ attempt_pr_merge() {
     log "Attempting merge for $task_id PR #$pr_number (attempt $merge_attempts/$MAX_MERGE_ATTEMPTS)"
 
     local merge_output merge_exit=0
-    merge_output=$(gh pr merge "$pr_number" --merge --delete-branch 2>&1) || merge_exit=$?
+    # Don't use --delete-branch: worktrees conflict with local branch deletion
+    # Branch cleanup happens when worktree is removed after merge
+    merge_output=$(gh pr merge "$pr_number" --merge 2>&1) || merge_exit=$?
 
     if [ $merge_exit -eq 0 ]; then
         git_state_set "$worker_dir" "merged" "merge-manager.attempt_pr_merge" "PR #$pr_number merged successfully"
