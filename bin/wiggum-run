@@ -35,7 +35,7 @@ MAX_WORKERS=4
 MAX_ITERATIONS=20       # Max outer loop iterations per worker
 MAX_TURNS=50           # Max turns per Claude session
 SYNC_INTERVAL=3        # Run sync every N iterations (3 minutes at 60s sleep)
-PR_SYNC_INTERVAL=30    # Run PR optimization every N iterations (30 minutes at 60s sleep)
+PR_SYNC_INTERVAL=15    # Run PR optimization every N iterations (15 minutes at 60s sleep)
 AGENT_TYPE="system.task-worker"  # Default agent type (can be overridden with 'plan' mode)
 PID_WAIT_TIMEOUT=300   # Deciseconds to wait for agent.pid (30 seconds)
 FORCE_LOCK=false       # --force flag state for lock override
@@ -438,6 +438,7 @@ _check_and_spawn_multi_pr_planner() {
 
     # Launch planner agent in background
     (
+        cd "$PROJECT_DIR" || exit 1
         export WIGGUM_HOME
         source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
         run_agent "workflow.multi-pr-planner" "$planner_worker_dir" "$PROJECT_DIR" 0
