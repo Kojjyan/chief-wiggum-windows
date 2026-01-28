@@ -5,7 +5,7 @@
 # Handles the actual execution of services based on their execution type:
 # - command: Shell commands
 # - function: Bash functions
-# - pipeline: Pipeline definitions (future)
+# - pipeline: Pipeline definitions
 #
 # Provides:
 #   service_runner_init(ralph_dir, project_dir) - Initialize runner
@@ -13,6 +13,11 @@
 #   service_run_command(cmd, timeout)           - Run shell command
 #   service_run_function(func, args...)         - Call bash function
 #   service_handle_result(id, exit_code)        - Process result
+#
+# New in v1.1:
+#   - Resource limits support (memory, CPU/nice)
+#   - Execution metrics tracking
+#   - Pipeline execution type
 # =============================================================================
 
 # Prevent double-sourcing
@@ -65,6 +70,10 @@ service_run() {
     local timeout
     timeout=$(service_get_timeout "$id")
 
+    # Get resource limits
+    local limits
+    limits=$(service_get_limits "$id")
+
     # Mark as started
     log_debug "Running service: $id (type: $exec_type)"
 
@@ -79,7 +88,7 @@ service_run() {
                 return 1
             fi
 
-            _run_service_command "$id" "$command" "$timeout" "$working_dir" "${extra_args[@]}"
+            _run_service_command "$id" "$command" "$timeout" "$working_dir" "$limits" "${extra_args[@]}"
             ;;
 
         function)
@@ -92,7 +101,7 @@ service_run() {
                 return 1
             fi
 
-            _run_service_function "$id" "$func" "$timeout" "$args_json" "${extra_args[@]}"
+            _run_service_function "$id" "$func" "$timeout" "$args_json" "$limits" "${extra_args[@]}"
             ;;
 
         pipeline)
@@ -104,8 +113,7 @@ service_run() {
                 return 1
             fi
 
-            log_warn "Pipeline execution not yet implemented for service: $id"
-            return 1
+            _run_service_pipeline "$id" "$pipeline_name" "$timeout" "$limits" "${extra_args[@]}"
             ;;
 
         *)
@@ -115,6 +123,68 @@ service_run() {
     esac
 }
 
+# Build resource limit command prefix
+#
+# Creates a command prefix that applies resource limits using
+# available system tools (ulimit, nice, timeout).
+#
+# Args:
+#   limits  - JSON limits config or "null"
+#   timeout - Timeout in seconds
+#
+# Returns: Command prefix string via stdout
+_build_limits_prefix() {
+    local limits="$1"
+    local timeout="$2"
+
+    local prefix=""
+
+    # Skip if no limits configured
+    if [ "$limits" = "null" ] || [ -z "$limits" ]; then
+        # Just use timeout if available
+        if command -v timeout &>/dev/null && [ "$timeout" -gt 0 ]; then
+            prefix="timeout $timeout "
+        fi
+        echo "$prefix"
+        return
+    fi
+
+    # Parse limit values
+    local memory_limit nice_value timeout_kill
+    memory_limit=$(echo "$limits" | jq -r '.memory // empty')
+    nice_value=$(echo "$limits" | jq -r '.nice // empty')
+    timeout_kill=$(echo "$limits" | jq -r '.timeout_kill // true')
+
+    # Build the command prefix
+    local limit_cmds=""
+
+    # Add nice if specified
+    if [ -n "$nice_value" ]; then
+        limit_cmds="nice -n $nice_value "
+    fi
+
+    # Add memory limit via ulimit (if we can parse it)
+    if [ -n "$memory_limit" ]; then
+        local mem_bytes
+        mem_bytes=$(service_parse_memory_limit "$memory_limit")
+        # Convert to KB for ulimit -v
+        local mem_kb=$((mem_bytes / 1024))
+        # ulimit must be in a subshell, so we'll use a wrapper
+        limit_cmds="${limit_cmds}bash -c 'ulimit -v $mem_kb 2>/dev/null; exec \"\$@\"' -- "
+    fi
+
+    # Add timeout
+    if command -v timeout &>/dev/null && [ "$timeout" -gt 0 ]; then
+        local timeout_flag=""
+        if [ "$timeout_kill" = "true" ]; then
+            timeout_flag="--kill-after=5"
+        fi
+        prefix="timeout $timeout_flag $timeout "
+    fi
+
+    echo "${prefix}${limit_cmds}"
+}
+
 # Run a command-type service
 #
 # Args:
@@ -122,13 +192,15 @@ service_run() {
 #   command     - Command to run
 #   timeout     - Timeout in seconds
 #   working_dir - Working directory (optional)
+#   limits      - JSON limits config
 #   args        - Extra arguments
 _run_service_command() {
     local id="$1"
     local command="$2"
     local timeout="$3"
     local working_dir="$4"
-    shift 4
+    local limits="$5"
+    shift 5
     local extra_args=("$@")
 
     # Append extra args to command if provided
@@ -139,6 +211,14 @@ _run_service_command() {
     # Set working directory
     local dir="${working_dir:-$_RUNNER_PROJECT_DIR}"
 
+    # Get limits prefix
+    local limits_prefix
+    limits_prefix=$(_build_limits_prefix "$limits" "$timeout")
+
+    # Record start time for metrics
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+
     # Run in background
     (
         cd "$dir" || exit 1
@@ -147,10 +227,12 @@ _run_service_command() {
         export PATH="$WIGGUM_HOME/bin:$PATH"
         export RALPH_DIR="$_RUNNER_RALPH_DIR"
         export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+        export SERVICE_ID="$id"
+        export SERVICE_START_TIME="$start_time"
 
-        # Run with timeout if available
-        if command -v timeout &>/dev/null && [ "$timeout" -gt 0 ]; then
-            timeout "$timeout" bash -c "$command"
+        # Run with limits prefix
+        if [ -n "$limits_prefix" ]; then
+            eval "${limits_prefix}bash -c $(printf '%q' "$command")"
         else
             bash -c "$command"
         fi
@@ -175,13 +257,15 @@ _SERVICE_FUNCTION_PREFIX="svc_"
 #   func      - Function name
 #   timeout   - Timeout in seconds
 #   args_json - JSON array of arguments
+#   limits    - JSON limits config
 #   extra     - Extra arguments
 _run_service_function() {
     local id="$1"
     local func="$2"
     local timeout="$3"
     local args_json="$4"
-    shift 4
+    local limits="$5"
+    shift 5
     local extra_args=("$@")
 
     # Security: Validate function name starts with required prefix
@@ -211,19 +295,120 @@ _run_service_function() {
     # Add extra args
     func_args+=("${extra_args[@]}")
 
+    # Get limits (nice only for functions, as they run in current process)
+    local nice_value=""
+    if [ "$limits" != "null" ] && [ -n "$limits" ]; then
+        nice_value=$(echo "$limits" | jq -r '.nice // empty')
+    fi
+
+    # Record start time for metrics
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+
     # Run in background
     (
         export RALPH_DIR="$_RUNNER_RALPH_DIR"
         export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+        export SERVICE_ID="$id"
+        export SERVICE_START_TIME="$start_time"
+
+        # Apply nice if configured
+        if [ -n "$nice_value" ]; then
+            renice -n "$nice_value" $$ 2>/dev/null || true
+        fi
 
         # Call the function with args
-        "$func" "${func_args[@]}"
+        if [ "$timeout" -gt 0 ] && command -v timeout &>/dev/null; then
+            timeout "$timeout" bash -c "$(declare -f "$func"); $func $(printf '%q ' "${func_args[@]}")"
+        else
+            "$func" "${func_args[@]}"
+        fi
     ) &
 
     local pid=$!
     service_state_mark_started "$id" "$pid"
 
     log_debug "Service $id (function: $func) started (PID: $pid)"
+    return 0
+}
+
+# Run a pipeline-type service
+#
+# Executes a named pipeline using the pipeline runner.
+#
+# Args:
+#   id            - Service identifier
+#   pipeline_name - Pipeline name to execute
+#   timeout       - Timeout in seconds
+#   limits        - JSON limits config
+#   extra         - Extra arguments
+_run_service_pipeline() {
+    local id="$1"
+    local pipeline_name="$2"
+    local timeout="$3"
+    local limits="$4"
+    shift 4
+    local extra_args=("$@")
+
+    # Check if pipeline runner is available
+    if [ ! -f "$WIGGUM_HOME/lib/pipeline/pipeline-runner.sh" ]; then
+        log_error "Pipeline runner not available for service $id"
+        service_state_mark_failed "$id"
+        return 1
+    fi
+
+    # Look for pipeline config
+    local pipeline_config=""
+    local search_paths=(
+        "$_RUNNER_RALPH_DIR/pipelines/${pipeline_name}.json"
+        "$_RUNNER_RALPH_DIR/pipeline.json"
+        "$WIGGUM_HOME/config/pipelines/${pipeline_name}.json"
+        "$WIGGUM_HOME/config/pipeline.json"
+    )
+
+    for path in "${search_paths[@]}"; do
+        if [ -f "$path" ]; then
+            pipeline_config="$path"
+            break
+        fi
+    done
+
+    if [ -z "$pipeline_config" ]; then
+        log_error "Pipeline config not found for service $id: $pipeline_name"
+        service_state_mark_failed "$id"
+        return 1
+    fi
+
+    # Get limits prefix
+    local limits_prefix
+    limits_prefix=$(_build_limits_prefix "$limits" "$timeout")
+
+    # Record start time
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+
+    # Run pipeline in background
+    (
+        export RALPH_DIR="$_RUNNER_RALPH_DIR"
+        export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+        export SERVICE_ID="$id"
+        export SERVICE_START_TIME="$start_time"
+
+        # Source pipeline runner
+        source "$WIGGUM_HOME/lib/pipeline/pipeline-runner.sh"
+
+        # Run the pipeline
+        if [ -n "$limits_prefix" ]; then
+            eval "${limits_prefix}pipeline_run '$pipeline_config' '${extra_args[*]}'"
+        else
+            pipeline_run "$pipeline_config" "${extra_args[@]}"
+        fi
+    ) &
+
+    local pid=$!
+    service_state_mark_started "$id" "$pid"
+
+    log_debug "Service $id (pipeline: $pipeline_name) started (PID: $pid)"
     return 0
 }
 
@@ -250,6 +435,13 @@ service_run_sync() {
     local timeout
     timeout=$(service_get_timeout "$id")
 
+    local limits
+    limits=$(service_get_limits "$id")
+
+    # Record start time
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+
     service_state_mark_started "$id"
 
     local exit_code=0
@@ -262,18 +454,22 @@ service_run_sync() {
 
             local dir="${working_dir:-$_RUNNER_PROJECT_DIR}"
 
+            local limits_prefix
+            limits_prefix=$(_build_limits_prefix "$limits" "$timeout")
+
             (
                 cd "$dir" || exit 1
                 export PATH="$WIGGUM_HOME/bin:$PATH"
                 export RALPH_DIR="$_RUNNER_RALPH_DIR"
                 export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+                export SERVICE_ID="$id"
 
                 if [ ${#extra_args[@]} -gt 0 ]; then
                     command="$command ${extra_args[*]}"
                 fi
 
-                if command -v timeout &>/dev/null && [ "$timeout" -gt 0 ]; then
-                    timeout "$timeout" bash -c "$command"
+                if [ -n "$limits_prefix" ]; then
+                    eval "${limits_prefix}bash -c $(printf '%q' "$command")"
                 else
                     bash -c "$command"
                 fi
@@ -304,9 +500,44 @@ service_run_sync() {
 
                 export RALPH_DIR="$_RUNNER_RALPH_DIR"
                 export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+                export SERVICE_ID="$id"
 
-                "$func" "${func_args[@]}"
-                exit_code=$?
+                if [ "$timeout" -gt 0 ] && command -v timeout &>/dev/null; then
+                    timeout "$timeout" bash -c "$(declare -f "$func"); $func $(printf '%q ' "${func_args[@]}")"
+                    exit_code=$?
+                else
+                    "$func" "${func_args[@]}"
+                    exit_code=$?
+                fi
+            fi
+            ;;
+
+        pipeline)
+            local pipeline_name
+            pipeline_name=$(echo "$execution" | jq -r '.pipeline // ""')
+
+            # Find pipeline config
+            local pipeline_config=""
+            for path in "$_RUNNER_RALPH_DIR/pipelines/${pipeline_name}.json" \
+                        "$WIGGUM_HOME/config/pipelines/${pipeline_name}.json"; do
+                if [ -f "$path" ]; then
+                    pipeline_config="$path"
+                    break
+                fi
+            done
+
+            if [ -z "$pipeline_config" ]; then
+                log_error "Pipeline config not found: $pipeline_name"
+                exit_code=1
+            else
+                source "$WIGGUM_HOME/lib/pipeline/pipeline-runner.sh" 2>/dev/null || true
+                if declare -F pipeline_run &>/dev/null; then
+                    pipeline_run "$pipeline_config" "${extra_args[@]}"
+                    exit_code=$?
+                else
+                    log_error "Pipeline runner not available"
+                    exit_code=1
+                fi
             fi
             ;;
 
@@ -315,6 +546,12 @@ service_run_sync() {
             exit_code=1
             ;;
     esac
+
+    # Calculate duration and record metrics
+    local end_time
+    end_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+    local duration_ms=$((end_time - start_time))
+    service_state_record_execution "$id" "$duration_ms" "$exit_code"
 
     # Update state based on result
     if [ "$exit_code" -eq 0 ]; then
@@ -362,6 +599,13 @@ service_wait() {
 
     wait "$pid" 2>/dev/null
     local exit_code=$?
+
+    # Record metrics
+    local start_time end_time duration_ms
+    start_time=$(service_state_get_last_run "$id")
+    end_time=$(date +%s)
+    duration_ms=$(( (end_time - start_time) * 1000 ))
+    service_state_record_execution "$id" "$duration_ms" "$exit_code"
 
     if [ "$exit_code" -eq 0 ]; then
         service_state_mark_completed "$id"
@@ -415,4 +659,64 @@ service_stop() {
 
     service_state_mark_completed "$id"
     return 0
+}
+
+# Stop all running services
+#
+# Sends TERM signal to all running services, waits briefly,
+# then sends KILL to any remaining.
+service_stop_all() {
+    local enabled_services
+    enabled_services=$(service_get_enabled)
+
+    # First pass: send TERM
+    for id in $enabled_services; do
+        if service_state_is_running "$id"; then
+            local pid
+            pid=$(service_state_get_pid "$id")
+            if [ -n "$pid" ]; then
+                log_debug "Stopping service $id (PID: $pid)"
+                kill -TERM "$pid" 2>/dev/null || true
+            fi
+        fi
+    done
+
+    # Wait for graceful shutdown
+    sleep 2
+
+    # Second pass: force kill any remaining
+    for id in $enabled_services; do
+        if service_state_is_running "$id"; then
+            local pid
+            pid=$(service_state_get_pid "$id")
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                log_warn "Force killing service $id (PID: $pid)"
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            service_state_mark_completed "$id"
+        fi
+    done
+}
+
+# Get service output/logs (if captured)
+#
+# Note: This is a placeholder for future implementation
+# where service output could be captured to files.
+#
+# Args:
+#   id    - Service identifier
+#   lines - Number of lines to return (default: 100)
+#
+# Returns: Last N lines of service output
+service_get_output() {
+    local id="$1"
+    local lines="${2:-100}"
+
+    local output_file="$_RUNNER_RALPH_DIR/logs/service-${id}.log"
+
+    if [ -f "$output_file" ]; then
+        tail -n "$lines" "$output_file"
+    else
+        echo "No output captured for service $id"
+    fi
 }

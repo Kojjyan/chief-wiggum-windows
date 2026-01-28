@@ -7,6 +7,7 @@ source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/core/verbose-flags.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
 
 # Validation error tracking
 declare -a VALIDATION_ERRORS=()
@@ -369,14 +370,10 @@ get_section_header() {
     esac
 }
 
-sort_kanban() {
+# Internal implementation - called under lock
+_sort_kanban_impl() {
     local kanban_file="$1"
     local quiet="${2:-false}"
-
-    if [ ! -f "$kanban_file" ]; then
-        echo "Error: Kanban file not found: $kanban_file" >&2
-        return $EXIT_VALIDATE_FILE_NOT_FOUND
-    fi
 
     # First validate the file
     validate_kanban "$kanban_file"
@@ -538,6 +535,20 @@ sort_kanban() {
     fi
 
     return $EXIT_OK
+}
+
+# Sort kanban file with file locking to prevent concurrent modification
+sort_kanban() {
+    local kanban_file="$1"
+    local quiet="${2:-false}"
+
+    if [ ! -f "$kanban_file" ]; then
+        echo "Error: Kanban file not found: $kanban_file" >&2
+        return $EXIT_VALIDATE_FILE_NOT_FOUND
+    fi
+
+    # Acquire lock for the entire sort operation to prevent concurrent modifications
+    with_file_lock "$kanban_file" 5 _sort_kanban_impl "$kanban_file" "$quiet"
 }
 
 main() {
