@@ -31,7 +31,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "usage_tracker_write_shared"
+        "function": "orch_usage_tracker_write_shared"
       }
     },
     {
@@ -44,7 +44,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "scheduler_decay_skip_counts"
+        "function": "orch_decay_skip_counts"
       }
     },
     {
@@ -57,7 +57,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "create_orphan_pr_workspaces"
+        "function": "orch_create_orphan_pr_workspaces"
       }
     },
     {
@@ -69,7 +69,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "pr_merge_spawn_background"
+        "function": "orch_spawn_pr_optimizer"
       },
       "concurrency": {
         "max_instances": 1,
@@ -85,7 +85,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "_check_and_spawn_multi_pr_planner"
+        "function": "orch_spawn_multi_pr_planner"
       }
     },
     {
@@ -98,7 +98,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "spawn_fix_workers"
+        "function": "orch_spawn_fix_workers"
       }
     },
     {
@@ -111,7 +111,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "spawn_resolve_workers"
+        "function": "orch_spawn_resolve_workers"
       }
     },
     {
@@ -124,7 +124,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "scheduler_tick"
+        "function": "orch_scheduler_tick"
       }
     },
     {
@@ -137,7 +137,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "cleanup_main_workers"
+        "function": "orch_cleanup_main_workers"
       }
     },
     {
@@ -149,7 +149,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "scheduler_detect_orphan_workers"
+        "function": "orch_detect_orphan_workers"
       }
     },
     {
@@ -161,7 +161,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "cleanup_fix_workers"
+        "function": "orch_cleanup_fix_workers"
       }
     },
     {
@@ -173,7 +173,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "cleanup_resolve_workers"
+        "function": "orch_cleanup_resolve_workers"
       }
     },
     {
@@ -186,7 +186,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "_check_completed_pr_optimizer"
+        "function": "orch_check_pr_optimizer"
       }
     },
     {
@@ -199,7 +199,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "spawn_ready_tasks"
+        "function": "orch_spawn_ready_tasks"
       }
     },
     {
@@ -211,7 +211,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "scheduler_update_aging"
+        "function": "orch_update_aging"
       }
     },
     {
@@ -223,7 +223,7 @@
       },
       "execution": {
         "type": "function",
-        "function": "display_orchestrator_status"
+        "function": "orch_display_status"
       }
     }
   ]

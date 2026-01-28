@@ -37,6 +37,7 @@ Cleanup & Review:
 
 Utilities:
   util convert-log    Convert JSONL iteration logs to markdown
+  service             Manage orchestrator services (list, status, run, stop)
 
 Run Options:
   --max-workers N     Maximum concurrent workers (default: 4)
@@ -142,6 +143,9 @@ main() {
             ;;
         util)
             exec "$WIGGUM_HOME/bin/wiggum-util" "$@"
+            ;;
+        service)
+            exec "$WIGGUM_HOME/bin/wiggum-service" "$@"
             ;;
         -h|--help|help)
             show_help

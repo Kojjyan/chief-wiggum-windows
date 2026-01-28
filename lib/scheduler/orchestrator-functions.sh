@@ -571,3 +571,115 @@ orch_display_status() {
             "$dep_bonus"
     fi
 }
+
+# =============================================================================
+# Service-callable wrapper functions
+#
+# These wrappers are designed to be called by the service scheduler.
+# They read required arguments from environment variables (RALPH_DIR,
+# PROJECT_DIR, etc.) which are exported by the service runner.
+# =============================================================================
+
+# Wrapper for usage_tracker_write_shared
+#
+# Globals:
+#   RALPH_DIR - Required
+orch_usage_tracker_write_shared() {
+    local ralph_dir="${RALPH_DIR:-}"
+    [ -n "$ralph_dir" ] || return 1
+
+    usage_tracker_write_shared "$ralph_dir" > /dev/null 2>&1 || true
+}
+
+# Wrapper for scheduler_decay_skip_counts
+#
+# Note: This function operates on in-memory state, so it only works
+# when called in the same process as the scheduler. For the service
+# scheduler, this is a no-op since each service runs in a subshell.
+orch_decay_skip_counts() {
+    # Skip counts are in-memory state - can only decay in main process
+    # This is called in a subshell by the service runner, so it's a no-op
+    # The main orchestrator should call scheduler_decay_skip_counts directly
+    :
+}
+
+# Wrapper for create_orphan_pr_workspaces
+#
+# Globals:
+#   RALPH_DIR   - Required
+#   PROJECT_DIR - Required
+orch_create_orphan_pr_workspaces() {
+    local ralph_dir="${RALPH_DIR:-}"
+    local project_dir="${PROJECT_DIR:-}"
+
+    [ -n "$ralph_dir" ] || return 1
+    [ -n "$project_dir" ] || return 1
+
+    create_orphan_pr_workspaces "$ralph_dir" "$project_dir"
+}
+
+# Wrapper for spawn_fix_workers
+#
+# Globals:
+#   RALPH_DIR       - Required
+#   PROJECT_DIR     - Required
+#   PRIORITY_LIMIT  - Optional (default: 2)
+orch_spawn_fix_workers() {
+    local ralph_dir="${RALPH_DIR:-}"
+    local project_dir="${PROJECT_DIR:-}"
+    local limit="${PRIORITY_LIMIT:-2}"
+
+    [ -n "$ralph_dir" ] || return 1
+    [ -n "$project_dir" ] || return 1
+
+    spawn_fix_workers "$ralph_dir" "$project_dir" "$limit"
+}
+
+# Wrapper for spawn_resolve_workers
+#
+# Globals:
+#   RALPH_DIR       - Required
+#   PROJECT_DIR     - Required
+#   PRIORITY_LIMIT  - Optional (default: 2)
+orch_spawn_resolve_workers() {
+    local ralph_dir="${RALPH_DIR:-}"
+    local project_dir="${PROJECT_DIR:-}"
+    local limit="${PRIORITY_LIMIT:-2}"
+
+    [ -n "$ralph_dir" ] || return 1
+    [ -n "$project_dir" ] || return 1
+
+    spawn_resolve_workers "$ralph_dir" "$project_dir" "$limit"
+}
+
+# Wrapper for scheduler_tick
+#
+# Note: This function operates on in-memory state, so it only works
+# when called in the same process as the scheduler. For the service
+# scheduler, this is handled by the main orchestrator loop.
+orch_scheduler_tick() {
+    # scheduler_tick operates on in-memory state (_SCHED_* vars)
+    # This is called in a subshell by the service runner, so it's a no-op
+    # The main orchestrator should call scheduler_tick directly
+    :
+}
+
+# Wrapper for scheduler_detect_orphan_workers
+#
+# Note: This function operates on in-memory state (worker pool),
+# so it only works in the main orchestrator process.
+orch_detect_orphan_workers() {
+    # scheduler_detect_orphan_workers operates on the worker pool
+    # which is in-memory state. This is a no-op in subshells.
+    :
+}
+
+# Wrapper for scheduler_update_aging
+#
+# Note: This function operates on in-memory state, so it only works
+# when called in the same process as the scheduler.
+orch_update_aging() {
+    # scheduler_update_aging operates on in-memory state
+    # This is a no-op in subshells.
+    :
+}
