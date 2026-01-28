@@ -546,6 +546,33 @@ spawn_resolve_workers() {
     # This handles cases where workers exited unexpectedly
     _priority_capacity_sync "$ralph_dir"
 
+    # First pass: detect and reset stuck "resolving" workers
+    # A worker is stuck if it's in "resolving" state but has no running agent
+    for worker_dir in "$ralph_dir/workers"/worker-*; do
+        [ -d "$worker_dir" ] || continue
+        local git_state
+        git_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "")
+        if [ "$git_state" = "resolving" ]; then
+            # Check if agent is actually running
+            local agent_running=false
+            if [ -f "$worker_dir/agent.pid" ]; then
+                local pid
+                pid=$(cat "$worker_dir/agent.pid" 2>/dev/null || true)
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                    agent_running=true
+                fi
+            fi
+
+            if [ "$agent_running" = false ]; then
+                local worker_id task_id
+                worker_id=$(basename "$worker_dir")
+                task_id=$(get_task_id_from_worker "$worker_id")
+                log "Resetting stuck resolver for $task_id (was in 'resolving' but no agent running)"
+                git_state_set "$worker_dir" "needs_resolve" "priority-workers.spawn_resolve_workers" "Reset stuck resolver (no agent process found)"
+            fi
+        fi
+    done
+
     # Build list of workers needing resolution, sorted by dependency depth
     # Check both needs_resolve (single-PR) and needs_multi_resolve (multi-PR) states
     local -a worker_scores=()
