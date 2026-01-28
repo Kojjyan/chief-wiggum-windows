@@ -6,6 +6,7 @@
 # - command: Shell commands
 # - function: Bash functions
 # - pipeline: Pipeline definitions
+# - agent: Agent execution (runs agents directly)
 #
 # Provides:
 #   service_runner_init(ralph_dir, project_dir) - Initialize runner
@@ -18,6 +19,9 @@
 #   - Resource limits support (memory, CPU/nice)
 #   - Execution metrics tracking
 #   - Pipeline execution type
+#
+# New in v1.2:
+#   - Agent execution type for running agents directly
 # =============================================================================
 
 # Prevent double-sourcing
@@ -114,6 +118,18 @@ service_run() {
             fi
 
             _run_service_pipeline "$id" "$pipeline_name" "$timeout" "$limits" "${extra_args[@]}"
+            ;;
+
+        agent)
+            local agent_type
+            agent_type=$(echo "$execution" | jq -r '.agent // ""')
+
+            if [ -z "$agent_type" ]; then
+                log_error "Service $id has no agent defined"
+                return 1
+            fi
+
+            _run_service_agent "$id" "$agent_type" "$timeout" "$execution" "$limits" "${extra_args[@]}"
             ;;
 
         *)
@@ -412,6 +428,75 @@ _run_service_pipeline() {
     return 0
 }
 
+# Run an agent-type service
+#
+# Executes an agent using the agent registry.
+#
+# Args:
+#   id         - Service identifier
+#   agent_type - Agent type to execute (e.g., "system.task-worker")
+#   timeout    - Timeout in seconds
+#   execution  - Full execution JSON config
+#   limits     - JSON limits config
+#   extra      - Extra arguments
+_run_service_agent() {
+    local id="$1"
+    local agent_type="$2"
+    local timeout="$3"
+    local execution="$4"
+    local limits="$5"
+    shift 5
+    local extra_args=("$@")
+
+    # Extract agent config from execution
+    local worker_dir max_iterations max_turns monitor_interval
+    worker_dir=$(echo "$execution" | jq -r '.worker_dir // ""')
+    max_iterations=$(echo "$execution" | jq -r '.max_iterations // 20')
+    max_turns=$(echo "$execution" | jq -r '.max_turns // 50')
+    monitor_interval=$(echo "$execution" | jq -r '.monitor_interval // 30')
+
+    # If no worker_dir specified, create a service-specific worker directory
+    if [ -z "$worker_dir" ]; then
+        local timestamp
+        timestamp=$(date +%s)
+        worker_dir="$_RUNNER_RALPH_DIR/workers/service-${id}-${timestamp}"
+        mkdir -p "$worker_dir/logs" "$worker_dir/results"
+    fi
+
+    # Get limits prefix
+    local limits_prefix
+    limits_prefix=$(_build_limits_prefix "$limits" "$timeout")
+
+    # Record start time
+    local start_time
+    start_time=$(date +%s%3N 2>/dev/null || echo "$(($(date +%s) * 1000))")
+
+    # Run agent in background
+    (
+        export RALPH_DIR="$_RUNNER_RALPH_DIR"
+        export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+        export SERVICE_ID="$id"
+        export SERVICE_START_TIME="$start_time"
+        export WIGGUM_HOME
+
+        # Source agent registry
+        source "$WIGGUM_HOME/lib/worker/agent-registry.sh"
+
+        # Run the agent
+        if [ -n "$limits_prefix" ]; then
+            eval "${limits_prefix}run_agent '$agent_type' '$worker_dir' '$_RUNNER_PROJECT_DIR' '$monitor_interval' '$max_iterations' '$max_turns' ${extra_args[*]}"
+        else
+            run_agent "$agent_type" "$worker_dir" "$_RUNNER_PROJECT_DIR" "$monitor_interval" "$max_iterations" "$max_turns" "${extra_args[@]}"
+        fi
+    ) &
+
+    local pid=$!
+    service_state_mark_started "$id" "$pid"
+
+    log_debug "Service $id (agent: $agent_type) started (PID: $pid, worker: $worker_dir)"
+    return 0
+}
+
 # Run a service synchronously (blocking)
 #
 # Useful for testing or when caller needs result immediately.
@@ -536,6 +621,43 @@ service_run_sync() {
                     exit_code=$?
                 else
                     log_error "Pipeline runner not available"
+                    exit_code=1
+                fi
+            fi
+            ;;
+
+        agent)
+            local agent_type worker_dir max_iterations max_turns monitor_interval
+            agent_type=$(echo "$execution" | jq -r '.agent // ""')
+            worker_dir=$(echo "$execution" | jq -r '.worker_dir // ""')
+            max_iterations=$(echo "$execution" | jq -r '.max_iterations // 20')
+            max_turns=$(echo "$execution" | jq -r '.max_turns // 50')
+            monitor_interval=$(echo "$execution" | jq -r '.monitor_interval // 30')
+
+            if [ -z "$agent_type" ]; then
+                log_error "Service $id has no agent defined"
+                exit_code=1
+            else
+                # Create worker directory if not specified
+                if [ -z "$worker_dir" ]; then
+                    local timestamp
+                    timestamp=$(date +%s)
+                    worker_dir="$_RUNNER_RALPH_DIR/workers/service-${id}-${timestamp}"
+                    mkdir -p "$worker_dir/logs" "$worker_dir/results"
+                fi
+
+                export RALPH_DIR="$_RUNNER_RALPH_DIR"
+                export PROJECT_DIR="$_RUNNER_PROJECT_DIR"
+                export SERVICE_ID="$id"
+
+                # Source agent registry and run
+                source "$WIGGUM_HOME/lib/worker/agent-registry.sh" 2>/dev/null || true
+                if declare -F run_agent &>/dev/null; then
+                    run_agent "$agent_type" "$worker_dir" "$_RUNNER_PROJECT_DIR" \
+                        "$monitor_interval" "$max_iterations" "$max_turns" "${extra_args[@]}"
+                    exit_code=$?
+                else
+                    log_error "Agent registry not available"
                     exit_code=1
                 fi
             fi

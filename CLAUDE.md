@@ -183,6 +183,51 @@ assert_file_exists "/path"
 | `docs/PROTOCOL.md` | Inter-agent communication, data passing mechanisms |
 | `docs/AUDIT_LOG.md` | Security audit trail format and events |
 
+## Spec-Driven Development
+
+Chief Wiggum follows spec-driven development: specifications define behavior before implementation, and code is validated against specs.
+
+### Core Principles
+
+1. **Specs are authoritative** - When code and spec disagree, determine which is correct; don't let drift persist
+2. **Document patterns, not implementations** - Specs describe *what* and *why*, code handles *how*
+3. **Extract emergent patterns** - When 3+ files share a pattern, consider adding it to a spec
+4. **Preserve behavior during refactoring** - Spec compliance changes should not alter functionality
+
+### Spec Document Hierarchy
+
+| Document | Scope | Examples |
+|----------|-------|----------|
+| `CLAUDE.md` | Project-wide conventions | Coding style, exit codes, file structure |
+| `docs/ARCHITECTURE.md` | System design | Component boundaries, data flow |
+| `docs/PIPELINE-SCHEMA.md` | Pipeline contracts | Step definitions, result mappings |
+| `docs/AGENT_DEV_GUIDE.md` | Agent interfaces | `agent_run()` signature, lifecycle hooks |
+| `docs/PROTOCOL.md` | Inter-component communication | File formats, event schemas |
+| `config/agents.json` | Agent configuration | Iteration limits, result mappings |
+
+### When Writing New Code
+
+1. **Check existing specs** - Find relevant spec documents before implementing
+2. **Follow established patterns** - Match conventions from spec, not just nearby code
+3. **Flag deviations** - If you must deviate, document why (comment + potential spec update)
+
+### When Reviewing Code
+
+Look for:
+- **Extra parameters** not in spec → extend spec or remove
+- **Missing behavior** spec requires → implement it
+- **Different defaults** than spec → align or document exception
+- **Naming mismatches** with spec terminology → rename for consistency
+
+### Periodic Refactoring
+
+Use `/wiggum-refactor` to analyze modules after multiple PRs:
+- Identifies patterns that should be added to specs
+- Finds code that deviates from existing specs
+- Suggests simplifications for accumulated complexity
+
+Output goes to `.ralph/refactor-plans/<module>-<timestamp>.md`.
+
 ## Bash Coding Style
 
 ### Script Header

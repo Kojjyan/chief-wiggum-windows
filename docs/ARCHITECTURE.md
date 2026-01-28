@@ -644,12 +644,7 @@ The optimizer maintains state in `.ralph/pr-merge-state.json`:
 
 ### Integration
 
-The optimizer is called from `wiggum-run` at startup and during periodic sync:
-
-```bash
-# In _schedule_pending_pr_fixes()
-pr_merge_optimize_and_execute "$RALPH_DIR" "$PROJECT_DIR"
-```
+The optimizer is called periodically via the `pr-optimizer` service (every 900s by default).
 
 ### Debugging
 
@@ -667,17 +662,9 @@ jq '.merge_order' .ralph/pr-merge-state.json
 jq '.merged_this_cycle' .ralph/pr-merge-state.json
 ```
 
-## Service Scheduler (Optional)
+## Service Scheduler
 
-The service scheduler (`lib/service/`) provides a systemd-like approach to orchestrator responsibilities. Instead of hardcoded intervals and counter-based scheduling, periodic tasks are defined as declarative "services" with configurable intervals.
-
-### Enabling
-
-Enable via environment variable:
-
-```bash
-WIGGUM_USE_SERVICE_SCHEDULER=true wiggum run
-```
+The service scheduler (`lib/service/`) provides a systemd-like approach to orchestrator responsibilities. Periodic tasks are defined as declarative "services" with configurable intervals.
 
 ### Architecture
 

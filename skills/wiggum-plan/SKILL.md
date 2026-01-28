@@ -10,7 +10,11 @@ Create implementation plans by exploring the codebase and designing an approach.
 
 ## Input
 
-A task ID from `.ralph/kanban.md` (e.g., `TASK-015`, `FEATURE-042`).
+**Mode 1 - Existing Task**: A task ID from `.ralph/kanban.md` (e.g., `TASK-015`, `FEATURE-042`).
+
+**Mode 2 - New Task**: A description of work to be done (e.g., "Add user authentication with JWT"). When no valid task ID is provided, the skill will:
+1. Create the task in `.ralph/kanban.md`
+2. Then create the implementation plan
 
 ## When This Skill is Invoked
 
@@ -27,9 +31,45 @@ A task ID from `.ralph/kanban.md` (e.g., `TASK-015`, `FEATURE-042`).
 1. **NEVER implement** - This skill produces plans, not code
 2. **ALWAYS write the plan file** - Every session must end with writing `.ralph/plans/TASK-ID.md`
 3. **Multiple iterations allowed** - Explore, ask questions, explore more as needed
-4. **READ-ONLY exploration** - Only modify the plan file itself
+4. **READ-ONLY exploration** - Only modify the kanban file (when creating tasks) and plan file
+5. **Create task when needed** - If no valid task ID is provided, create the task in kanban first
 
 ## Core Workflow
+
+### Phase 0: Task Creation (when no task ID provided)
+
+**Skip this phase if a valid task ID was provided.**
+
+When the input is a description rather than a task ID:
+
+**Analyze existing kanban:**
+- Read `.ralph/kanban.md`
+- Identify the highest task number for ID assignment
+- Note existing dependencies and task prefixes used
+- Check for similar/related pending tasks
+
+**Clarify requirements with AskUserQuestion:**
+- Scope: What should be included/excluded?
+- Priority: How urgent is this work?
+- Dependencies: Does this depend on existing tasks?
+
+**Design the task:**
+- Determine if it should be one task or multiple
+- If multiple tasks needed, break down with proper dependencies (use Scope field for sub-items within a single task)
+- Each task should be completable by one worker in one session
+
+**Create the task in kanban:**
+- Add properly formatted task entry to `.ralph/kanban.md`
+- Include all required fields: Description, Priority, Dependencies
+- Use optional fields (Scope, Acceptance Criteria) when helpful
+- Confirm with user before writing via AskUserQuestion
+
+For task format details, see `/kanban` skill references:
+- Task format: `skills/kanban/references/task-format.md`
+- Dependency patterns: `skills/kanban/references/dependency-patterns.md`
+- Sizing guidelines: `skills/kanban/references/sizing-guidelines.md`
+
+**After task creation, continue to Phase 1 with the newly created task ID.**
 
 ### Phase 1: Explore and Understand (iterative)
 
@@ -87,7 +127,9 @@ Consider:
 
 For plan structure and format, see references/plan-format.md.
 
-## Example
+## Examples
+
+### Example 1: Planning an Existing Task
 
 **User**: `/wiggum-plan TASK-015`
 
@@ -163,6 +205,110 @@ I've saved the implementation plan to `.ralph/plans/TASK-015.md`. The plan cover
 
 The plan is ready for a Chief Wiggum worker to execute.
 
+### Example 2: Creating Task and Plan Together
+
+**User**: `/wiggum-plan Add a dark mode toggle to the settings page`
+
+**Assistant**: I'll help create and plan this feature. Since no task ID was provided, let me first analyze the existing kanban.
+
+*[Reads .ralph/kanban.md]*
+
+Found 15 tasks. Highest ID is TASK-015. TASK-012 (Settings page) is complete `[x]`. Using TASK- prefix.
+
+*[Uses AskUserQuestion]*
+```
+questions:
+  - question: What priority level for dark mode?
+    header: Priority
+    multiSelect: false
+    options:
+      - label: HIGH
+        description: Important UX feature, blocking other work
+      - label: MEDIUM
+        description: Nice-to-have, not blocking other tasks
+      - label: LOW
+        description: Low priority enhancement
+  - question: What should be included in dark mode scope?
+    header: Scope
+    multiSelect: true
+    options:
+      - label: Settings toggle
+        description: UI toggle in settings page
+      - label: System preference
+        description: Auto-detect OS dark/light preference
+      - label: Persist choice
+        description: Remember user's selection across sessions
+```
+
+**User selects**: MEDIUM, Settings toggle, Persist choice
+
+**Assistant**: I'll create a single task for this. Let me show you the proposed entry:
+
+```markdown
+- [ ] **[TASK-016]** Add dark mode toggle to settings page
+  - Description: Add a toggle in settings to switch between light and dark themes with persistence
+  - Priority: MEDIUM
+  - Dependencies: TASK-012
+  - Scope:
+    - Add toggle switch component to settings page
+    - Implement theme state management
+    - Apply theme styles across the application
+    - Persist theme preference in local storage
+  - Acceptance Criteria:
+    - Toggle changes theme immediately
+    - Theme persists across page reloads
+    - Theme persists across browser sessions
+```
+
+*[Uses AskUserQuestion]*
+```
+questions:
+  - question: Add this task to .ralph/kanban.md?
+    header: Confirm
+    multiSelect: false
+    options:
+      - label: Yes, add task
+        description: Add TASK-016 to kanban and continue to planning
+      - label: Modify first
+        description: I want to adjust something before adding
+```
+
+**User selects**: Yes, add task
+
+**Assistant**: Added TASK-016 to kanban. Now let me explore the codebase to create the implementation plan...
+
+*[Uses Glob to find settings components]*
+*[Uses Read to examine src/pages/Settings.tsx]*
+*[Uses Grep to find existing theme patterns]*
+
+Found existing color variables in `src/styles/variables.css`. Settings page uses component library.
+
+*[Uses AskUserQuestion]*
+```
+questions:
+  - question: How should the theme be managed?
+    header: Theme state
+    multiSelect: false
+    options:
+      - label: React Context
+        description: Found existing context pattern in src/context/
+      - label: CSS variables
+        description: Toggle CSS class on body, simpler approach
+```
+
+**User selects**: CSS variables
+
+**Assistant**: Good choice for simplicity. Let me complete the plan...
+
+*[Writes to .ralph/plans/TASK-016.md]*
+
+I've created TASK-016 in kanban and saved the implementation plan to `.ralph/plans/TASK-016.md`. Summary:
+
+- Task added to `.ralph/kanban.md` with MEDIUM priority
+- Plan uses CSS variables approach with body class toggle
+- Theme stored in localStorage for persistence
+- Toggle component added to Settings page
+
 ## Key Principles
 
 1. **Research before questions** - Explore codebase first, ground questions in findings
@@ -170,6 +316,8 @@ The plan is ready for a Chief Wiggum worker to execute.
 3. **Be specific** - Reference actual file paths, function names, line numbers
 4. **Always write plan** - Session must end with `.ralph/plans/TASK-ID.md`
 5. **Never implement** - Planning only, no code changes
+6. **Seamless task creation** - When no task ID provided, create task in kanban before planning
+7. **Confirm before writing kanban** - Always ask user to confirm before adding tasks to kanban
 
 ## Progressive Disclosure
 
