@@ -18,6 +18,43 @@ source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/scheduler/conflict-queue.sh"
+source "$WIGGUM_HOME/lib/scheduler/batch-coordination.sh"
+
+# Clean up batch coordination state after a PR is merged
+#
+# When a PR is merged independently (not through batch resolution), we need to:
+# 1. Mark the task complete in the batch coordination file
+# 2. Remove batch-context.json from the worker
+# 3. Remove the task from the conflict queue
+#
+# This prevents spawn_resolve_workers() from trying to use a deleted workspace.
+#
+# Args:
+#   worker_dir  - Worker directory path
+#   task_id     - Task identifier
+#   ralph_dir   - Ralph directory path
+_cleanup_batch_state() {
+    local worker_dir="$1"
+    local task_id="$2"
+    local ralph_dir="$3"
+
+    # Clean up batch coordination if this worker was part of a batch
+    if batch_coord_has_worker_context "$worker_dir"; then
+        local batch_id
+        batch_id=$(batch_coord_read_worker_context "$worker_dir" "batch_id")
+        if [ -n "$batch_id" ]; then
+            # Get project_dir from ralph_dir (ralph_dir is typically project_dir/.ralph)
+            local project_dir
+            project_dir=$(dirname "$ralph_dir")
+            batch_coord_mark_complete "$batch_id" "$task_id" "$project_dir"
+            log "Marked $task_id complete in batch $batch_id"
+        fi
+        rm -f "$worker_dir/batch-context.json"
+    fi
+
+    # Remove from conflict queue if present
+    conflict_queue_remove "$ralph_dir" "$task_id"
+}
 
 # Clean up worktree after PR is merged (keeps logs/results/reports)
 #
@@ -117,6 +154,9 @@ attempt_pr_merge() {
             update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x"
         fi
 
+        # Clean up batch coordination state before removing workspace
+        _cleanup_batch_state "$worker_dir" "$task_id" "$ralph_dir"
+
         # Clean up worktree
         _cleanup_merged_pr_worktree "$worker_dir"
         return 0
@@ -131,6 +171,9 @@ attempt_pr_merge() {
         if [ -f "$ralph_dir/kanban.md" ]; then
             update_kanban_status "$ralph_dir/kanban.md" "$task_id" "x"
         fi
+
+        # Clean up batch coordination state before removing workspace
+        _cleanup_batch_state "$worker_dir" "$task_id" "$ralph_dir"
 
         # Clean up worktree
         _cleanup_merged_pr_worktree "$worker_dir"

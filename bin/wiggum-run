@@ -402,6 +402,18 @@ _check_completed_planners() {
                     local worker_dir
                     worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$task_id" 2>/dev/null)
                     if [ -n "$worker_dir" ] && [ -d "$worker_dir" ]; then
+                        # Skip workers already in terminal states (merged, failed)
+                        # or workers whose workspace was already cleaned up
+                        local current_state
+                        current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
+                        if [[ "$current_state" == "merged" || "$current_state" == "failed" ]]; then
+                            log "Skipping $task_id - already in terminal state: $current_state"
+                            continue
+                        fi
+                        if [ ! -d "$worker_dir/workspace" ]; then
+                            log "Skipping $task_id - workspace already cleaned up (PR likely merged)"
+                            continue
+                        fi
                         git_state_set "$worker_dir" "needs_resolve" "wiggum-run._check_completed_planners" "Resolution plan ready"
                     fi
                 done <<< "$task_ids"

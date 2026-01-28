@@ -15,6 +15,7 @@ source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 source "$WIGGUM_HOME/lib/worker/git-state.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/platform.sh"
+source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/scheduler/conflict-queue.sh"
 source "$WIGGUM_HOME/lib/scheduler/batch-coordination.sh"
 
@@ -178,6 +179,20 @@ spawn_resolve_workers() {
         local task_id
         task_id=$(get_task_id_from_worker "$worker_id")
 
+        # Escape hatch: check if max merge attempts exceeded
+        # This prevents infinite resolve loops
+        local merge_attempts
+        merge_attempts=$(git_state_get_merge_attempts "$worker_dir" 2>/dev/null || echo "0")
+        if [ "$merge_attempts" -ge "${MAX_MERGE_ATTEMPTS:-3}" ]; then
+            log_error "Max merge attempts ($merge_attempts) reached for $task_id - marking as failed"
+            git_state_set "$worker_dir" "failed" "priority-workers.spawn_resolve_workers" "Max merge attempts exceeded after resolution"
+            # Clean up batch context if present
+            if [ -f "$worker_dir/batch-context.json" ]; then
+                rm -f "$worker_dir/batch-context.json"
+            fi
+            continue
+        fi
+
         # Guard: skip if agent is already running
         if [ -f "$worker_dir/agent.pid" ]; then
             local existing_pid
@@ -209,6 +224,17 @@ _spawn_simple_resolve_worker() {
     local project_dir="$2"
     local worker_dir="$3"
     local task_id="$4"
+
+    # Defense-in-depth: verify workspace still exists
+    if [ ! -d "$worker_dir/workspace" ]; then
+        log_warn "Skipping simple resolver for $task_id - workspace already cleaned up"
+        local current_state
+        current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
+        if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
+            git_state_set "$worker_dir" "merged" "priority-workers._spawn_simple_resolve_worker" "Workspace cleaned up, PR was merged"
+        fi
+        return 0
+    fi
 
     # Transition state
     git_state_set "$worker_dir" "resolving" "priority-workers.spawn_resolve_workers" "Simple resolver spawned"
@@ -255,6 +281,22 @@ _spawn_batch_resolve_worker() {
     local project_dir="$2"
     local worker_dir="$3"
     local task_id="$4"
+
+    # Defense-in-depth: verify workspace still exists
+    # If the PR was merged independently, the workspace may have been cleaned up
+    # but batch-context.json might still exist (race condition)
+    if [ ! -d "$worker_dir/workspace" ]; then
+        log_warn "Skipping batch resolver for $task_id - workspace already cleaned up (PR likely merged)"
+        # Clean up stale batch context
+        rm -f "$worker_dir/batch-context.json"
+        # Mark as merged if not already in a terminal state
+        local current_state
+        current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
+        if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
+            git_state_set "$worker_dir" "merged" "priority-workers._spawn_batch_resolve_worker" "Workspace cleaned up, PR was merged"
+        fi
+        return 0
+    fi
 
     local batch_id position total
     batch_id=$(batch_coord_read_worker_context "$worker_dir" "batch_id")

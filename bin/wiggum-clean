@@ -20,6 +20,7 @@ wiggum clean - Clean up worktrees, worker directories, or reset kanban tasks
 
 Usage: wiggum clean [options] <target>
        wiggum clean kanban [all|<task-id>]
+       wiggum clean batch [all|stale|<batch-id>]
 
 Worker Targets:
   <pattern>           Clean workers matching pattern (e.g., TASK-001, 030)
@@ -30,6 +31,11 @@ Worker Targets:
 Kanban Targets:
   kanban all          Reset resettable tasks (in-progress, pending approval, failed)
   kanban <task-id>    Reset a specific task if it's in a resettable state
+
+Batch Targets:
+  batch all           Clean all batch coordination files and planner directories
+  batch stale         Clean stale batches (merged workers, orphaned contexts)
+  batch <batch-id>    Clean a specific batch by ID
 
 Options:
   -y, --yes           Skip confirmation prompt
@@ -43,6 +49,8 @@ Examples:
   wiggum clean -y all         # Clean all without confirmation
   wiggum clean kanban all     # Reset all resettable tasks in kanban
   wiggum clean kanban 030     # Reset TASK-030 if it's resettable
+  wiggum clean batch stale    # Clean stale batch state (recommended)
+  wiggum clean batch all      # Clean all batch coordination state
 
 EOF
 }
@@ -241,6 +249,245 @@ do_kanban_all() {
     do_kanban_reset "$kanban_file" "${tasks_to_reset[@]}"
 }
 
+# Clean orphaned batch-context.json files from workers
+# These are left behind when PRs are merged independently
+clean_orphaned_batch_contexts() {
+    local cleaned=0
+
+    [ -d "$RALPH_DIR/workers" ] || return 0
+
+    for worker_dir in "$RALPH_DIR/workers"/worker-*; do
+        [ -d "$worker_dir" ] || continue
+        [ -f "$worker_dir/batch-context.json" ] || continue
+
+        local task_id
+        task_id=$(basename "$worker_dir" | sed -E 's/worker-([A-Za-z]{2,10}-[0-9]{1,4})-.*/\1/')
+
+        # Check if workspace is gone (PR was merged and cleaned up)
+        if [ ! -d "$worker_dir/workspace" ]; then
+            log "Removing orphaned batch-context.json from $task_id (workspace cleaned up)"
+            rm -f "$worker_dir/batch-context.json"
+            ((++cleaned)) || true
+            continue
+        fi
+
+        # Check if worker is in terminal state
+        local state
+        state=$(cat "$worker_dir/git-state.json" 2>/dev/null | jq -r '.state // .current_state // "unknown"')
+        if [[ "$state" == "merged" || "$state" == "failed" ]]; then
+            log "Removing orphaned batch-context.json from $task_id (state: $state)"
+            rm -f "$worker_dir/batch-context.json"
+            ((++cleaned)) || true
+        fi
+    done
+
+    echo "Cleaned $cleaned orphaned batch context file(s)"
+}
+
+# Clean stale batch coordination files
+clean_stale_batches() {
+    local cleaned=0
+
+    [ -d "$RALPH_DIR/batches" ] || return 0
+
+    for batch_dir in "$RALPH_DIR/batches"/batch-*; do
+        [ -d "$batch_dir" ] || continue
+
+        local coord_file="$batch_dir/coordination.json"
+        [ -f "$coord_file" ] || continue
+
+        local batch_id status
+        batch_id=$(basename "$batch_dir")
+        status=$(jq -r '.status // "unknown"' "$coord_file")
+
+        # Clean completed or failed batches
+        if [[ "$status" == "complete" || "$status" == "failed" ]]; then
+            log "Removing $batch_id (status: $status)"
+            rm -rf "$batch_dir"
+            ((++cleaned)) || true
+            continue
+        fi
+
+        # Check if batch is stale (all tasks merged/failed)
+        local all_done=true
+        local task_ids
+        task_ids=$(jq -r '.order[]' "$coord_file" 2>/dev/null)
+
+        while read -r task_id; do
+            [ -z "$task_id" ] && continue
+            local worker_dir
+            worker_dir=$(find "$RALPH_DIR/workers" -maxdepth 1 -type d -name "worker-${task_id}-*" | head -1)
+
+            if [ -n "$worker_dir" ] && [ -d "$worker_dir" ]; then
+                local state
+                state=$(cat "$worker_dir/git-state.json" 2>/dev/null | jq -r '.state // .current_state // "unknown"')
+                if [[ "$state" != "merged" && "$state" != "failed" ]]; then
+                    all_done=false
+                    break
+                fi
+            fi
+        done <<< "$task_ids"
+
+        if [ "$all_done" = true ]; then
+            log "Removing stale $batch_id (all tasks in terminal state)"
+            rm -rf "$batch_dir"
+            ((++cleaned)) || true
+        fi
+    done
+
+    echo "Cleaned $cleaned stale batch coordination file(s)"
+}
+
+# Clean planner directories
+clean_planners() {
+    local cleaned=0
+
+    [ -d "$RALPH_DIR/workers" ] || return 0
+
+    for planner_dir in "$RALPH_DIR/workers"/planner-batch-*; do
+        [ -d "$planner_dir" ] || continue
+
+        local batch_id
+        batch_id=$(basename "$planner_dir" | sed 's/^planner-//')
+
+        # Check if planner is still running
+        local pid_file="$planner_dir/planner.pid"
+        if [ -f "$pid_file" ]; then
+            local pid
+            pid=$(cat "$pid_file")
+            if kill -0 "$pid" 2>/dev/null; then
+                log "Skipping $batch_id (planner still running, PID: $pid)"
+                continue
+            fi
+        fi
+
+        # Check if corresponding batch exists
+        if [ ! -d "$RALPH_DIR/batches/$batch_id" ]; then
+            log "Removing planner-$batch_id (batch no longer exists)"
+            rm -rf "$planner_dir"
+            ((++cleaned)) || true
+        fi
+    done
+
+    echo "Cleaned $cleaned planner director(ies)"
+}
+
+# Handle 'wiggum clean batch all'
+do_batch_all() {
+    echo "This will clean ALL batch coordination state:"
+    echo "  - All batch coordination files in .ralph/batches/"
+    echo "  - All batch-context.json files in worker directories"
+    echo "  - All planner directories"
+    echo ""
+
+    confirm "Proceed with batch cleanup?" || {
+        echo "Aborted."
+        exit $EXIT_OK
+    }
+
+    # Clean batch directories
+    if [ -d "$RALPH_DIR/batches" ]; then
+        local batch_count
+        batch_count=$(find "$RALPH_DIR/batches" -maxdepth 1 -type d -name "batch-*" 2>/dev/null | wc -l)
+        rm -rf "$RALPH_DIR/batches"/batch-*
+        log "Removed $batch_count batch coordination director(ies)"
+    fi
+
+    # Clean all batch-context.json files
+    local context_count=0
+    for worker_dir in "$RALPH_DIR/workers"/worker-*; do
+        [ -f "$worker_dir/batch-context.json" ] && {
+            rm -f "$worker_dir/batch-context.json"
+            ((++context_count)) || true
+        }
+    done
+    log "Removed $context_count batch context file(s)"
+
+    # Clean planner directories
+    local planner_count
+    planner_count=$(find "$RALPH_DIR/workers" -maxdepth 1 -type d -name "planner-batch-*" 2>/dev/null | wc -l)
+    rm -rf "$RALPH_DIR/workers"/planner-batch-*
+    log "Removed $planner_count planner director(ies)"
+
+    log "Batch cleanup complete"
+}
+
+# Handle 'wiggum clean batch stale'
+do_batch_stale() {
+    echo "Cleaning stale batch coordination state..."
+    echo ""
+
+    clean_orphaned_batch_contexts
+    clean_stale_batches
+    clean_planners
+
+    log "Stale batch cleanup complete"
+}
+
+# Handle 'wiggum clean batch <batch-id>'
+do_batch_specific() {
+    local batch_id="$1"
+
+    # Normalize batch_id (add batch- prefix if missing)
+    [[ "$batch_id" != batch-* ]] && batch_id="batch-$batch_id"
+
+    local batch_dir="$RALPH_DIR/batches/$batch_id"
+
+    if [ ! -d "$batch_dir" ]; then
+        echo "Batch not found: $batch_id"
+        echo ""
+        echo "Available batches:"
+        if [ -d "$RALPH_DIR/batches" ]; then
+            ls -1 "$RALPH_DIR/batches" 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+        else
+            echo "  (none)"
+        fi
+        exit $EXIT_USAGE
+    fi
+
+    # Show batch info
+    local coord_file="$batch_dir/coordination.json"
+    if [ -f "$coord_file" ]; then
+        echo "Batch: $batch_id"
+        echo "Status: $(jq -r '.status' "$coord_file")"
+        echo "Tasks: $(jq -r '.order | join(", ")' "$coord_file")"
+        echo "Progress: $(jq -r '.current_position' "$coord_file")/$(jq -r '.total' "$coord_file")"
+        echo ""
+    fi
+
+    confirm "Remove this batch and its worker context files?" || {
+        echo "Aborted."
+        exit $EXIT_OK
+    }
+
+    # Remove batch directory
+    rm -rf "$batch_dir"
+    log "Removed $batch_dir"
+
+    # Remove batch-context.json from associated workers
+    local task_ids
+    task_ids=$(jq -r '.order[]' "$coord_file" 2>/dev/null || true)
+
+    while read -r task_id; do
+        [ -z "$task_id" ] && continue
+        for worker_dir in "$RALPH_DIR/workers"/worker-${task_id}-*; do
+            [ -f "$worker_dir/batch-context.json" ] && {
+                rm -f "$worker_dir/batch-context.json"
+                log "Removed batch context from $(basename "$worker_dir")"
+            }
+        done
+    done <<< "$task_ids"
+
+    # Remove planner if exists
+    local planner_dir="$RALPH_DIR/workers/planner-$batch_id"
+    [ -d "$planner_dir" ] && {
+        rm -rf "$planner_dir"
+        log "Removed planner-$batch_id"
+    }
+
+    log "Batch $batch_id cleanup complete"
+}
+
 # Handle 'wiggum clean kanban <task-id>'
 do_kanban_task() {
     local task_pattern="$1"
@@ -278,6 +525,7 @@ do_kanban_task() {
 # Parse options
 TARGET=""
 KANBAN_TARGET=""
+BATCH_TARGET=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -y|--yes)
@@ -298,6 +546,14 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]] && {
                 KANBAN_TARGET="$1"
+                shift
+            }
+            ;;
+        batch)
+            TARGET="batch"
+            shift
+            [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]] && {
+                BATCH_TARGET="$1"
                 shift
             }
             ;;
@@ -331,6 +587,28 @@ if [ "$TARGET" = "kanban" ]; then
     }
 
     [ "$KANBAN_TARGET" = "all" ] && do_kanban_all || do_kanban_task "$KANBAN_TARGET"
+    exit $EXIT_OK
+fi
+
+# Handle batch subcommand
+if [ "$TARGET" = "batch" ]; then
+    [ -z "$BATCH_TARGET" ] && {
+        echo "No batch target specified. Use 'wiggum clean batch all', 'wiggum clean batch stale', or 'wiggum clean batch <batch-id>'."
+        show_help
+        exit $EXIT_USAGE
+    }
+
+    case "$BATCH_TARGET" in
+        all)
+            do_batch_all
+            ;;
+        stale)
+            do_batch_stale
+            ;;
+        *)
+            do_batch_specific "$BATCH_TARGET"
+            ;;
+    esac
     exit $EXIT_OK
 fi
 

@@ -332,9 +332,9 @@ ${metrics_section}
     fi
 }
 
-# Verify that a commit has been pushed and PR exists on GitHub
+# Verify that a commit has been pushed to GitHub
 # Args: <workspace> <task_id>
-# Returns: 0 if verified, 1 if not
+# Returns: 0 if commit is pushed (regardless of PR status), 1 if not
 git_verify_pushed() {
     local workspace="$1"
     local task_id="$2"
@@ -344,15 +344,21 @@ git_verify_pushed() {
     local local_commit remote_commit pr_exists
     local_commit=$(git -C "$workspace" rev-parse HEAD 2>/dev/null)
 
-    # Check if commit exists on remote branch and PR exists (with timeout)
+    # Check if commit exists on remote branch (with timeout)
     remote_commit=$(timeout "$gh_timeout" git ls-remote --heads origin "task/$task_id-*" 2>/dev/null | head -1 | cut -f1)
-    pr_exists=$(timeout "$gh_timeout" gh pr list --head "task/$task_id-*" --json number -q '.[0].number' 2>/dev/null)
 
-    if [ -n "$remote_commit" ] && [ "$local_commit" = "$remote_commit" ] && [ -n "$pr_exists" ]; then
-        log_debug "Verified: commit $local_commit pushed and PR #$pr_exists exists on GitHub"
+    # Primary verification: commit is pushed to remote
+    if [ -n "$remote_commit" ] && [ "$local_commit" = "$remote_commit" ]; then
+        # Optionally check PR (non-blocking, for logging only)
+        pr_exists=$(timeout "$gh_timeout" gh pr list --head "task/$task_id-*" --json number -q '.[0].number' 2>/dev/null || true)
+        if [ -n "$pr_exists" ]; then
+            log_debug "Verified: commit $local_commit pushed and PR #$pr_exists exists on GitHub"
+        else
+            log_debug "Verified: commit $local_commit pushed (PR not yet visible or search pattern mismatch)"
+        fi
         return 0
     else
-        log "GitHub verification failed: local=$local_commit, remote=${remote_commit:-none}, pr=$([ -n "$pr_exists" ] && echo "#$pr_exists" || echo 'no')"
+        log "GitHub push verification failed: local=$local_commit, remote=${remote_commit:-none}"
         return 1
     fi
 }
