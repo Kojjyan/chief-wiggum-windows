@@ -60,6 +60,14 @@ export MAX_MERGE_ATTEMPTS
 WIGGUM_GH_TIMEOUT="${WIGGUM_GH_TIMEOUT:-30}"
 export WIGGUM_GH_TIMEOUT
 
+# Error log max age for status display (seconds) - only show errors newer than this
+ERROR_LOG_MAX_AGE="${WIGGUM_ERROR_LOG_MAX_AGE:-3600}"
+export ERROR_LOG_MAX_AGE
+
+# Stuck worker detection: warn if no activity for this many seconds (0 = disabled)
+STUCK_WORKER_THRESHOLD="${WIGGUM_STUCK_WORKER_THRESHOLD:-1800}"
+export STUCK_WORKER_THRESHOLD
+
 # Export for child processes
 export WIGGUM_HOME
 export PROJECT_DIR

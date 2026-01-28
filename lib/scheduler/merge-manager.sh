@@ -88,11 +88,19 @@ attempt_pr_merge() {
         return 2
     fi
 
-    git_state_set "$worker_dir" "merging" "merge-manager.attempt_pr_merge" "Attempting merge of PR #$pr_number"
-    git_state_inc_merge_attempts "$worker_dir"
-
+    # Check if we've already exceeded max attempts BEFORE incrementing
     local merge_attempts
     merge_attempts=$(git_state_get_merge_attempts "$worker_dir")
+    if [ "$merge_attempts" -ge "$MAX_MERGE_ATTEMPTS" ]; then
+        git_state_set "$worker_dir" "failed" "merge-manager.attempt_pr_merge" "Max merge attempts ($MAX_MERGE_ATTEMPTS) already reached"
+        log_error "Max merge attempts already reached for $task_id (at $merge_attempts attempts)"
+        return 2
+    fi
+
+    git_state_set "$worker_dir" "merging" "merge-manager.attempt_pr_merge" "Attempting merge of PR #$pr_number"
+    git_state_inc_merge_attempts "$worker_dir"
+    ((++merge_attempts))
+
     log "Attempting merge for $task_id PR #$pr_number (attempt $merge_attempts/$MAX_MERGE_ATTEMPTS)"
 
     local merge_output merge_exit=0

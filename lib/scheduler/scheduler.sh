@@ -322,7 +322,7 @@ scheduler_is_complete() {
 }
 
 # Detect orphan workers (running PIDs not tracked in pool)
-# Re-tracks them with a warning
+# Re-tracks them. This is normal when sub-agents are spawned with different PIDs.
 scheduler_detect_orphan_workers() {
     [ -d "$_SCHED_RALPH_DIR/workers" ] || return 0
 
@@ -339,14 +339,25 @@ scheduler_detect_orphan_workers() {
 
         # Check if this PID is already tracked
         if ! pool_get "$worker_pid" > /dev/null 2>&1; then
-            log "WARNING: Detected orphan worker for $task_id (PID: $worker_pid) - re-tracking"
-
             # Determine worker type from worker_id pattern
             local type="main"
             if [[ "$worker_id" == *"-fix-"* ]]; then
                 type="fix"
             elif [[ "$worker_id" == *"-resolve-"* ]]; then
                 type="resolve"
+            fi
+
+            # Check if a different PID for this task is already tracked
+            # If so, this is a sub-agent spawn (normal); otherwise it's unexpected
+            local existing_tracked=""
+            existing_tracked=$(pool_find_by_task "$task_id" 2>/dev/null || true)
+
+            if [ -n "$existing_tracked" ]; then
+                # Sub-agent spawned with new PID - replace old tracking
+                log "Detected sub-agent for $task_id (PID: $worker_pid) - updating tracking"
+                pool_remove "$existing_tracked" 2>/dev/null || true
+            else
+                log_warn "Detected orphan worker for $task_id (PID: $worker_pid) - re-tracking"
             fi
 
             pool_add "$worker_pid" "$type" "$task_id"

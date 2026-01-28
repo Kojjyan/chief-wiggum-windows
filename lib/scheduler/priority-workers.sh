@@ -98,6 +98,13 @@ spawn_fix_workers() {
                     sed "s/^/  [fix-$task_id] /"
             )
 
+            # Wait briefly for agent.pid to appear (async launch race condition)
+            local wait_count=0
+            while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 20 ]; do
+                sleep 0.1
+                ((++wait_count)) || true
+            done
+
             # Read the agent PID from the worker directory
             if [ -f "$worker_dir/agent.pid" ]; then
                 local agent_pid
@@ -105,7 +112,9 @@ spawn_fix_workers() {
                 pool_add "$agent_pid" "fix" "$task_id"
                 log "Fix worker spawned for $task_id (PID: $agent_pid)"
             else
-                log "Warning: Fix agent for $task_id did not produce agent.pid"
+                log_warn "Fix agent for $task_id did not produce agent.pid after 2s wait"
+                # Revert state so it can be retried
+                git_state_set "$worker_dir" "needs_fix" "priority-workers.spawn_fix_workers" "Agent failed to start"
             fi
         fi
     done < "$tasks_needing_fix"
@@ -212,10 +221,26 @@ _spawn_simple_resolve_worker() {
         "$WIGGUM_HOME/bin/wiggum-review" task "$task_id" resolve 2>&1 | \
             sed "s/^/  [resolve-$task_id] /"
     ) &
-    local resolver_pid=$!
+    local shell_pid=$!
 
-    pool_add "$resolver_pid" "resolve" "$task_id"
-    log "Simple resolver spawned for $task_id (PID: $resolver_pid)"
+    # Track the shell wrapper immediately
+    pool_add "$shell_pid" "resolve" "$task_id"
+    log "Simple resolver spawned for $task_id (PID: $shell_pid)"
+
+    # Also wait briefly for agent.pid - if Claude agent spawns separately, re-track with correct PID
+    (
+        sleep 2
+        if [ -f "$worker_dir/agent.pid" ]; then
+            local agent_pid
+            agent_pid=$(cat "$worker_dir/agent.pid" 2>/dev/null || true)
+            if [ -n "$agent_pid" ] && [ "$agent_pid" != "$shell_pid" ] && kill -0 "$agent_pid" 2>/dev/null; then
+                # Agent PID differs from shell PID - update tracking
+                # Note: This is async, so we can't directly update pool here
+                # Instead, orphan detection will pick it up
+                :
+            fi
+        fi
+    ) &
 }
 
 # Spawn a batch resolver worker using multi-pr-resolve pipeline
@@ -387,14 +412,16 @@ handle_fix_worker_completion() {
     local worker_dir="$1"
     local task_id="$2"
 
-    # Find the fix agent result by looking for result files with push_succeeded field
-    # (which is unique to fix agents). Check newest results first.
+    # Find the fix agent result by looking for result files with gate_result field.
+    # Fix agents produce results with gate_result (PASS/FIX/FAIL/SKIP).
+    # Check newest results first to get the most recent run.
     local result_file=""
     local candidate
     while read -r candidate; do
         [ -f "$candidate" ] || continue
-        # Check if this result has push_succeeded (fix agent signature)
-        if jq -e '.outputs.push_succeeded' "$candidate" &>/dev/null; then
+        # Check if this result has gate_result (fix agent signature)
+        # Accept results with either outputs.gate_result or top-level gate_result
+        if jq -e '.outputs.gate_result // .gate_result' "$candidate" &>/dev/null; then
             result_file="$candidate"
             break
         fi
@@ -403,13 +430,14 @@ handle_fix_worker_completion() {
     if [ -z "$result_file" ]; then
         # Fix agent didn't produce a result - it may have failed to start or exited early
         log_warn "No fix agent result for $task_id - fix agent may not have run"
-        # Don't change state - leave as needs_fix for retry
+        # Revert state to needs_fix so it can be retried on next cycle
+        git_state_set "$worker_dir" "needs_fix" "priority-workers.handle_fix_worker_completion" "No result file found"
         return 1
     fi
 
     local gate_result push_succeeded
-    gate_result=$(jq -r '.outputs.gate_result // "FAIL"' "$result_file" 2>/dev/null)
-    push_succeeded=$(jq -r '.outputs.push_succeeded // false' "$result_file" 2>/dev/null)
+    gate_result=$(jq -r '.outputs.gate_result // .gate_result // "FAIL"' "$result_file" 2>/dev/null)
+    push_succeeded=$(jq -r '.outputs.push_succeeded // "false"' "$result_file" 2>/dev/null)
 
     if [ "$gate_result" = "PASS" ] && [ "$push_succeeded" = "true" ]; then
         git_state_set "$worker_dir" "fix_completed" "priority-workers.handle_fix_worker_completion" "Push verified"
@@ -421,6 +449,17 @@ handle_fix_worker_completion() {
         git_state_set "$worker_dir" "fix_completed" "priority-workers.handle_fix_worker_completion" "Fix passed but push failed"
         log_warn "Fix completed for $task_id but push failed"
         return 0
+    elif [ "$gate_result" = "SKIP" ]; then
+        # No comments to fix - transition to merge
+        git_state_set "$worker_dir" "fix_completed" "priority-workers.handle_fix_worker_completion" "No comments to fix (SKIP)"
+        git_state_set "$worker_dir" "needs_merge" "priority-workers.handle_fix_worker_completion" "Ready for merge attempt"
+        log "Fix skipped for $task_id (no comments) - ready for merge"
+        return 0
+    elif [ "$gate_result" = "FIX" ]; then
+        # Partial fix - some comments addressed but not all
+        git_state_set "$worker_dir" "needs_fix" "priority-workers.handle_fix_worker_completion" "Partial fix, needs more work"
+        log_warn "Partial fix for $task_id - will retry"
+        return 1
     else
         git_state_set "$worker_dir" "failed" "priority-workers.handle_fix_worker_completion" "Fix agent returned: $gate_result"
         log_error "Fix failed for $task_id (result: $gate_result)"

@@ -62,10 +62,25 @@ _log_output() {
         echo "$formatted"
     fi
 
-    # Append to LOG_FILE if set
+    # Append to LOG_FILE if set (with locking to prevent interleaving)
     if [[ -n "${LOG_FILE:-}" ]]; then
-        echo "$formatted" >> "$LOG_FILE"
+        # Skip locking for special files like /dev/null
+        if [[ "$LOG_FILE" == "/dev/"* ]]; then
+            echo "$formatted" >> "$LOG_FILE" 2>/dev/null || true
+        else
+            # Use flock for regular files to prevent interleaved writes
+            # Fallback to unlocked write if locking fails
+            local lock_file="${LOG_FILE}.lock"
+            if [[ -w "$(dirname "$LOG_FILE")" ]] 2>/dev/null; then
+                {
+                    flock -w 1 200 2>/dev/null && echo "$formatted" >> "$LOG_FILE"
+                } 200>"$lock_file" 2>/dev/null || echo "$formatted" >> "$LOG_FILE" 2>/dev/null
+            else
+                echo "$formatted" >> "$LOG_FILE" 2>/dev/null
+            fi
+        fi
     fi
+    return 0
 }
 
 # Log at INFO level (to stdout)

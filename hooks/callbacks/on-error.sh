@@ -9,4 +9,10 @@ WORKER_ID="$(basename "$WORKER_DIR")"
 RALPH_DIR="$(dirname "$(dirname "$WORKER_DIR")")"
 
 mkdir -p "$RALPH_DIR/logs" 2>/dev/null || true
-echo "[$(date -Iseconds)] ERROR: Worker $WORKER_ID: $MESSAGE" >> "$RALPH_DIR/logs/errors.log"
+
+# Use flock to prevent interleaved writes from concurrent workers
+LOG_FILE="$RALPH_DIR/logs/errors.log"
+(
+    flock -w 1 200 || { echo "[$(date -Iseconds)] ERROR: Worker $WORKER_ID: $MESSAGE" >> "$LOG_FILE"; exit 0; }
+    echo "[$(date -Iseconds)] ERROR: Worker $WORKER_ID: $MESSAGE" >> "$LOG_FILE"
+) 200>"${LOG_FILE}.lock"

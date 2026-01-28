@@ -57,7 +57,7 @@ agent_run() {
     if [ ! -d "$workspace" ]; then
         log_error "Workspace not found: $workspace"
         agent_log_complete "$worker_dir" 1 "$start_time"
-        agent_write_result "$worker_dir" "FAIL" '{}' '["Workspace not found"]'
+        agent_write_result "$worker_dir" "FAIL" '{"push_succeeded":false}' '["Workspace not found"]'
         return 1
     fi
 
@@ -66,7 +66,7 @@ agent_run() {
         log_error "Comments file not found: $comments_file"
         log_error "Run 'wiggum review task <pattern> sync' first"
         agent_log_complete "$worker_dir" 1 "$start_time"
-        agent_write_result "$worker_dir" "FAIL" '{}' '["Comments file not found"]'
+        agent_write_result "$worker_dir" "FAIL" '{"push_succeeded":false}' '["Comments file not found"]'
         return 1
     fi
 
@@ -78,7 +78,7 @@ agent_run() {
         log "No comments found in $comments_file - nothing to fix"
         agent_setup_context "$worker_dir" "$workspace" "$project_dir"
         agent_log_complete "$worker_dir" 0 "$start_time"
-        agent_write_result "$worker_dir" "SKIP" '{"comments_fixed":0,"comments_pending":0,"comments_skipped":0}'
+        agent_write_result "$worker_dir" "SKIP" '{"push_succeeded":false,"comments_fixed":0,"comments_pending":0,"comments_skipped":0}'
         git_state_set "$worker_dir" "fix_completed" "engineering.pr-comment-fix" "No comments to fix"
         return 0
     fi

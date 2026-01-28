@@ -12,6 +12,7 @@ _STATUS_DISPLAY_LOADED=1
 
 # Source dependencies
 source "$WIGGUM_HOME/lib/scheduler/worker-pool.sh"
+source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 source "$WIGGUM_HOME/lib/tasks/conflict-detection.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
@@ -55,10 +56,31 @@ display_orchestrator_status() {
     # Show which tasks are being worked on (main workers)
     if [ "$main_count" -gt 0 ]; then
         echo "In Progress:"
+        local now_ts stuck_threshold
+        now_ts=$(date +%s)
+        stuck_threshold="${STUCK_WORKER_THRESHOLD:-1800}"
+
         _display_workers_callback() {
-            local pid="$1" type="$2" task_id="$3"
+            local pid="$1" type="$2" task_id="$3" start_time="$4"
             if [ "$type" = "main" ]; then
-                echo "  - $task_id (PID: $pid)"
+                local status_suffix=""
+                local worker_dir
+                worker_dir=$(find_worker_by_task_id "$ralph_dir" "$task_id" 2>/dev/null || true)
+
+                # Check for stuck worker: no activity file update for threshold seconds
+                if [ -n "$worker_dir" ] && [ "$stuck_threshold" -gt 0 ]; then
+                    local activity_file="$worker_dir/activity.jsonl"
+                    if [ -f "$activity_file" ]; then
+                        local last_activity
+                        last_activity=$(stat -c %Y "$activity_file" 2>/dev/null || stat -f %m "$activity_file" 2>/dev/null || echo "$now_ts")
+                        local idle_time=$((now_ts - last_activity))
+                        if [ "$idle_time" -ge "$stuck_threshold" ]; then
+                            status_suffix=" [STUCK: ${idle_time}s idle]"
+                        fi
+                    fi
+                fi
+
+                echo "  - $task_id (PID: $pid)$status_suffix"
             fi
         }
         pool_foreach "main" _display_workers_callback
@@ -92,12 +114,24 @@ display_orchestrator_status() {
 
     # Show blocked tasks waiting on dependencies
     if [ -n "$blocked_tasks" ]; then
-        echo "Blocked (waiting on dependencies):"
+        local has_blocked=false
+        local blocked_output=""
         for task_id in $blocked_tasks; do
-            local waiting_on
-            waiting_on=$(get_unsatisfied_dependencies "$ralph_dir/kanban.md" "$task_id" | tr '\n' ',' | sed 's/,$//')
-            echo "  - $task_id (waiting on: $waiting_on)"
+            # Re-validate that task is still blocked (handles race with concurrent completions)
+            if ! are_dependencies_satisfied "$ralph_dir/kanban.md" "$task_id"; then
+                local waiting_on
+                waiting_on=$(get_unsatisfied_dependencies "$ralph_dir/kanban.md" "$task_id" | tr '\n' ',' | sed 's/,$//')
+                # Skip if empty (race condition: deps completed between checks)
+                if [ -n "$waiting_on" ]; then
+                    blocked_output+="  - $task_id (waiting on: $waiting_on)"$'\n'
+                    has_blocked=true
+                fi
+            fi
         done
+        if [ "$has_blocked" = true ]; then
+            echo "Blocked (waiting on dependencies):"
+            printf "%s" "$blocked_output"
+        fi
     fi
 
     # Show tasks skipped due to dependency cycles
@@ -216,10 +250,30 @@ display_orchestrator_status() {
         done
     fi
 
-    # Show recent errors only (not info)
+    # Show recent errors only (not info), filtered by age
     if [ -f "$ralph_dir/logs/workers.log" ]; then
-        local recent_errors
-        recent_errors=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null | tail -n 5 || true)
+        local recent_errors cutoff_time
+        local error_max_age="${ERROR_LOG_MAX_AGE:-3600}"
+
+        # Calculate cutoff timestamp (now - max_age)
+        cutoff_time=$(date -d "@$(($(date +%s) - error_max_age))" -Iseconds 2>/dev/null || \
+                      date -v-${error_max_age}S -Iseconds 2>/dev/null || \
+                      echo "")
+
+        if [ -n "$cutoff_time" ]; then
+            # Filter by timestamp: only show errors newer than cutoff
+            # Format: [2026-01-27T18:17:25+00:00] ERROR: ...
+            recent_errors=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null | \
+                awk -v cutoff="$cutoff_time" '
+                    match($0, /\[([0-9T:+-]+)\]/, ts) {
+                        if (ts[1] >= cutoff) print
+                    }
+                ' | tail -n 5 || true)
+        else
+            # Fallback: just show last 5 errors if date command doesn't support options
+            recent_errors=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null | tail -n 5 || true)
+        fi
+
         if [ -n "$recent_errors" ]; then
             echo ""
             echo "Recent errors:"

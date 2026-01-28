@@ -144,6 +144,29 @@ pool_get_start_time() {
     echo "${info##*|}"
 }
 
+# Find worker PID by task_id
+#
+# Args:
+#   task_id - Task identifier to search for
+#
+# Returns: echoes PID if found, empty otherwise
+# Exit: 0 if found, 1 if not found
+pool_find_by_task() {
+    local search_task_id="$1"
+
+    for pid in "${!_WORKER_POOL[@]}"; do
+        local info="${_WORKER_POOL[$pid]}"
+        local rest="${info#*|}"
+        local task_id="${rest%%|*}"
+        if [ "$task_id" = "$search_task_id" ]; then
+            echo "$pid"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # Count workers in the pool
 #
 # Args:
