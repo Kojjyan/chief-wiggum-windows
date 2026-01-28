@@ -636,6 +636,25 @@ cmd_task_resolve() {
 
     if [ -z "$conflicted_files" ]; then
         log "No merge conflicts detected in workspace"
+
+        # Transition state and commit/push any merge commits
+        # (This handles the case where origin/main was merged without conflicts)
+        git_state_set "$worker_dir" "resolved" "wiggum-review.cmd_task_resolve" "No conflicts after merge"
+
+        # Check if there's anything to commit (merge commit or staged changes)
+        if ! git -C "$workspace" diff --cached --quiet || \
+           ! git -C "$workspace" diff HEAD~1 --quiet 2>/dev/null; then
+            log "Committing and pushing merge resolution..."
+            cmd_task_commit "$pattern" || {
+                log "Warning: commit failed, but no conflicts remain"
+            }
+            cmd_task_push "$pattern" || {
+                log "Warning: push failed"
+                return 1
+            }
+        fi
+
+        git_state_set "$worker_dir" "needs_merge" "wiggum-review.cmd_task_resolve" "Ready for merge retry"
         return 0
     fi
 
@@ -668,11 +687,26 @@ cmd_task_resolve() {
 
     if [ -z "$remaining" ]; then
         log "All conflicts resolved and staged"
-        log "Next: wiggum review task $pattern commit && wiggum review task $pattern push"
+
+        # Transition state and commit/push the resolution
+        git_state_set "$worker_dir" "resolved" "wiggum-review.cmd_task_resolve" "All conflicts resolved by agent"
+
+        log "Committing and pushing resolution..."
+        cmd_task_commit "$pattern" || {
+            log "Warning: commit failed after conflict resolution"
+        }
+        cmd_task_push "$pattern" || {
+            log "Warning: push failed"
+            git_state_set "$worker_dir" "failed" "wiggum-review.cmd_task_resolve" "Push failed after resolution"
+            return 1
+        }
+
+        git_state_set "$worker_dir" "needs_merge" "wiggum-review.cmd_task_resolve" "Ready for merge retry"
     else
         local remaining_count
         remaining_count=$(echo "$remaining" | wc -l)
         log "Warning: $remaining_count file(s) still have unresolved conflicts"
+        git_state_set "$worker_dir" "failed" "wiggum-review.cmd_task_resolve" "$remaining_count files still have conflicts"
     fi
 
     return $exit_code
