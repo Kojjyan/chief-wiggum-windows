@@ -23,6 +23,12 @@ agent_source_core
 # Source batch coordination
 source "$WIGGUM_HOME/lib/scheduler/batch-coordination.sh"
 
+# Required paths before agent can run
+# Note: batch-context.json is checked at runtime - missing is handled as SKIP
+agent_required_paths() {
+    :  # No hard requirements - agent handles missing context gracefully
+}
+
 # Main entry point
 agent_run() {
     local worker_dir="$1"

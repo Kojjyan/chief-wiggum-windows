@@ -19,6 +19,62 @@ source "$WIGGUM_HOME/lib/core/defaults.sh"
 source "$WIGGUM_HOME/lib/scheduler/conflict-queue.sh"
 source "$WIGGUM_HOME/lib/scheduler/batch-coordination.sh"
 source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+source "$WIGGUM_HOME/lib/git/worktree-helpers.sh"
+
+# Reconstruct workspace from PR branch if missing
+#
+# When a worker directory exists but the workspace is missing (e.g., cleaned up,
+# edited remotely), this function reconstructs it from the PR branch.
+#
+# Args:
+#   worker_dir  - Worker directory path
+#   project_dir - Project directory path
+#   task_id     - Task identifier (for logging)
+#
+# Returns: 0 if workspace exists or was reconstructed, 1 on failure
+ensure_workspace_from_pr() {
+    local worker_dir="$1"
+    local project_dir="$2"
+    local task_id="$3"
+
+    local workspace="$worker_dir/workspace"
+
+    # If workspace exists, nothing to do
+    if [ -d "$workspace" ]; then
+        return 0
+    fi
+
+    log "Workspace missing for $task_id, attempting reconstruction from PR..."
+
+    # Get PR number from git-state.json
+    local pr_number
+    pr_number=$(git_state_get_pr "$worker_dir")
+
+    if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+        log_error "Cannot reconstruct workspace for $task_id: no PR number in git-state.json"
+        return 1
+    fi
+
+    # Get branch name from PR using gh CLI
+    local branch
+    branch=$(gh pr view "$pr_number" --json headRefName -q '.headRefName' 2>/dev/null || true)
+
+    if [ -z "$branch" ]; then
+        log_error "Cannot reconstruct workspace for $task_id: failed to get branch from PR #$pr_number"
+        return 1
+    fi
+
+    log "Reconstructing workspace for $task_id from branch $branch (PR #$pr_number)"
+
+    # Use setup_worktree_from_branch to create the workspace
+    if ! setup_worktree_from_branch "$project_dir" "$worker_dir" "$branch"; then
+        log_error "Failed to reconstruct workspace for $task_id from branch $branch"
+        return 1
+    fi
+
+    log "Successfully reconstructed workspace for $task_id"
+    return 0
+}
 
 # Verify if a task's PR is actually merged
 #
@@ -171,6 +227,12 @@ spawn_fix_workers() {
                     log "Fix agent already running for $task_id (PID: $existing_pid) - skipping"
                     continue
                 fi
+            fi
+
+            # Ensure workspace exists (reconstruct from PR branch if missing)
+            if ! ensure_workspace_from_pr "$worker_dir" "$project_dir" "$task_id"; then
+                log_error "Cannot spawn fix worker for $task_id: workspace missing and reconstruction failed"
+                continue
             fi
 
             # Transition state to fixing
@@ -404,6 +466,12 @@ spawn_resolve_workers() {
             fi
         fi
 
+        # Ensure workspace exists (reconstruct from PR branch if missing)
+        if ! ensure_workspace_from_pr "$worker_dir" "$project_dir" "$task_id"; then
+            log_error "Cannot spawn resolver for $task_id: workspace missing and reconstruction failed"
+            continue
+        fi
+
         # Check if this is a batch worker (part of multi-PR resolution)
         if batch_coord_has_worker_context "$worker_dir"; then
             local batch_id
@@ -434,15 +502,18 @@ _spawn_simple_resolve_worker() {
     local worker_dir="$3"
     local task_id="$4"
 
-    # Defense-in-depth: verify workspace still exists
+    # Defense-in-depth: verify workspace exists (should have been ensured by caller)
     if [ ! -d "$worker_dir/workspace" ]; then
-        log_warn "Skipping simple resolver for $task_id - workspace already cleaned up"
-        local current_state
-        current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
-        if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
-            git_state_set "$worker_dir" "merged" "priority-workers._spawn_simple_resolve_worker" "Workspace cleaned up, PR was merged"
+        # Try one more reconstruction attempt
+        if ! ensure_workspace_from_pr "$worker_dir" "$project_dir" "$task_id"; then
+            log_warn "Skipping simple resolver for $task_id - workspace missing and reconstruction failed"
+            local current_state
+            current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
+            if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
+                git_state_set "$worker_dir" "failed" "priority-workers._spawn_simple_resolve_worker" "Workspace missing and reconstruction failed"
+            fi
+            return 1
         fi
-        return 0
     fi
 
     # Transition state
@@ -491,34 +562,38 @@ _spawn_batch_resolve_worker() {
     local worker_dir="$3"
     local task_id="$4"
 
-    # Defense-in-depth: verify workspace still exists
-    # If the PR was merged independently, the workspace may have been cleaned up
-    # but batch-context.json might still exist (race condition)
+    # Defense-in-depth: verify workspace exists (should have been ensured by caller)
+    # If missing, try reconstruction before giving up
     if [ ! -d "$worker_dir/workspace" ]; then
-        # Verify actual merge status instead of guessing
-        local merge_status
-        merge_status=$(_verify_task_merged "$(dirname "$(dirname "$worker_dir")")" "$task_id" "$worker_dir")
-
-        if [ "$merge_status" = "merged" ]; then
-            log "Skipping batch resolver for $task_id - PR is merged (workspace cleaned up)"
+        # Try to reconstruct from PR branch
+        if ensure_workspace_from_pr "$worker_dir" "$project_dir" "$task_id"; then
+            log "Reconstructed workspace for batch resolver $task_id"
         else
-            log_warn "Skipping batch resolver for $task_id - workspace missing (PR status: $merge_status)"
-        fi
+            # Reconstruction failed - verify actual merge status
+            local merge_status
+            merge_status=$(_verify_task_merged "$(dirname "$(dirname "$worker_dir")")" "$task_id" "$worker_dir")
 
-        # Clean up stale batch context
-        rm -f "$worker_dir/batch-context.json"
-
-        # Update git state based on actual status
-        local current_state
-        current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
-        if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
             if [ "$merge_status" = "merged" ]; then
-                git_state_set "$worker_dir" "merged" "priority-workers._spawn_batch_resolve_worker" "PR confirmed merged"
+                log "Skipping batch resolver for $task_id - PR is merged (workspace cleaned up)"
             else
-                git_state_set "$worker_dir" "failed" "priority-workers._spawn_batch_resolve_worker" "Workspace missing, PR status: $merge_status"
+                log_warn "Skipping batch resolver for $task_id - workspace missing and reconstruction failed (PR status: $merge_status)"
             fi
+
+            # Clean up stale batch context
+            rm -f "$worker_dir/batch-context.json"
+
+            # Update git state based on actual status
+            local current_state
+            current_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "unknown")
+            if [[ "$current_state" != "merged" && "$current_state" != "failed" ]]; then
+                if [ "$merge_status" = "merged" ]; then
+                    git_state_set "$worker_dir" "merged" "priority-workers._spawn_batch_resolve_worker" "PR confirmed merged"
+                else
+                    git_state_set "$worker_dir" "failed" "priority-workers._spawn_batch_resolve_worker" "Workspace missing and reconstruction failed, PR status: $merge_status"
+                fi
+            fi
+            return 0
         fi
-        return 0
     fi
 
     local batch_id position total
