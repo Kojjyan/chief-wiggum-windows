@@ -156,6 +156,9 @@ spawn_fix_workers() {
 # Scans worker directories for needs_resolve state and spawns resolver
 # workers up to the combined priority worker limit.
 #
+# Workers are sorted by dependency depth (descending) so that tasks which
+# unblock the most downstream work are resolved first.
+#
 # For workers with batch-context.json (part of multi-PR batch), uses the
 # multi-pr-resolve pipeline for coordinated sequential resolution.
 # For simple single-PR conflicts, uses the standard resolve command.
@@ -169,6 +172,7 @@ spawn_fix_workers() {
 #   - pool_* functions from worker-pool.sh
 #   - git_state_* functions from git-state.sh
 #   - batch_coord_* functions from batch-coordination.sh
+#   - get_dependency_depth from task-parser.sh
 #   - WIGGUM_HOME environment variable
 spawn_resolve_workers() {
     local ralph_dir="$1"
@@ -176,6 +180,8 @@ spawn_resolve_workers() {
     local limit="$3"
 
     [ -d "$ralph_dir/workers" ] || return 0
+
+    local kanban_file="$ralph_dir/kanban.md"
 
     # Check total priority worker capacity
     local fix_count resolve_count total_priority
@@ -187,7 +193,32 @@ spawn_resolve_workers() {
         return 0
     fi
 
+    # Build list of workers needing resolution, sorted by dependency depth
+    local -a worker_scores=()
     for worker_dir in "$ralph_dir/workers"/worker-*; do
+        [ -d "$worker_dir" ] || continue
+        git_state_is "$worker_dir" "needs_resolve" || continue
+
+        local worker_id
+        worker_id=$(basename "$worker_dir")
+        local task_id
+        task_id=$(get_task_id_from_worker "$worker_id")
+
+        local dep_depth=0
+        if [ -f "$kanban_file" ]; then
+            dep_depth=$(get_dependency_depth "$kanban_file" "$task_id" 2>/dev/null || echo "0")
+        fi
+        worker_scores+=("$dep_depth|$worker_dir")
+    done
+
+    # Sort by depth descending (higher depth first = unblocks more tasks)
+    local -a sorted_workers=()
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        sorted_workers+=("${entry#*|}")
+    done < <(printf '%s\n' "${worker_scores[@]}" | sort -t'|' -k1 -rn)
+
+    for worker_dir in "${sorted_workers[@]}"; do
         [ -d "$worker_dir" ] || continue
 
         # Re-check capacity
@@ -197,9 +228,6 @@ spawn_resolve_workers() {
         if [ "$total_priority" -ge "$limit" ]; then
             break
         fi
-
-        # Check for needs_resolve state
-        git_state_is "$worker_dir" "needs_resolve" || continue
 
         local worker_id
         worker_id=$(basename "$worker_dir")
