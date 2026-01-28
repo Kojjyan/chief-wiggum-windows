@@ -44,6 +44,7 @@ Commands:
   task <pattern> commit     Create commit in worker workspace
   task <pattern> push       Push worker branch to remote
   task <pattern> pr         Create PR for worker branch
+  task <pattern> reset      Reset failed worker state for retry
 
 Options:
   -v, --verbose     Verbose output (same as default)
@@ -84,6 +85,7 @@ Examples:
   wiggum review task TASK-030 commit    # Create commit for task
   wiggum review task TASK-030 push      # Push branch to remote
   wiggum review task TASK-030 pr        # Create PR (pushes first if needed)
+  wiggum review task TASK-030 reset     # Reset failed worker for retry
 
 EOF
 }
@@ -878,6 +880,92 @@ cmd_task_pr() {
     fi
 }
 
+# Reset failed worker state for retry
+cmd_task_reset() {
+    local pattern="$1"
+    local target_state="${2:-needs_resolve}"
+
+    if [ -z "$pattern" ]; then
+        error "Task pattern required"
+        echo "Usage: wiggum review task <pattern> reset [state]"
+        echo "States: needs_resolve (default), needs_fix, needs_merge"
+        return 1
+    fi
+
+    # Find worker directory for this task
+    local worker_dir
+    worker_dir=$(find_worker_by_task_id "$RALPH_DIR" "$pattern")
+
+    if [ -z "$worker_dir" ] || [ ! -d "$worker_dir" ]; then
+        error "No worker directory found for pattern: $pattern"
+        return 1
+    fi
+
+    local worker_id
+    worker_id=$(basename "$worker_dir")
+    local git_state_file="$worker_dir/git-state.json"
+
+    if [ ! -f "$git_state_file" ]; then
+        error "No git-state.json found in $worker_dir"
+        return 1
+    fi
+
+    # Read current state
+    local current_state
+    current_state=$(jq -r '.current_state // "unknown"' "$git_state_file")
+
+    log "Resetting $worker_id"
+    log "  Current state: $current_state"
+    log "  Target state:  $target_state"
+
+    # Check if workspace is broken (worktree reference invalid)
+    local workspace="$worker_dir/workspace"
+    local workspace_broken=false
+    if [ -d "$workspace" ]; then
+        if ! git -C "$workspace" rev-parse HEAD &>/dev/null; then
+            workspace_broken=true
+            log "  Workspace:     BROKEN (will be removed for reconstruction)"
+        else
+            log "  Workspace:     OK"
+        fi
+    else
+        log "  Workspace:     MISSING (will be reconstructed)"
+    fi
+
+    # Update git-state.json
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg state "$target_state" '
+        .current_state = $state |
+        .merge_attempts = 0 |
+        .last_error = null |
+        .transitions += [{
+            "from": .current_state,
+            "to": $state,
+            "timestamp": (now | strftime("%Y-%m-%dT%H:%M:%S+00:00")),
+            "agent": "wiggum-review.cmd_task_reset",
+            "reason": "Manual reset for retry"
+        }]
+    ' "$git_state_file" > "$tmp_file"
+
+    if [ -s "$tmp_file" ]; then
+        mv "$tmp_file" "$git_state_file"
+        log "  git-state.json updated"
+    else
+        rm -f "$tmp_file"
+        error "Failed to update git-state.json"
+        return 1
+    fi
+
+    # Remove broken workspace so scheduler can reconstruct it
+    if [ "$workspace_broken" = true ]; then
+        rm -rf "$workspace"
+        log "  Removed broken workspace"
+    fi
+
+    log "✓ Reset complete - scheduler will pick up $worker_id"
+}
+
 # Parse verbose flags first
 parse_verbose_flags "$@"
 set -- "${WIGGUM_REMAINING_ARGS[@]}"
@@ -992,9 +1080,14 @@ case "$COMMAND" in
             pr)
                 cmd_task_pr "$TASK_PATTERNS"
                 ;;
+            reset)
+                # Optional second arg is target state
+                TARGET_STATE="${ARGS[2]:-needs_resolve}"
+                cmd_task_reset "$TASK_PATTERNS" "$TARGET_STATE"
+                ;;
             *)
                 error "Unknown task action: $TASK_ACTION"
-                echo "Valid actions: sync, fix, resolve, commit, push, pr"
+                echo "Valid actions: sync, fix, resolve, commit, push, pr, reset"
                 exit $EXIT_USAGE
                 ;;
         esac
