@@ -52,7 +52,8 @@
       "description": "Optimize and execute PR merges",
       "schedule": {
         "type": "interval",
-        "interval": 900
+        "interval": 900,
+        "run_on_startup": true
       },
       "execution": {
         "type": "function",
@@ -68,7 +69,8 @@
       "description": "Check for conflict batches and spawn multi-PR planner",
       "schedule": {
         "type": "interval",
-        "interval": 900
+        "interval": 900,
+        "run_on_startup": true
       },
       "execution": {
         "type": "function",
