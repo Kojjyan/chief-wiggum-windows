@@ -762,6 +762,45 @@ _schedule_pending_pr_fixes() {
     pr_merge_optimize_and_execute "$RALPH_DIR" "$PROJECT_DIR"
 }
 
+# Spawn PR optimizer in background (non-blocking)
+#
+# This is a wrapper around pr_merge_spawn_background that handles the
+# orchestrator's context. The optimizer runs in a separate process and
+# signals completion via a status file.
+_spawn_pr_optimizer_background() {
+    [ -d "$RALPH_DIR/workers" ] || return 0
+
+    # Check if already running
+    if pr_optimizer_is_running "$RALPH_DIR"; then
+        log_debug "PR optimizer already running"
+        return 0
+    fi
+
+    # Spawn in background
+    pr_merge_spawn_background "$RALPH_DIR" "$PROJECT_DIR"
+}
+
+# Check for completed PR optimizer and process results
+#
+# Called every iteration to detect when the background optimizer has finished.
+# Logs results and clears status for next cycle.
+_check_completed_pr_optimizer() {
+    local merged_count
+
+    # Check if optimizer completed (or failed)
+    if merged_count=$(pr_optimizer_check_completion "$RALPH_DIR"); then
+        if [ "$merged_count" -gt 0 ]; then
+            log "PR optimizer completed: merged $merged_count PR(s)"
+            activity_log "pr_optimizer.completed" "" "" "merged=$merged_count"
+        else
+            log_debug "PR optimizer completed: no PRs merged"
+        fi
+
+        # Clear status for next cycle
+        pr_optimizer_clear_status "$RALPH_DIR"
+    fi
+}
+
 main() {
     # Parse run options
     while [[ $# -gt 0 ]]; do
@@ -1029,6 +1068,10 @@ main() {
 
     # Main orchestration loop
     while true; do
+        # Check for completed PR optimizer (every iteration)
+        # This detects when the background optimizer has finished and logs results
+        _check_completed_pr_optimizer
+
         # Run periodic sync at iteration 0 (immediately) and every SYNC_INTERVAL
         if [ $sync_counter -eq 0 ]; then
             run_periodic_sync
@@ -1041,26 +1084,22 @@ main() {
 
             # Create workspaces for orphaned PRs (PRs needing fixes but no local workspace)
             create_orphan_pr_workspaces "$RALPH_DIR" "$PROJECT_DIR"
-
-            # Check for and spawn fix workers after sync
-            spawn_fix_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
         fi
 
-        # Run PR optimization at iteration 0 (immediately) and every PR_SYNC_INTERVAL
+        # Spawn PR optimizer in background (every PR_SYNC_INTERVAL)
+        # This is non-blocking - returns immediately after spawning
         if [ $pr_sync_counter -eq 0 ]; then
-            # Queue pending tasks with existing PRs for fix pipeline (sync→fix→push→merge)
-            _schedule_pending_pr_fixes
-
-            # Spawn fix workers for tasks identified by PR optimization
-            # (PR optimization populates .tasks-needing-fix.txt which spawn_fix_workers reads)
-            spawn_fix_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
+            _spawn_pr_optimizer_background
 
             # Check for conflict batches and spawn multi-PR planner if needed
             _check_and_spawn_multi_pr_planner
-
-            # Spawn resolve workers for any that are ready
-            spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
         fi
+
+        # Always try to spawn fix/resolve workers (every iteration)
+        # These pick up results from completed optimizer or sync
+        # (PR optimization populates .tasks-needing-fix.txt which spawn_fix_workers reads)
+        spawn_fix_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
+        spawn_resolve_workers "$RALPH_DIR" "$PROJECT_DIR" "$FIX_WORKER_LIMIT"
 
         ((++iteration))
         ((++sync_counter))

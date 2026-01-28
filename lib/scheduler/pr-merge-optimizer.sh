@@ -51,6 +51,240 @@ _pr_merge_state_file() {
     echo "$1/pr-merge-state.json"
 }
 
+# =============================================================================
+# Background Optimizer Status Tracking
+# =============================================================================
+# These functions manage the status of background PR optimization runs,
+# following the pattern used by multi-PR planners.
+#
+# Status file: .ralph/.pr-optimizer-status.json
+# Format:
+# {
+#   "status": "running|completed|failed",
+#   "pid": 12345,
+#   "started_at": "...",
+#   "completed_at": "...",
+#   "merged_count": 3,
+#   "error": "..."  (only if failed)
+# }
+
+# Get path to optimizer status file
+#
+# Args:
+#   ralph_dir - Ralph directory path
+_pr_optimizer_status_file() {
+    echo "$1/.pr-optimizer-status.json"
+}
+
+# Check if PR optimizer is currently running
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#
+# Returns: 0 if running, 1 if not running
+pr_optimizer_is_running() {
+    local ralph_dir="$1"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    [ -f "$status_file" ] || return 1
+
+    local status pid
+    status=$(jq -r '.status // "unknown"' "$status_file" 2>/dev/null)
+    pid=$(jq -r '.pid // 0' "$status_file" 2>/dev/null)
+
+    # Must be in "running" status with a live process
+    [ "$status" = "running" ] || return 1
+    [ "$pid" != "0" ] && [ "$pid" != "null" ] || return 1
+
+    # Check if process is actually running
+    kill -0 "$pid" 2>/dev/null
+}
+
+# Mark optimizer as started (create status file)
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#   pid       - Process ID of the background optimizer
+pr_optimizer_mark_started() {
+    local ralph_dir="$1"
+    local pid="$2"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    jq -n \
+        --arg status "running" \
+        --argjson pid "$pid" \
+        --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{
+            status: $status,
+            pid: $pid,
+            started_at: $started_at
+        }' > "$status_file"
+}
+
+# Mark optimizer as completed (update status file)
+#
+# Args:
+#   ralph_dir    - Ralph directory path
+#   merged_count - Number of PRs successfully merged
+pr_optimizer_mark_completed() {
+    local ralph_dir="$1"
+    local merged_count="$2"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    [ -f "$status_file" ] || return 0
+
+    jq \
+        --arg status "completed" \
+        --argjson merged_count "$merged_count" \
+        --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '. + {
+            status: $status,
+            merged_count: $merged_count,
+            completed_at: $completed_at
+        }' "$status_file" > "$status_file.tmp"
+    mv "$status_file.tmp" "$status_file"
+}
+
+# Mark optimizer as failed (update status file)
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#   error     - Error message
+pr_optimizer_mark_failed() {
+    local ralph_dir="$1"
+    local error="$2"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    [ -f "$status_file" ] || return 0
+
+    jq \
+        --arg status "failed" \
+        --arg error "$error" \
+        --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '. + {
+            status: $status,
+            error: $error,
+            completed_at: $completed_at
+        }' "$status_file" > "$status_file.tmp"
+    mv "$status_file.tmp" "$status_file"
+}
+
+# Check if optimizer completed and get result
+#
+# Args:
+#   ralph_dir - Ralph directory path
+#
+# Returns: 0 if completed (outputs merged_count), 1 if still running/not started
+# Outputs: merged_count if completed, nothing otherwise
+pr_optimizer_check_completion() {
+    local ralph_dir="$1"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    [ -f "$status_file" ] || return 1
+
+    local status
+    status=$(jq -r '.status // "unknown"' "$status_file" 2>/dev/null)
+
+    case "$status" in
+        completed)
+            jq -r '.merged_count // 0' "$status_file"
+            return 0
+            ;;
+        failed)
+            # Log the error but still return completion
+            local error
+            error=$(jq -r '.error // "unknown error"' "$status_file" 2>/dev/null)
+            log_error "PR optimizer failed: $error"
+            echo "0"
+            return 0
+            ;;
+        running)
+            # Check if process died without updating status
+            local pid
+            pid=$(jq -r '.pid // 0' "$status_file" 2>/dev/null)
+            if [ "$pid" != "0" ] && [ "$pid" != "null" ] && ! kill -0 "$pid" 2>/dev/null; then
+                # Process died - mark as failed
+                pr_optimizer_mark_failed "$ralph_dir" "Process died unexpectedly"
+                echo "0"
+                return 0
+            fi
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Clear optimizer status file for next cycle
+#
+# Args:
+#   ralph_dir - Ralph directory path
+pr_optimizer_clear_status() {
+    local ralph_dir="$1"
+    local status_file
+    status_file=$(_pr_optimizer_status_file "$ralph_dir")
+
+    rm -f "$status_file"
+}
+
+# Spawn PR optimizer in background
+#
+# This launches pr_merge_optimize_and_execute in a background process,
+# allowing the main orchestration loop to continue immediately.
+#
+# Args:
+#   ralph_dir   - Ralph directory path
+#   project_dir - Project directory path
+#
+# Returns: 0 if spawned (or already running), 1 on error
+pr_merge_spawn_background() {
+    local ralph_dir="$1"
+    local project_dir="$2"
+
+    # Check if already running
+    if pr_optimizer_is_running "$ralph_dir"; then
+        log_debug "PR optimizer already running - skipping spawn"
+        return 0
+    fi
+
+    # Clear any stale status
+    pr_optimizer_clear_status "$ralph_dir"
+
+    # Ensure log directory exists
+    mkdir -p "$ralph_dir/logs"
+
+    log "Spawning PR optimizer in background..."
+
+    # Launch background process
+    (
+        # Redirect output to log file
+        exec >> "$ralph_dir/logs/pr-optimizer.log" 2>&1
+
+        # Source dependencies (needed in subshell)
+        source "$WIGGUM_HOME/lib/scheduler/pr-merge-optimizer.sh"
+        source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
+
+        log "Background PR optimizer started (PID: $$)"
+
+        # Run the optimization with background mode
+        pr_merge_optimize_and_execute "$ralph_dir" "$project_dir" "true"
+    ) &
+
+    local bg_pid=$!
+
+    # Mark as started
+    pr_optimizer_mark_started "$ralph_dir" "$bg_pid"
+
+    log "PR optimizer spawned (PID: $bg_pid) - will check results on next cycle"
+    return 0
+}
+
 # Clean up worktree after PR is merged (keeps logs/results/reports)
 #
 # Args:
@@ -1422,11 +1656,13 @@ _create_multi_resolve_batch() {
 # Args:
 #   ralph_dir   - Ralph directory path
 #   project_dir - Project directory path
+#   background  - Optional: "true" if running in background mode (updates status file on completion)
 #
 # Returns: 0 on success
 pr_merge_optimize_and_execute() {
     local ralph_dir="$1"
     local project_dir="$2"
+    local background="${3:-false}"
 
     log "Starting PR merge optimization..."
     echo ""
@@ -1441,6 +1677,10 @@ pr_merge_optimize_and_execute() {
 
     if [ "$pr_count" -eq 0 ]; then
         log "No pending PRs to process"
+        # Mark completed in background mode (0 PRs merged)
+        if [ "$background" = "true" ]; then
+            pr_optimizer_mark_completed "$ralph_dir" 0
+        fi
         return 0
     fi
 
@@ -1462,6 +1702,11 @@ pr_merge_optimize_and_execute() {
     echo ""
 
     log "PR merge optimization complete (merged $merged PRs)"
+
+    # Mark completed in background mode
+    if [ "$background" = "true" ]; then
+        pr_optimizer_mark_completed "$ralph_dir" "$merged"
+    fi
 }
 
 # Get statistics from the current state
