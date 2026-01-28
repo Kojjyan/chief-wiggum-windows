@@ -830,14 +830,16 @@ _main_loop_service_based() {
     while true; do
         ((++iteration))
 
-        # Run scheduler tick - executes any due services
-        # (startup services are run automatically on first tick)
-        service_scheduler_tick
-
-        # Clean up finished workers (still needed - workers are separate from services)
+        # Clean up finished workers FIRST - before services run
+        # This ensures completion handlers run before services detect "stuck" workers
+        # (e.g., resolve-workers service checks agent.pid which is deleted on completion)
         pool_cleanup_finished "main" 0 _handle_main_worker_completion ""
         pool_cleanup_finished "fix" "$FIX_WORKER_TIMEOUT" _handle_fix_worker_completion _handle_fix_worker_timeout
         pool_cleanup_finished "resolve" "$RESOLVE_WORKER_TIMEOUT" _handle_resolve_worker_completion _handle_resolve_worker_timeout
+
+        # Run scheduler tick - executes any due services
+        # (startup services are run automatically on first tick)
+        service_scheduler_tick
 
         # Check if we're done
         if scheduler_is_complete; then
@@ -863,12 +865,9 @@ _main_loop_service_based() {
         # The task-spawner service is disabled/no-op because services run in subshells.
         scheduler_tick
 
-        # Debug: show what scheduler_tick found
+        # Debug: show ready tasks (only when there are some)
         if [ -n "$SCHED_READY_TASKS" ]; then
             log_debug "Ready tasks: $SCHED_READY_TASKS"
-        fi
-        if [ -n "$SCHED_BLOCKED_TASKS" ]; then
-            log_debug "Blocked tasks: $SCHED_BLOCKED_TASKS"
         fi
 
         # Spawn workers for ready tasks (directly in main process, not via service)

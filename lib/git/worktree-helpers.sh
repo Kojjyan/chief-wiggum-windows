@@ -190,6 +190,9 @@ setup_worktree_from_branch() {
         return 1
     fi
 
+    # Prune stale worktrees (handles case where directory was deleted but worktree is still registered)
+    git worktree prune 2>/dev/null || true
+
     # Create worktree tracking the remote branch
     log_debug "Creating git worktree at $workspace from origin/$branch"
     if ! git worktree add "$workspace" "origin/$branch" 2>&1 | tee -a "$worker_dir/worker.log"; then
