@@ -16,9 +16,16 @@
 # =============================================================================
 set -euo pipefail
 
-# Prevent double-sourcing
-[ -n "${_AGENT_BASE_LOADED:-}" ] && return 0
-_AGENT_BASE_LOADED=1
+# Double-source prevention
+# Note: We can't use a simple guard because subshells inherit the variable
+# but NOT the function definitions. Instead, we check if our functions exist.
+if ! type agent_init_metadata &>/dev/null; then
+    # Functions not defined - need to source (first time or in subshell)
+    _AGENT_BASE_LOADED=1
+else
+    # Functions already defined - skip re-sourcing
+    return 0
+fi
 
 # Source platform.sh at top level for portable helper functions (find_newest, grep_pcre_*, etc.)
 source "$WIGGUM_HOME/lib/core/platform.sh"

@@ -688,6 +688,14 @@ pr_merge_gather_all() {
             sed 's/^- \[\(.\)\].*/\1/' || echo "")
         [ "$task_status" = "P" ] || continue
 
+        # Skip workers in failed state (max merge attempts exceeded, etc.)
+        local git_state
+        git_state=$(git_state_get "$worker_dir" 2>/dev/null || echo "")
+        if [ "$git_state" = "failed" ]; then
+            log_debug "  Skipping $task_id: worker in failed state"
+            continue
+        fi
+
         # Get PR number (with backfill)
         local pr_number
         pr_number=$(git_state_get_pr "$worker_dir" 2>/dev/null || echo "")
