@@ -154,64 +154,6 @@ run_syntax_check() {
     echo ""
 }
 
-# Run shellcheck if available
-run_shellcheck() {
-    if ! command -v shellcheck &>/dev/null; then
-        echo "Shellcheck not installed, skipping..."
-        return 0
-    fi
-
-    echo "----------------------------------------"
-    echo "Running: Shellcheck Linting"
-    echo "----------------------------------------"
-
-    TOTAL_SUITES=$((TOTAL_SUITES + 1))
-
-    local errors=0
-    local checked=0
-
-    # Match CI: check bin executables, lib/*.sh, tests/*.sh, and root scripts
-    while IFS= read -r -d '' script; do
-        ((++checked))
-        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
-            ((++errors))
-        fi
-    done < <(find "$PROJECT_ROOT/bin" -type f -perm /111 -print0 2>/dev/null)
-
-    while IFS= read -r -d '' script; do
-        ((++checked))
-        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
-            ((++errors))
-        fi
-    done < <(find "$PROJECT_ROOT/lib" -name "*.sh" -type f -print0 2>/dev/null)
-
-    while IFS= read -r -d '' script; do
-        ((++checked))
-        if ! shellcheck --severity=warning "$script" 2>/dev/null; then
-            ((++errors))
-        fi
-    done < <(find "$PROJECT_ROOT/tests" -name "*.sh" -type f -print0 2>/dev/null)
-
-    for script in "$PROJECT_ROOT/install.sh" "$PROJECT_ROOT/install-symlink.sh"; do
-        if [ -f "$script" ]; then
-            ((++checked))
-            if ! shellcheck --severity=warning "$script" 2>/dev/null; then
-                ((++errors))
-            fi
-        fi
-    done
-
-    if [ $errors -eq 0 ]; then
-        PASSED_SUITES=$((PASSED_SUITES + 1))
-        echo "PASSED ($checked files checked)"
-    else
-        FAILED_SUITES=$((FAILED_SUITES + 1))
-        FAILED_SUITE_NAMES+=("Shellcheck ($errors files with warnings)")
-        echo "FAILED ($errors files with warnings)"
-    fi
-    echo ""
-}
-
 # Main test execution
 main() {
     # Run specific suite if requested
@@ -241,9 +183,9 @@ main() {
         # 1. Syntax checks (fast)
         run_syntax_check
 
-        # 2. Shellcheck (if available)
+        # 2. Shellcheck (mirrors CI)
         if [ "$QUICK_MODE" = false ]; then
-            run_shellcheck
+            run_suite "Shellcheck Lint" "$SCRIPT_DIR/run-shellcheck.sh"
         fi
 
         # 3. Unit tests (test_*.sh files)
