@@ -320,7 +320,7 @@ display_final_summary() {
 
     # Show final summary
     local completed_count
-    completed_count=$(grep -c '^\- \[x\]' "$ralph_dir/kanban.md" 2>/dev/null || echo "0")
+    completed_count=$(grep -c '^\- \[x\]' "$ralph_dir/kanban.md" 2>/dev/null) || completed_count=0
 
     echo "Summary:"
     echo "  - Total tasks completed: $completed_count"

@@ -578,8 +578,8 @@ test_pipeline_on_max_loop_detection() {
 
     # Each agent should run exactly once (max=1)
     local a_count b_count
-    a_count=$(grep -c "loop-agent-a" "$TEST_DIR/agent_invocations.txt" || echo 0)
-    b_count=$(grep -c "loop-agent-b" "$TEST_DIR/agent_invocations.txt" || echo 0)
+    a_count=$(grep -c "loop-agent-a" "$TEST_DIR/agent_invocations.txt") || a_count=0
+    b_count=$(grep -c "loop-agent-b" "$TEST_DIR/agent_invocations.txt") || b_count=0
     assert_equals "1" "$a_count" "Step A should run exactly once before loop detected"
     assert_equals "1" "$b_count" "Step B should run exactly once before loop detected"
 }

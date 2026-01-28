@@ -73,7 +73,7 @@ agent_run() {
 
     # Check if there are any comments to fix
     local comment_count
-    comment_count=$(grep -c '^### ' "$comments_file" 2>/dev/null | tr -d '\n' || echo "0")
+    comment_count=$(grep -c '^### ' "$comments_file" 2>/dev/null) || comment_count=0
     [[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
     if [ "$comment_count" -eq 0 ]; then
         log "No comments found in $comments_file - nothing to fix"
@@ -132,9 +132,9 @@ agent_run() {
     # Note: grep -c output is sanitized with tr to handle edge cases with embedded newlines
     local comments_fixed=0 comments_pending=0 comments_skipped=0
     if [ -f "$status_file" ]; then
-        comments_fixed=$(grep -c '^\- \[x\]' "$status_file" 2>/dev/null | tr -d '\n' || echo "0")
-        comments_pending=$(grep -c '^\- \[ \]' "$status_file" 2>/dev/null | tr -d '\n' || echo "0")
-        comments_skipped=$(grep -c '^\- \[\*\]' "$status_file" 2>/dev/null | tr -d '\n' || echo "0")
+        comments_fixed=$(grep -c '^\- \[x\]' "$status_file" 2>/dev/null) || comments_fixed=0
+        comments_pending=$(grep -c '^\- \[ \]' "$status_file" 2>/dev/null) || comments_pending=0
+        comments_skipped=$(grep -c '^\- \[\*\]' "$status_file" 2>/dev/null) || comments_skipped=0
     fi
     # Ensure counts are valid integers (fallback to 0)
     [[ "$comments_fixed" =~ ^[0-9]+$ ]] || comments_fixed=0
@@ -313,13 +313,15 @@ _init_comment_status() {
         log_warn "No comment IDs found in standard format, creating generic checklist"
         # Count the number of ### headers that represent comments
         local count
-        count=$(grep -c '^### ' "$comments_file" 2>/dev/null || echo "0")
+        count=$(grep -c '^### ' "$comments_file" 2>/dev/null) || count=0
         for i in $(seq 1 "$count"); do
             echo "- [ ] Comment item $i" >> "$status_file"
         done
     fi
 
-    log "Initialized status file with $(grep -c '^\- \[ \]' "$status_file" 2>/dev/null || echo 0) comments to address"
+    local init_count
+    init_count=$(grep -c '^\- \[ \]' "$status_file" 2>/dev/null) || init_count=0
+    log "Initialized status file with $init_count comments to address"
 }
 
 # Update task-comments.md with commit information

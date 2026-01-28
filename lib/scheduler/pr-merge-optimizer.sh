@@ -556,7 +556,7 @@ _gather_pr_data() {
     if [ -f "$worker_dir/task-comments.md" ]; then
         # Check if there are unaddressed comments
         local comment_count
-        comment_count=$(grep -c '^### ' "$worker_dir/task-comments.md" 2>/dev/null | head -1 || echo "0")
+        comment_count=$(grep -c '^### ' "$worker_dir/task-comments.md" 2>/dev/null) || comment_count=0
         comment_count="${comment_count:-0}"
         if [[ "$comment_count" =~ ^[0-9]+$ ]] && [ "$comment_count" -gt 0 ]; then
             # Check 1: is there a ## Commit section indicating comments were addressed?
@@ -571,7 +571,7 @@ _gather_pr_data() {
             # Check 3: check status file for pending items
             elif [ -f "$worker_dir/reports/comment-status.md" ]; then
                 local pending
-                pending=$(grep -c '^\- \[ \]' "$worker_dir/reports/comment-status.md" 2>/dev/null | head -1 || echo "0")
+                pending=$(grep -c '^\- \[ \]' "$worker_dir/reports/comment-status.md" 2>/dev/null) || pending=0
                 pending="${pending:-0}"
                 [[ "$pending" =~ ^[0-9]+$ ]] && [ "$pending" -gt 0 ] && has_new_comments="true"
             else

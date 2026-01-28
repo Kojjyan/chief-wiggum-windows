@@ -201,7 +201,7 @@ check_project_setup() {
 
     # Count tasks
     local task_count
-    task_count=$(grep -c -- '- \[.\] \*\*\[' "$ralph_dir/kanban.md" 2>/dev/null || echo "0")
+    task_count=$(grep -c -- '- \[.\] \*\*\[' "$ralph_dir/kanban.md" 2>/dev/null) || task_count=0
 
     _print_check "pass" "$name" ".ralph initialized ($task_count tasks in kanban)"
     return 0

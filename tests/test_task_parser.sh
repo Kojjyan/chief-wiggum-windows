@@ -95,7 +95,7 @@ test_get_failed_tasks_extracts_failed_only() {
     assert_output_contains "$tasks" "TASK-002" "Should include failed TASK-002"
 
     local count
-    count=$(echo "$tasks" | grep -c "TASK" || echo "0")
+    count=$(echo "$tasks" | grep -c "TASK") || count=0
     assert_equals "1" "$count" "Should only return one failed task"
 }
 

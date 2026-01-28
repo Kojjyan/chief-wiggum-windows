@@ -339,9 +339,11 @@ events_count() {
         return
     fi
 
+    local count
     if [ -n "$event_type" ]; then
-        grep -c "\"event_type\":\"$event_type\"" "$events_log" 2>/dev/null || echo "0"
+        count=$(grep -c "\"event_type\":\"$event_type\"" "$events_log" 2>/dev/null) || count=0
     else
-        wc -l < "$events_log" 2>/dev/null || echo "0"
+        count=$(wc -l < "$events_log" 2>/dev/null) || count=0
     fi
+    echo "$count"
 }
