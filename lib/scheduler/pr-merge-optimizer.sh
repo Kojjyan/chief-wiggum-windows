@@ -420,7 +420,7 @@ pr_merge_gather_all() {
     # Initialize state
     pr_merge_init "$ralph_dir"
 
-    log "Phase 1: Gathering PR data..."
+    log_debug "Phase 1: Gathering PR data..."
 
     local count=0
 
@@ -481,7 +481,7 @@ pr_merge_gather_all() {
         fi
 
         # Gather PR data
-        log "  Gathering data for $task_id (PR #$pr_number)..."
+        log_debug "  $task_id: gathering (PR #$pr_number)"
         local pr_data
         pr_data=$(_gather_pr_data "$ralph_dir" "$task_id" "$worker_dir" "$pr_number")
 
@@ -493,7 +493,7 @@ pr_merge_gather_all() {
         ((++count))
     done
 
-    log "  Gathered data for $count PR(s)"
+    log "Gathered $count PR(s) for merge optimization"
 
     # Update timestamp
     jq '.last_updated = (now | strftime("%Y-%m-%dT%H:%M:%SZ"))' "$state_file" > "$state_file.tmp"
@@ -541,7 +541,7 @@ pr_merge_build_conflict_graph() {
     local state_file
     state_file=$(_pr_merge_state_file "$ralph_dir")
 
-    log "Phase 2: Building conflict graph..."
+    log_debug "Phase 2: Building conflict graph..."
 
     # Get all task IDs
     local task_ids
@@ -917,7 +917,7 @@ pr_merge_find_optimal_order() {
     local state_file
     state_file=$(_pr_merge_state_file "$ralph_dir")
 
-    log "Phase 3: Finding optimal merge order (Maximum Independent Set DP)..."
+    log_debug "Phase 3: Finding optimal merge order..."
 
     # Get all task IDs and build arrays
     local -a task_array=()
@@ -1148,7 +1148,7 @@ pr_merge_execute() {
 
     # Note: All log messages in this function go to stderr so they don't
     # interfere with the return value (echo to stdout at the end)
-    log "Phase 4: Executing merges..." >&2
+    log_debug "Phase 4: Executing merges..."
 
     # Reset merged list
     jq '.merged_this_cycle = []' "$state_file" > "$state_file.tmp"
@@ -1247,7 +1247,7 @@ pr_merge_handle_remaining() {
     local state_file
     state_file=$(_pr_merge_state_file "$ralph_dir")
 
-    log "Phase 5: Handling remaining PRs..."
+    log_debug "Phase 5: Handling remaining PRs..."
 
     # Initialize conflict queue
     conflict_queue_init "$ralph_dir"

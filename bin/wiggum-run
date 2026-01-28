@@ -90,6 +90,11 @@ Task resumption:
   - Failed tasks [*] wait for manual intervention (use 'wiggum resume/retry')
   - Pending tasks [ ] with existing PRs go through fix pipeline (sync→fix→push→merge)
 
+Logging:
+  - Output is written to both stdout and .ralph/logs/orchestrator.log
+  - Worker logs are in .ralph/logs/workers.log
+  - Use 'tail -f .ralph/logs/orchestrator.log' to follow in another terminal
+
 EOF
 }
 
@@ -553,7 +558,7 @@ _schedule_resume_workers() {
         case "$task_status" in
             " "|"=") ;;
             *)
-                log "Skipping resume of $task_id - task status is '$task_status'"
+                log_debug "Skipping resume of $task_id - task status is '$task_status'"
                 continue
                 ;;
         esac
@@ -825,6 +830,11 @@ main() {
         log_error ".ralph/ directory not found. Run 'wiggum init' first."
         exit $EXIT_RUN_NO_RALPH_DIR
     fi
+
+    # Ensure logs directory exists and set up file logging
+    mkdir -p "$RALPH_DIR/logs"
+    export LOG_FILE="$RALPH_DIR/logs/orchestrator.log"
+    log "Orchestrator log: $LOG_FILE"
 
     # Load rate limit configuration
     load_rate_limit_config

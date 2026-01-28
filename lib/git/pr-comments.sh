@@ -378,8 +378,7 @@ sync_pr_comments() {
         return 1
     fi
 
-    log "Current GitHub user: $current_user"
-    log "Approved authors: $WIGGUM_APPROVED_AUTHORS"
+    log_debug "GitHub user: $current_user, approved: $WIGGUM_APPROVED_AUTHORS"
 
     # Find matching PRs
     local prs pr_count
@@ -387,11 +386,11 @@ sync_pr_comments() {
     pr_count=$(echo "$prs" | jq 'length')
 
     if [ "$pr_count" -eq 0 ]; then
-        log "No PRs found matching patterns: $patterns"
+        log_debug "No PRs found matching: $patterns"
         return 0
     fi
 
-    log "Found $pr_count PR(s) matching patterns"
+    log_debug "Found $pr_count PR(s) matching patterns"
 
     # Ensure output directory exists
     mkdir -p "$output_dir"
@@ -424,14 +423,14 @@ sync_pr_comments() {
         pr_url=$(echo "$pr" | jq -r '.url')
         branch=$(echo "$pr" | jq -r '.headRefName')
 
-        log "Fetching comments for PR #$pr_number ($branch)..."
+        log_debug "Fetching comments for PR #$pr_number ($branch)"
 
         local comments filtered comment_count
         comments=$(fetch_pr_comments "$pr_number")
         filtered=$(filter_comments_by_authors "$comments" "$WIGGUM_APPROVED_AUTHORS" "$current_user")
         comment_count=$(echo "$filtered" | jq 'length')
 
-        log "  Found $comment_count relevant comment(s) from approved authors"
+        log_debug "  PR #$pr_number: $comment_count comment(s)"
 
         if [ "$comment_count" -gt 0 ]; then
             comments_to_markdown "$filtered" "$pr_number" "$pr_url" "$branch" >> "$output_file"
@@ -443,9 +442,9 @@ sync_pr_comments() {
     if [ -n "$preserved_commit_section" ]; then
         echo "" >> "$output_file"
         echo "$preserved_commit_section" >> "$output_file"
-        log "Preserved existing ## Commit section"
+        log_debug "Preserved ## Commit section"
     fi
 
-    log "Comments synced to: $output_file"
+    log_debug "Synced to: $output_file"
     echo "$output_file"
 }
