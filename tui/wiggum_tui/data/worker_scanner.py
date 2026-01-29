@@ -158,8 +158,8 @@ def scan_workers(ralph_dir: Path) -> list[Worker]:
         return workers
 
     # First pass: collect worker directories, using cache for completed workers
-    worker_entries: list[tuple[Path, str, int, int | None]] = []  # (dir, task_id, timestamp, pid)
-    all_pids: list[int] = []
+    # (dir, task_id, dir_timestamp, pid, pid_mtime, has_pid_file)
+    worker_entries: list[tuple[Path, str, int, int | None, int | None, bool]] = []
 
     for entry in workers_dir.iterdir():
         if not entry.name.startswith("worker-"):
@@ -181,30 +181,30 @@ def scan_workers(ralph_dir: Path) -> list[Worker]:
             continue
 
         task_id, ts_str = match.groups()
-        # Use timestamp from directory name (creation time) for accurate start time
+        # Use timestamp from directory name as fallback (original creation time)
         try:
-            timestamp = int(ts_str)
+            dir_timestamp = int(ts_str)
         except ValueError:
-            timestamp = 0
+            dir_timestamp = 0
 
         pid_path = entry / "agent.pid"
         pid: int | None = None
+        pid_mtime: int | None = None
+        has_pid_file = pid_path.exists()
 
-        if pid_path.exists():
+        if has_pid_file:
             try:
                 pid_content = pid_path.read_text().strip()
                 pid = int(pid_content)
-                all_pids.append(pid)
+                # Get agent.pid mtime - this is when the current agent started
+                pid_mtime = int(pid_path.stat().st_mtime)
             except (ValueError, OSError):
                 pass
 
-        worker_entries.append((entry, task_id, timestamp, pid))
+        worker_entries.append((entry, task_id, dir_timestamp, pid, pid_mtime, has_pid_file))
 
-    # Batch check all PIDs in a single subprocess call
-    process_info = batch_check_processes(all_pids)
-
-    # Second pass: build Worker objects using batch results
-    for entry, task_id, timestamp, pid in worker_entries:
+    # Second pass: build Worker objects
+    for entry, task_id, dir_timestamp, pid, pid_mtime, has_pid_file in worker_entries:
         prd_path = entry / "prd.md"
         log_path = entry / "worker.log"
         workspace_path = entry / "workspace"
@@ -212,8 +212,8 @@ def scan_workers(ralph_dir: Path) -> list[Worker]:
 
         status = WorkerStatus.STOPPED
 
-        # Check if process is running using batch results
-        if pid is not None and is_worker_process(pid, process_info):
+        # Online status based solely on agent.pid file presence
+        if has_pid_file:
             status = WorkerStatus.RUNNING
 
         # If not running, check PRD status
@@ -223,6 +223,13 @@ def scan_workers(ralph_dir: Path) -> list[Worker]:
                 status = WorkerStatus.COMPLETED
             elif prd_status == "failed":
                 status = WorkerStatus.FAILED
+
+        # For running workers, use agent.pid mtime (current agent start time)
+        # For completed/stopped workers, use directory timestamp (original creation time)
+        if status == WorkerStatus.RUNNING and pid_mtime is not None:
+            timestamp = pid_mtime
+        else:
+            timestamp = dir_timestamp
 
         # Check for PR URL
         pr_url: str | None = None
@@ -333,7 +340,7 @@ def get_task_running_status(ralph_dir: Path, task_ids: list[str]) -> dict[str, t
 
     Returns:
         Dictionary mapping task_id to (is_running, start_timestamp).
-        start_timestamp is the worker directory mtime when running.
+        start_timestamp is the agent.pid mtime (current agent start time) when running.
     """
     workers = scan_workers(ralph_dir)
     result: dict[str, tuple[bool, int | None]] = {}

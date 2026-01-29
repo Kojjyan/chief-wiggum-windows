@@ -67,6 +67,7 @@ class WorkerStatusService:
 
         Returns:
             Dictionary mapping task_id to (is_running, start_timestamp).
+            start_timestamp is the agent.pid mtime (current agent start time) when running.
         """
         self._maybe_refresh()
 

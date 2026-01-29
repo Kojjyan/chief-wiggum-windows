@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from wiggum_tui.data.worker_scanner import (
     scan_workers,
@@ -11,7 +11,6 @@ from wiggum_tui.data.worker_scanner import (
     get_running_worker_for_task,
     get_task_running_status,
     WORKER_PATTERN,
-    is_process_running,
 )
 from wiggum_tui.data.models import Worker, WorkerStatus
 
@@ -110,20 +109,13 @@ class TestScanWorkers:
         workers = scan_workers(ralph_dir)
         assert workers == []
 
-    @patch("wiggum_tui.data.worker_scanner.is_process_running")
-    @patch("wiggum_tui.data.worker_scanner.is_worker_process")
-    def test_scans_worker_directory(
-        self, mock_is_worker, mock_is_running, tmp_path: Path
-    ):
-        mock_is_running.return_value = False
-        mock_is_worker.return_value = False
-
+    def test_scans_worker_directory(self, tmp_path: Path):
         ralph_dir = tmp_path / ".ralph"
         workers_dir = ralph_dir / "workers"
         worker_dir = workers_dir / "worker-TASK-001-1700000000"
         worker_dir.mkdir(parents=True)
 
-        # Create required files
+        # Create required files (no agent.pid = not running)
         (worker_dir / "prd.md").write_text("- [x] Done")
         (worker_dir / "worker.log").write_text("log content")
 
@@ -134,20 +126,13 @@ class TestScanWorkers:
         assert workers[0].task_id == "TASK-001"
         assert workers[0].status == WorkerStatus.COMPLETED
 
-    @patch("wiggum_tui.data.worker_scanner.is_process_running")
-    @patch("wiggum_tui.data.worker_scanner.is_worker_process")
-    def test_detects_running_worker(
-        self, mock_is_worker, mock_is_running, tmp_path: Path
-    ):
-        mock_is_running.return_value = True
-        mock_is_worker.return_value = True
-
+    def test_detects_running_worker(self, tmp_path: Path):
         ralph_dir = tmp_path / ".ralph"
         workers_dir = ralph_dir / "workers"
         worker_dir = workers_dir / "worker-TASK-001-1700000000"
         worker_dir.mkdir(parents=True)
 
-        # Create PID file
+        # Create PID file - presence indicates running
         (worker_dir / "agent.pid").write_text("12345")
         (worker_dir / "prd.md").write_text("- [ ] Not done")
 
@@ -157,19 +142,13 @@ class TestScanWorkers:
         assert workers[0].status == WorkerStatus.RUNNING
         assert workers[0].pid == 12345
 
-    @patch("wiggum_tui.data.worker_scanner.is_process_running")
-    @patch("wiggum_tui.data.worker_scanner.is_worker_process")
-    def test_detects_failed_worker(
-        self, mock_is_worker, mock_is_running, tmp_path: Path
-    ):
-        mock_is_running.return_value = False
-        mock_is_worker.return_value = False
-
+    def test_detects_failed_worker(self, tmp_path: Path):
         ralph_dir = tmp_path / ".ralph"
         workers_dir = ralph_dir / "workers"
         worker_dir = workers_dir / "worker-TASK-001-1700000000"
         worker_dir.mkdir(parents=True)
 
+        # No agent.pid = not running, PRD has failed marker
         (worker_dir / "prd.md").write_text("- [*] Failed task")
 
         workers = scan_workers(ralph_dir)
@@ -177,12 +156,7 @@ class TestScanWorkers:
         assert len(workers) == 1
         assert workers[0].status == WorkerStatus.FAILED
 
-    @patch("wiggum_tui.data.worker_scanner.is_process_running")
-    @patch("wiggum_tui.data.worker_scanner.is_worker_process")
-    def test_reads_pr_url(self, mock_is_worker, mock_is_running, tmp_path: Path):
-        mock_is_running.return_value = False
-        mock_is_worker.return_value = False
-
+    def test_reads_pr_url(self, tmp_path: Path):
         ralph_dir = tmp_path / ".ralph"
         workers_dir = ralph_dir / "workers"
         worker_dir = workers_dir / "worker-TASK-001-1700000000"
@@ -196,25 +170,16 @@ class TestScanWorkers:
         assert len(workers) == 1
         assert workers[0].pr_url == "https://github.com/example/pr/123"
 
-    @patch("wiggum_tui.data.worker_scanner.is_process_running")
-    @patch("wiggum_tui.data.worker_scanner.is_worker_process")
-    def test_sorts_by_timestamp_descending(
-        self, mock_is_worker, mock_is_running, tmp_path: Path
-    ):
-        mock_is_running.return_value = False
-        mock_is_worker.return_value = False
-
+    def test_sorts_by_timestamp_descending(self, tmp_path: Path):
         ralph_dir = tmp_path / ".ralph"
         workers_dir = ralph_dir / "workers"
 
-        # Create workers with different mtimes
-        for i, name in enumerate(
-            [
-                "worker-TASK-001-1700000001",
-                "worker-TASK-002-1700000002",
-                "worker-TASK-003-1700000003",
-            ]
-        ):
+        # Create workers with different timestamps in directory name
+        for name in [
+            "worker-TASK-001-1700000001",
+            "worker-TASK-002-1700000002",
+            "worker-TASK-003-1700000003",
+        ]:
             worker_dir = workers_dir / name
             worker_dir.mkdir(parents=True)
             (worker_dir / "prd.md").write_text("- [x] Done")
@@ -222,28 +187,63 @@ class TestScanWorkers:
         workers = scan_workers(ralph_dir)
 
         assert len(workers) == 3
-        # Should be sorted by mtime (newest first), but since we just created them
-        # the order depends on filesystem timing. Just verify count.
+        # Should be sorted by timestamp descending (newest first)
+        assert workers[0].task_id == "TASK-003"
+        assert workers[1].task_id == "TASK-002"
+        assert workers[2].task_id == "TASK-001"
+
+    def test_running_worker_uses_pid_mtime_for_timestamp(self, tmp_path: Path):
+        import os
+        import time
+
+        ralph_dir = tmp_path / ".ralph"
+        workers_dir = ralph_dir / "workers"
+        # Directory name has old timestamp
+        worker_dir = workers_dir / "worker-TASK-001-1600000000"
+        worker_dir.mkdir(parents=True)
+
+        (worker_dir / "prd.md").write_text("- [ ] In progress")
+        pid_file = worker_dir / "agent.pid"
+        pid_file.write_text("12345")
+
+        # Get the pid file mtime
+        pid_mtime = int(pid_file.stat().st_mtime)
+
+        workers = scan_workers(ralph_dir)
+
+        assert len(workers) == 1
+        assert workers[0].status == WorkerStatus.RUNNING
+        # Running worker should use agent.pid mtime, not directory timestamp
+        assert workers[0].timestamp == pid_mtime
+        assert workers[0].timestamp != 1600000000
+
+    def test_stopped_worker_uses_directory_timestamp(self, tmp_path: Path):
+        ralph_dir = tmp_path / ".ralph"
+        workers_dir = ralph_dir / "workers"
+        worker_dir = workers_dir / "worker-TASK-001-1700000000"
+        worker_dir.mkdir(parents=True)
+
+        # No agent.pid = stopped, should use directory timestamp
+        (worker_dir / "prd.md").write_text("- [ ] In progress")
+
+        workers = scan_workers(ralph_dir)
+
+        assert len(workers) == 1
+        assert workers[0].status == WorkerStatus.STOPPED
+        # Stopped worker should use directory timestamp
+        assert workers[0].timestamp == 1700000000
 
     def test_fixture_ralph_with_workers(self, ralph_with_workers: Path):
         # This test uses the fixture which has a worker directory
-        # but no running process, so we need to mock the process checks
-        with patch(
-            "wiggum_tui.data.worker_scanner.is_process_running"
-        ) as mock_running, patch(
-            "wiggum_tui.data.worker_scanner.is_worker_process"
-        ) as mock_worker:
-            mock_running.return_value = False
-            mock_worker.return_value = False
+        # No agent.pid means not running
+        workers = scan_workers(ralph_with_workers)
 
-            workers = scan_workers(ralph_with_workers)
-
-            assert len(workers) >= 1
-            # Find the TEST-001 worker
-            test_worker = next(
-                (w for w in workers if w.task_id == "TEST-001"), None
-            )
-            assert test_worker is not None
+        assert len(workers) >= 1
+        # Find the TEST-001 worker
+        test_worker = next(
+            (w for w in workers if w.task_id == "TEST-001"), None
+        )
+        assert test_worker is not None
 
 
 class TestGetWorkerCounts:
