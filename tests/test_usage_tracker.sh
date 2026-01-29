@@ -26,6 +26,8 @@ setup() {
     # Override projects dir to use test fixture
     export CLAUDE_PROJECTS_DIR="$TEST_DIR/projects"
     export USAGE_DATA_DIR="$TEST_DIR/data"
+    # Isolate from config/config.json threshold
+    export WIGGUM_RATE_LIMIT_THRESHOLD=900
     # Reset loaded state
     unset _USAGE_TRACKER_LOADED 2>/dev/null || true
     # Source fresh
@@ -34,7 +36,7 @@ setup() {
 }
 
 teardown() {
-    unset CLAUDE_PROJECTS_DIR USAGE_DATA_DIR
+    unset CLAUDE_PROJECTS_DIR USAGE_DATA_DIR WIGGUM_RATE_LIMIT_THRESHOLD
     rm -rf "$TEST_DIR"
 }
 
