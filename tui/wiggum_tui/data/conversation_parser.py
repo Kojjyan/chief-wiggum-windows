@@ -41,16 +41,17 @@ def get_logs_max_mtime(logs_dir: Path) -> float:
     return max_mtime
 
 
-def clear_conversation_cache(worker_id: str | None = None) -> None:
+def clear_conversation_cache(worker_path: str | Path | None = None) -> None:
     """Clear the conversation cache.
 
     Args:
-        worker_id: If provided, only clear cache for this worker.
+        worker_path: If provided, only clear cache for this worker path.
             If None, clear entire cache.
     """
     global _conversation_cache
-    if worker_id:
-        _conversation_cache.pop(worker_id, None)
+    if worker_path:
+        cache_key = str(Path(worker_path).resolve())
+        _conversation_cache.pop(cache_key, None)
     else:
         _conversation_cache.clear()
 
@@ -65,14 +66,14 @@ def has_logs_changed(worker_dir: Path) -> bool:
         True if logs have changed or not cached, False if unchanged.
     """
     logs_dir = worker_dir / "logs"
-    worker_id = worker_dir.name
+    cache_key = str(worker_dir.resolve())
 
     if not logs_dir.is_dir():
         return False
 
     current_mtime = get_logs_max_mtime(logs_dir)
-    if worker_id in _conversation_cache:
-        cached_mtime, _ = _conversation_cache[worker_id]
+    if cache_key in _conversation_cache:
+        cached_mtime, _ = _conversation_cache[cache_key]
         return current_mtime > cached_mtime
     return True  # Not cached, consider it changed
 
@@ -91,6 +92,7 @@ def parse_iteration_logs(worker_dir: Path, use_cache: bool = True) -> Conversati
 
     logs_dir = worker_dir / "logs"
     worker_id = worker_dir.name
+    cache_key = str(worker_dir.resolve())
 
     if not logs_dir.is_dir():
         return Conversation(worker_id=worker_id)
@@ -98,8 +100,8 @@ def parse_iteration_logs(worker_dir: Path, use_cache: bool = True) -> Conversati
     # Check cache
     if use_cache:
         current_mtime = get_logs_max_mtime(logs_dir)
-        if worker_id in _conversation_cache:
-            cached_mtime, cached_conv = _conversation_cache[worker_id]
+        if cache_key in _conversation_cache:
+            cached_mtime, cached_conv = _conversation_cache[cache_key]
             if cached_mtime >= current_mtime:
                 return cached_conv
 
@@ -169,7 +171,7 @@ def parse_iteration_logs(worker_dir: Path, use_cache: bool = True) -> Conversati
     # Cache the parsed conversation
     if use_cache:
         current_mtime = get_logs_max_mtime(logs_dir)
-        _conversation_cache[worker_id] = (current_mtime, conversation)
+        _conversation_cache[cache_key] = (current_mtime, conversation)
 
     return conversation
 

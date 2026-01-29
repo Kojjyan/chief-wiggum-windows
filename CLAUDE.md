@@ -203,6 +203,7 @@ Chief Wiggum follows spec-driven development: specifications define behavior bef
 | `docs/PIPELINE-SCHEMA.md` | Pipeline contracts | Step definitions, result mappings |
 | `docs/AGENT_DEV_GUIDE.md` | Agent interfaces | `agent_run()` signature, lifecycle hooks |
 | `docs/PROTOCOL.md` | Inter-component communication | File formats, event schemas |
+| `docs/SERVICES.md` | Service definitions | `wiggum run` schedular managed services |
 | `config/agents.json` | Agent configuration | Iteration limits, result mappings |
 
 ### When Writing New Code
