@@ -15,10 +15,9 @@ unset _SERVICE_LOADER_LOADED
 unset _SERVICE_STATE_LOADED
 unset _SERVICE_RUNNER_LOADED
 unset _SERVICE_SCHEDULER_LOADED
+unset _SERVICE_CORE_LOADED
 
-source "$WIGGUM_HOME/lib/service/service-loader.sh"
-source "$WIGGUM_HOME/lib/service/service-state.sh"
-source "$WIGGUM_HOME/lib/service/service-runner.sh"
+# Source the consolidated service-scheduler.sh which includes core + state
 source "$WIGGUM_HOME/lib/service/service-scheduler.sh"
 
 TEST_DIR=""

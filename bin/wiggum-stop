@@ -9,12 +9,7 @@
 set -euo pipefail
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
-PROJECT_DIR="$(pwd)"
-RALPH_DIR="${RALPH_DIR:-$PROJECT_DIR/.ralph}"
-
-source "$WIGGUM_HOME/lib/core/exit-codes.sh"
-source "$WIGGUM_HOME/lib/core/defaults.sh"
-source "$WIGGUM_HOME/lib/core/verbose-flags.sh"
+source "$WIGGUM_HOME/lib/core/bin-common.sh"
 source "$WIGGUM_HOME/lib/worker/worker-lifecycle.sh"
 
 show_help() {

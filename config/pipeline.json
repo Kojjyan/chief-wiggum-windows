@@ -10,7 +10,7 @@
     {
       "id": "execution",
       "agent": "engineering.software-engineer",
-      "max": 3,
+      "max": 2,
       "commit_after": true,
       "config": { "max_iterations": 20, "max_turns": 50, "supervisor_interval": 2 }
     },
@@ -22,7 +22,7 @@
     {
       "id": "audit",
       "agent": "engineering.security-audit",
-      "max": 3,
+      "max": 4,
       "readonly": true,
       "on_result": {
         "FIX": {
@@ -36,7 +36,7 @@
     {
       "id": "test",
       "agent": "engineering.test-coverage",
-      "max": 2,
+      "max": 4,
       "commit_after": true,
       "on_result": {
         "FIX": {
@@ -55,7 +55,7 @@
     {
       "id": "validation",
       "agent": "engineering.validation-review",
-      "max": 2,
+      "max": 4,
       "readonly": true,
       "on_result": {
         "FIX": {
@@ -65,7 +65,7 @@
           "commit_after": true,
           "on_result": {
             "PASS": { "jump": "test" },
-            "FIX": { "jump": "test" }
+            "FIX": { "jump": "execution" }
           }
         }
       }

@@ -72,16 +72,8 @@ emit_event() {
         event_json="{\"timestamp\":\"$timestamp\",\"event_type\":\"$event_type\"}"
     fi
 
-    # Write with file locking to prevent race conditions
-    local lock_file="$EVENTS_LOG.lock"
-    (
-        flock -w 5 200 || {
-            # Lock failed, write directly
-            echo "$event_json" >> "$EVENTS_LOG"
-            exit 0
-        }
-        echo "$event_json" >> "$EVENTS_LOG"
-    ) 200>"$lock_file"
+    # Write with file locking to prevent race conditions (using shared utility)
+    append_with_lock "$EVENTS_LOG" "$event_json" 5
 }
 
 # Emit task started event

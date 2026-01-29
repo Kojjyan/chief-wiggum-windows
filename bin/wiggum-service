@@ -13,10 +13,9 @@ source "$WIGGUM_HOME/lib/core/exit-codes.sh"
 source "$WIGGUM_HOME/lib/core/verbose-flags.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 
-# Source service modules
-source "$WIGGUM_HOME/lib/service/service-loader.sh"
+# Source consolidated service modules
+source "$WIGGUM_HOME/lib/service/service-core.sh"
 source "$WIGGUM_HOME/lib/service/service-state.sh"
-source "$WIGGUM_HOME/lib/service/service-runner.sh"
 
 show_help() {
     cat << EOF

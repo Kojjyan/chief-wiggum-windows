@@ -3,14 +3,27 @@
 # Tracks who ran what task and when for security audit trail
 set -euo pipefail
 
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
+
 AUDIT_LOG="${AUDIT_LOG:-${RALPH_DIR:-$PROJECT_DIR/.ralph}/logs/audit.log}"
 
-# Get git user information
+# Session-scoped cache for git user info (performance optimization)
+# Avoids repeated git config calls within the same session.
+_GIT_USER_INFO_CACHE=""
+
+# Get git user information (cached)
 get_git_user_info() {
+    # Return cached result if available
+    if [ -n "$_GIT_USER_INFO_CACHE" ]; then
+        echo "$_GIT_USER_INFO_CACHE"
+        return 0
+    fi
+
     local user_name user_email
     user_name=$(git config user.name 2>/dev/null || echo "unknown")
     user_email=$(git config user.email 2>/dev/null || echo "unknown")
-    echo "$user_name <$user_email>"
+    _GIT_USER_INFO_CACHE="$user_name <$user_email>"
+    echo "$_GIT_USER_INFO_CACHE"
 }
 
 # Get system user information
@@ -79,11 +92,8 @@ audit_log() {
         log_entry="$log_entry | $kvp"
     done
 
-    # Atomic append with flock (same pattern as activity-log.sh)
-    (
-        flock -w 2 200 || return 0
-        echo "$log_entry" >> "$AUDIT_LOG"
-    ) 200>"${AUDIT_LOG}.lock"
+    # Atomic append with flock (using shared utility)
+    append_with_lock "$AUDIT_LOG" "$log_entry"
 }
 
 # Log task assignment

@@ -2,6 +2,43 @@
 # Task parser for markdown kanban and PRD files
 set -euo pipefail
 
+# =============================================================================
+# KANBAN METADATA CACHING
+# =============================================================================
+# Session-scoped cache with mtime invalidation to avoid O(n²) behavior
+# when get_all_tasks_with_metadata() is called per-task.
+
+_KANBAN_CACHE=""
+_KANBAN_CACHE_FILE=""
+_KANBAN_CACHE_MTIME=""
+
+# Get cached metadata, refreshing if file changed
+#
+# Args:
+#   kanban - Path to kanban file
+#
+# Returns: Cached metadata output (task_id|status|priority|dependencies)
+_get_cached_metadata() {
+    local kanban="$1"
+
+    # Get current file mtime
+    local current_mtime
+    current_mtime=$(stat -c %Y "$kanban" 2>/dev/null || stat -f %m "$kanban" 2>/dev/null || echo "0")
+
+    # Check if cache is valid (same file and same mtime)
+    if [ "$_KANBAN_CACHE_FILE" = "$kanban" ] && [ "$_KANBAN_CACHE_MTIME" = "$current_mtime" ] && [ -n "$_KANBAN_CACHE" ]; then
+        echo "$_KANBAN_CACHE"
+        return 0
+    fi
+
+    # Cache miss - refresh
+    _KANBAN_CACHE=$(get_all_tasks_with_metadata "$kanban")
+    _KANBAN_CACHE_FILE="$kanban"
+    _KANBAN_CACHE_MTIME="$current_mtime"
+
+    echo "$_KANBAN_CACHE"
+}
+
 has_incomplete_tasks() {
     local file="$1"
     grep -q -- '- \[ \]' "$file"
@@ -124,7 +161,7 @@ get_task_dependencies() {
     local kanban="$1"
     local task_id="$2"
 
-    get_all_tasks_with_metadata "$kanban" | awk -F'|' -v task="$task_id" '
+    _get_cached_metadata "$kanban" | awk -F'|' -v task="$task_id" '
         $1 == task { print $4 }
     '
 }
@@ -134,7 +171,7 @@ get_task_priority() {
     local kanban="$1"
     local task_id="$2"
 
-    get_all_tasks_with_metadata "$kanban" | awk -F'|' -v task="$task_id" '
+    _get_cached_metadata "$kanban" | awk -F'|' -v task="$task_id" '
         $1 == task { print $3 }
     '
 }
@@ -144,7 +181,7 @@ get_task_status() {
     local kanban="$1"
     local task_id="$2"
 
-    get_all_tasks_with_metadata "$kanban" | awk -F'|' -v task="$task_id" '
+    _get_cached_metadata "$kanban" | awk -F'|' -v task="$task_id" '
         $1 == task { print $2 }
     '
 }
@@ -166,7 +203,7 @@ are_dependencies_satisfied() {
 
     # Parse comma-separated dependencies
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     # Check each dependency using parameter expansion to avoid IFS issues
     local dep
@@ -206,7 +243,7 @@ get_dependency_depth() {
     local target_task="$2"
 
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     # Build reverse dependency map: for each task, find who depends on it
     # Format: task_id -> list of tasks that have task_id as a dependency
@@ -354,7 +391,7 @@ get_ready_tasks() {
     local dep_bonus_per_task="${7:-7000}"     # 0.7 in fixed-point (bonus per task blocked)
 
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     # Get all pending tasks (status = space)
     local pending_tasks
@@ -425,7 +462,7 @@ get_blocked_tasks() {
     local kanban="$1"
 
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     # Get all pending tasks
     local pending_tasks
@@ -451,7 +488,7 @@ get_unsatisfied_dependencies() {
     fi
 
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     # Parse using parameter expansion to avoid IFS issues
     local dep
@@ -484,7 +521,7 @@ detect_circular_dependencies() {
     local kanban="$1"
 
     local all_metadata
-    all_metadata=$(get_all_tasks_with_metadata "$kanban")
+    all_metadata=$(_get_cached_metadata "$kanban")
 
     local tasks
     tasks=$(echo "$all_metadata" | cut -d'|' -f1)
@@ -596,7 +633,7 @@ resolve_task_id() {
 
     # Get all task IDs from kanban
     local all_tasks
-    all_tasks=$(get_all_tasks_with_metadata "$kanban" | cut -d'|' -f1)
+    all_tasks=$(_get_cached_metadata "$kanban" | cut -d'|' -f1)
 
     for task_id in $all_tasks; do
         # Check if partial matches any part of task_id (case insensitive)

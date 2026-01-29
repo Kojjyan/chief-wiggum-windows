@@ -3,9 +3,7 @@
 set -euo pipefail
 
 WIGGUM_HOME="${WIGGUM_HOME:-$HOME/.claude/chief-wiggum}"
-source "$WIGGUM_HOME/lib/core/exit-codes.sh"
-source "$WIGGUM_HOME/lib/core/defaults.sh"
-source "$WIGGUM_HOME/lib/core/verbose-flags.sh"
+source "$WIGGUM_HOME/lib/core/bin-common.sh"
 
 # Colors
 RED='\033[0;31m'

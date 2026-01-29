@@ -27,6 +27,47 @@ source "$WIGGUM_HOME/lib/utils/activity-log.sh"
 source "$WIGGUM_HOME/lib/core/agent-base.sh"
 
 # =============================================================================
+# RESULT CACHING (Performance Optimization)
+# =============================================================================
+# Cache the last gate result to avoid repeated file lookups and jq parsing.
+# agent_read_step_result is called 2-3x per step - caching reduces I/O.
+
+_PIPELINE_LAST_STEP_ID=""
+_PIPELINE_LAST_GATE_RESULT=""
+
+# Get cached step result, or read from file if not cached
+#
+# Args:
+#   worker_dir - Worker directory path
+#   step_id    - Pipeline step ID
+#
+# Returns: gate_result value
+_get_cached_step_result() {
+    local worker_dir="$1"
+    local step_id="$2"
+
+    # Return cached result if same step
+    if [ "$_PIPELINE_LAST_STEP_ID" = "$step_id" ] && [ -n "$_PIPELINE_LAST_GATE_RESULT" ]; then
+        echo "$_PIPELINE_LAST_GATE_RESULT"
+        return 0
+    fi
+
+    # Cache miss - read from file
+    local result
+    result=$(agent_read_step_result "$worker_dir" "$step_id")
+    _PIPELINE_LAST_STEP_ID="$step_id"
+    _PIPELINE_LAST_GATE_RESULT="$result"
+
+    echo "$result"
+}
+
+# Clear the result cache (called when starting a new step)
+_clear_result_cache() {
+    _PIPELINE_LAST_STEP_ID=""
+    _PIPELINE_LAST_GATE_RESULT=""
+}
+
+# =============================================================================
 # PARENT/NEXT CONTEXT PROPAGATION
 # =============================================================================
 
@@ -436,12 +477,15 @@ pipeline_run_all() {
         # Increment visit counter
         _PIPELINE_VISITS[$step_id]=$((visit_count + 1))
 
+        # Clear result cache before running step
+        _clear_result_cache
+
         # Run the step (agent execution only)
         _pipeline_run_step "$current_idx" "$worker_dir" "$project_dir" "$workspace"
 
-        # Read the gate result
+        # Read the gate result (using cache - subsequent calls use cached value)
         local gate_result
-        gate_result=$(agent_read_step_result "$worker_dir" "$step_id")
+        gate_result=$(_get_cached_step_result "$worker_dir" "$step_id")
 
         # Dispatch on result (sets _PIPELINE_NEXT_IDX)
         _dispatch_on_result "$current_idx" "$gate_result" "$worker_dir" "$project_dir" "$workspace"
@@ -530,8 +574,12 @@ _pipeline_run_step() {
     fi
 
     _phase_end "$step_id"
+
+    # Read result and populate cache for subsequent calls
     local gate_result
     gate_result=$(agent_read_step_result "$worker_dir" "$step_id")
+    _PIPELINE_LAST_STEP_ID="$step_id"
+    _PIPELINE_LAST_GATE_RESULT="$gate_result"
 
     # Log step completion
     log_subsection "STEP COMPLETED: $step_id"

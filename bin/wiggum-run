@@ -32,10 +32,7 @@ source "$WIGGUM_HOME/lib/scheduler/conflict-registry.sh"
 source "$WIGGUM_HOME/lib/scheduler/pr-merge-optimizer.sh"
 source "$WIGGUM_HOME/lib/scheduler/orchestrator-functions.sh"
 
-# Service-based scheduler
-source "$WIGGUM_HOME/lib/service/service-loader.sh"
-source "$WIGGUM_HOME/lib/service/service-state.sh"
-source "$WIGGUM_HOME/lib/service/service-runner.sh"
+# Service-based scheduler (consolidated module includes core + state)
 source "$WIGGUM_HOME/lib/service/service-scheduler.sh"
 # Service handlers (svc_* functions callable via services.json)
 source "$WIGGUM_HOME/lib/services/orchestrator-handlers.sh"

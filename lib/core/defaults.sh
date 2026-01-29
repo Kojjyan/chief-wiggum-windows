@@ -74,15 +74,55 @@ export PROJECT_DIR
 export RALPH_DIR
 export CLAUDE
 
+# =============================================================================
+# UNIFIED CONFIG LOADING (Performance Optimization)
+# =============================================================================
+# Single jq call extracts all config values at once, caching the result.
+# This reduces multiple jq invocations to a single call per session.
+
+_CONFIG_CACHE_LOADED=0
+
+# Internal: Load all config values in a single jq call
+_load_config_cache() {
+    [ "$_CONFIG_CACHE_LOADED" = "1" ] && return 0
+
+    local config_file="$WIGGUM_HOME/config/config.json"
+    if [ ! -f "$config_file" ]; then
+        _CONFIG_CACHE_LOADED=1
+        return 0
+    fi
+
+    # Single jq call extracts all values (performance optimization)
+    # Format: approved_authors|fix_max_iter|fix_max_turns|auto_commit|rate_limit|git_name|git_email
+    local extracted
+    extracted=$(jq -r '[
+        (.review.approved_authors // [] | join(",")),
+        (.review.fix_max_iterations // 10),
+        (.review.fix_max_turns // 30),
+        (.review.auto_commit_after_fix // true),
+        (.rate_limit.threshold_prompts // 900),
+        (.git.author_name // "Ralph Wiggum"),
+        (.git.author_email // "ralph@wiggum.cc")
+    ] | @tsv' "$config_file" 2>/dev/null) || true
+
+    if [ -n "$extracted" ]; then
+        IFS=$'\t' read -r _CACHE_APPROVED_AUTHORS _CACHE_FIX_MAX_ITER _CACHE_FIX_MAX_TURNS \
+                         _CACHE_AUTO_COMMIT _CACHE_RATE_LIMIT _CACHE_GIT_NAME _CACHE_GIT_EMAIL \
+                         <<< "$extracted"
+    fi
+
+    _CONFIG_CACHE_LOADED=1
+}
+
 # Load review config from config.json (with env var overrides)
 load_review_config() {
-    local config_file="$WIGGUM_HOME/config/config.json"
-    if [ -f "$config_file" ]; then
-        WIGGUM_APPROVED_AUTHORS="${WIGGUM_APPROVED_AUTHORS:-$(jq -r '.review.approved_authors // [] | join(",")' "$config_file" 2>/dev/null)}"
-        WIGGUM_COMMENT_FIX_MAX_ITERATIONS="${WIGGUM_COMMENT_FIX_MAX_ITERATIONS:-$(jq -r '.review.fix_max_iterations // 10' "$config_file" 2>/dev/null)}"
-        WIGGUM_COMMENT_FIX_MAX_TURNS="${WIGGUM_COMMENT_FIX_MAX_TURNS:-$(jq -r '.review.fix_max_turns // 30' "$config_file" 2>/dev/null)}"
-        WIGGUM_AUTO_COMMIT_AFTER_FIX="${WIGGUM_AUTO_COMMIT_AFTER_FIX:-$(jq -r '.review.auto_commit_after_fix // true' "$config_file" 2>/dev/null)}"
-    fi
+    _load_config_cache
+
+    WIGGUM_APPROVED_AUTHORS="${WIGGUM_APPROVED_AUTHORS:-${_CACHE_APPROVED_AUTHORS:-}}"
+    WIGGUM_COMMENT_FIX_MAX_ITERATIONS="${WIGGUM_COMMENT_FIX_MAX_ITERATIONS:-${_CACHE_FIX_MAX_ITER:-}}"
+    WIGGUM_COMMENT_FIX_MAX_TURNS="${WIGGUM_COMMENT_FIX_MAX_TURNS:-${_CACHE_FIX_MAX_TURNS:-}}"
+    WIGGUM_AUTO_COMMIT_AFTER_FIX="${WIGGUM_AUTO_COMMIT_AFTER_FIX:-${_CACHE_AUTO_COMMIT:-}}"
+
     # Fallback defaults if config doesn't exist or parsing fails
     WIGGUM_APPROVED_AUTHORS="${WIGGUM_APPROVED_AUTHORS:-copilot,dependabot,github-actions[bot],dependabot[bot],renovate[bot],codecov[bot]}"
     WIGGUM_COMMENT_FIX_MAX_ITERATIONS="${WIGGUM_COMMENT_FIX_MAX_ITERATIONS:-10}"
@@ -97,10 +137,9 @@ load_review_config() {
 
 # Load rate limit config from config.json (with env var overrides)
 load_rate_limit_config() {
-    local config_file="$WIGGUM_HOME/config/config.json"
-    if [ -f "$config_file" ]; then
-        WIGGUM_RATE_LIMIT_THRESHOLD="${WIGGUM_RATE_LIMIT_THRESHOLD:-$(jq -r '.rate_limit.threshold_prompts // 900' "$config_file" 2>/dev/null)}"
-    fi
+    _load_config_cache
+
+    WIGGUM_RATE_LIMIT_THRESHOLD="${WIGGUM_RATE_LIMIT_THRESHOLD:-${_CACHE_RATE_LIMIT:-}}"
     WIGGUM_RATE_LIMIT_THRESHOLD="${WIGGUM_RATE_LIMIT_THRESHOLD:-900}"
     export WIGGUM_RATE_LIMIT_THRESHOLD
 }
@@ -108,11 +147,11 @@ load_rate_limit_config() {
 # Load git identity config from config.json (with env var overrides)
 # Sets WIGGUM_GIT_AUTHOR_NAME and WIGGUM_GIT_AUTHOR_EMAIL
 load_git_config() {
-    local config_file="$WIGGUM_HOME/config/config.json"
-    if [ -f "$config_file" ]; then
-        WIGGUM_GIT_AUTHOR_NAME="${WIGGUM_GIT_AUTHOR_NAME:-$(jq -r '.git.author_name // "Ralph Wiggum"' "$config_file" 2>/dev/null)}"
-        WIGGUM_GIT_AUTHOR_EMAIL="${WIGGUM_GIT_AUTHOR_EMAIL:-$(jq -r '.git.author_email // "ralph@wiggum.cc"' "$config_file" 2>/dev/null)}"
-    fi
+    _load_config_cache
+
+    WIGGUM_GIT_AUTHOR_NAME="${WIGGUM_GIT_AUTHOR_NAME:-${_CACHE_GIT_NAME:-}}"
+    WIGGUM_GIT_AUTHOR_EMAIL="${WIGGUM_GIT_AUTHOR_EMAIL:-${_CACHE_GIT_EMAIL:-}}"
+
     # Fallback defaults if config doesn't exist or parsing fails
     WIGGUM_GIT_AUTHOR_NAME="${WIGGUM_GIT_AUTHOR_NAME:-Ralph Wiggum}"
     WIGGUM_GIT_AUTHOR_EMAIL="${WIGGUM_GIT_AUTHOR_EMAIL:-ralph@wiggum.cc}"

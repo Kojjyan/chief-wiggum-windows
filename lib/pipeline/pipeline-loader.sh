@@ -27,6 +27,51 @@ _PIPELINE_STEP_COUNT=0
 # Pipeline metadata
 PIPELINE_NAME=""
 
+# =============================================================================
+# PIPELINE CACHING (Performance Optimization)
+# =============================================================================
+# Cache all steps in associative arrays at load time to avoid repeated jq calls.
+# This reduces 300+ jq invocations per pipeline run to a single jq call at load.
+
+declare -gA _PIPELINE_STEP_BY_INDEX=()   # idx -> compact JSON for the step
+declare -gA _PIPELINE_ID_TO_INDEX=()     # step_id -> idx
+_PIPELINE_CACHE_VALID=0                   # 1 if cache is populated
+
+# Internal: Populate step cache from loaded pipeline
+#
+# Must be called after _PIPELINE_JSON_FILE or _PIPELINE_JSON is set.
+# Iterates through all steps once and stores:
+#   - _PIPELINE_STEP_BY_INDEX[idx] = compact JSON of step
+#   - _PIPELINE_ID_TO_INDEX[step_id] = idx
+_pipeline_cache_steps() {
+    # Reset cache
+    _PIPELINE_STEP_BY_INDEX=()
+    _PIPELINE_ID_TO_INDEX=()
+    _PIPELINE_CACHE_VALID=0
+
+    local step_count="$_PIPELINE_STEP_COUNT"
+    [ "$step_count" -eq 0 ] && return 0
+
+    # Single jq call extracts all steps as compact JSON with their index
+    # Output format: idx<TAB>step_id<TAB>compact_json per line
+    local cache_data
+    cache_data=$(_pipeline_jq '.steps | to_entries | .[] | [.key, .value.id, (.value | tojson)] | @tsv' -r 2>/dev/null)
+
+    if [ -z "$cache_data" ]; then
+        log_warn "Failed to cache pipeline steps, falling back to uncached access"
+        return 0
+    fi
+
+    # Populate associative arrays
+    while IFS=$'\t' read -r idx step_id step_json; do
+        [ -z "$idx" ] && continue
+        _PIPELINE_STEP_BY_INDEX[$idx]="$step_json"
+        _PIPELINE_ID_TO_INDEX[$step_id]="$idx"
+    done <<< "$cache_data"
+
+    _PIPELINE_CACHE_VALID=1
+}
+
 # Internal: run jq against the pipeline source (file or inline string)
 _pipeline_jq() {
     local filter="$1"
@@ -53,7 +98,13 @@ pipeline_get() {
     local default="${3:-}"
 
     local result
-    result=$(_pipeline_jq ".steps[$idx]${field} // null" -r)
+
+    # Use cache if available (performance optimization)
+    if [ "$_PIPELINE_CACHE_VALID" = "1" ] && [ -n "${_PIPELINE_STEP_BY_INDEX[$idx]:-}" ]; then
+        result=$(echo "${_PIPELINE_STEP_BY_INDEX[$idx]}" | jq -r "${field} // null" 2>/dev/null)
+    else
+        result=$(_pipeline_jq ".steps[$idx]${field} // null" -r)
+    fi
 
     if [ "$result" = "null" ] || [ -z "$result" ]; then
         echo "$default"
@@ -79,7 +130,13 @@ pipeline_get_json() {
     if [ -z "$default" ]; then default="{}"; fi
 
     local result
-    result=$(_pipeline_jq ".steps[$idx]${field} // null" -c)
+
+    # Use cache if available (performance optimization)
+    if [ "$_PIPELINE_CACHE_VALID" = "1" ] && [ -n "${_PIPELINE_STEP_BY_INDEX[$idx]:-}" ]; then
+        result=$(echo "${_PIPELINE_STEP_BY_INDEX[$idx]}" | jq -c "${field} // null" 2>/dev/null)
+    else
+        result=$(_pipeline_jq ".steps[$idx]${field} // null" -c)
+    fi
 
     if [ "$result" = "null" ]; then
         echo "$default"
@@ -100,7 +157,13 @@ pipeline_get_on_result() {
     local result_value="$2"
 
     local result
-    result=$(_pipeline_jq ".steps[$idx].on_result.\"$result_value\" // null" -c)
+
+    # Use cache if available (performance optimization)
+    if [ "$_PIPELINE_CACHE_VALID" = "1" ] && [ -n "${_PIPELINE_STEP_BY_INDEX[$idx]:-}" ]; then
+        result=$(echo "${_PIPELINE_STEP_BY_INDEX[$idx]}" | jq -c ".on_result.\"$result_value\" // null" 2>/dev/null)
+    else
+        result=$(_pipeline_jq ".steps[$idx].on_result.\"$result_value\" // null" -c)
+    fi
 
     if [ "$result" = "null" ]; then
         echo ""
@@ -209,6 +272,9 @@ pipeline_load() {
     _PIPELINE_JSON=""
     _PIPELINE_STEP_COUNT="$step_count"
 
+    # Populate step cache for O(1) access (performance optimization)
+    _pipeline_cache_steps
+
     log "Loaded pipeline '$PIPELINE_NAME' with $step_count steps"
     return 0
 }
@@ -232,6 +298,9 @@ pipeline_load_builtin_defaults() {
   ]
 }'
     _PIPELINE_STEP_COUNT=7
+
+    # Populate step cache for O(1) access (performance optimization)
+    _pipeline_cache_steps
 
     log "Loaded built-in default pipeline with $_PIPELINE_STEP_COUNT steps"
 }
@@ -299,6 +368,18 @@ pipeline_resolve() {
 pipeline_find_step_index() {
     local step_id="$1"
 
+    # Use O(1) cache lookup if available (performance optimization)
+    if [ "$_PIPELINE_CACHE_VALID" = "1" ]; then
+        local cached_idx="${_PIPELINE_ID_TO_INDEX[$step_id]:-}"
+        if [ -n "$cached_idx" ]; then
+            echo "$cached_idx"
+            return 0
+        fi
+        echo "-1"
+        return 1
+    fi
+
+    # Fallback to jq search
     local result
     result=$(_pipeline_jq '.steps | to_entries[] | select(.value.id == "'"$step_id"'") | .key' -r | head -1)
 

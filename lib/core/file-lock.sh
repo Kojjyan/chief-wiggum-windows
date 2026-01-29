@@ -2,6 +2,41 @@
 # File locking utilities for concurrent worker access
 set -euo pipefail
 
+# =============================================================================
+# APPEND WITH LOCK (Common Pattern)
+# =============================================================================
+# Consolidates duplicate flock-based append implementations from:
+#   - activity-log.sh
+#   - audit-logger.sh
+#   - event-emitter.sh
+
+# Append content to a file with flock protection
+#
+# Uses flock for safe concurrent appends from multiple workers.
+# Lock file is NOT removed after use (avoids TOCTOU race conditions).
+#
+# Args:
+#   file    - File to append to
+#   content - Content to append
+#   timeout - Lock timeout in seconds (default: 2)
+#
+# Returns: 0 on success (or if lock fails, content is still written)
+append_with_lock() {
+    local file="$1"
+    local content="$2"
+    local timeout="${3:-2}"
+    local lock_file="${file}.lock"
+
+    (
+        flock -w "$timeout" 200 || {
+            # Lock failed, write directly (better than losing data)
+            echo "$content" >> "$file"
+            exit 0
+        }
+        echo "$content" >> "$file"
+    ) 200>"$lock_file"
+}
+
 # Retry a command with file locking
 # Usage: with_file_lock <file> <max_retries> <command>
 with_file_lock() {

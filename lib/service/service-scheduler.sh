@@ -1,30 +1,53 @@
 #!/usr/bin/env bash
 # =============================================================================
-# service-scheduler.sh - Service timing and execution management
+# service-scheduler.sh - Service scheduling and state management
 #
-# Manages the scheduling loop for declaratively-configured services.
+# This is a consolidated module that provides:
+#   - Scheduling loop for declaratively-configured services
+#   - State persistence and recovery (via service-state.sh)
+#   - Core service functionality (via service-core.sh)
 #
-# Provides:
+# Users should source this file for full service scheduler functionality.
+# It automatically provides all service-core.sh and service-state.sh functions.
+#
+# Scheduler Functions:
 #   service_scheduler_init()          - Initialize scheduler state
 #   service_scheduler_tick()          - Check and run due services
 #   service_scheduler_shutdown()      - Clean shutdown
-#   service_is_due(id)                - Check if service should run
-#   service_mark_run(id)              - Record execution timestamp
+#   service_scheduler_run_startup()   - Run services with run_on_startup
+#   service_scheduler_status()        - Get scheduler status summary
+#   service_scheduler_service_status(id) - Get status for specific service
+#   service_scheduler_all_statuses()  - Get all service statuses
+#   service_scheduler_set_group_enabled(group, enabled) - Enable/disable group
+#   service_is_due(id)                - Check if interval service should run
 #   service_trigger_event(event)      - Trigger event-based services
 #
-# New in v1.1:
-#   service_scheduler_check_health()  - Run health checks on all services
-#   service_scheduler_process_queues() - Process queued service executions
+# State Functions (from service-state.sh):
+#   service_state_init(ralph_dir)     - Initialize state tracking
+#   service_state_save()              - Persist state to disk
+#   service_state_restore()           - Load state from disk
+#   service_state_get_status(id)      - Get service status
+#   service_state_get_last_run(id)    - Get last run timestamp
+#   service_state_get_metrics(id)     - Get service metrics
+#   service_state_is_running(id)      - Check if service is running
+#   service_state_mark_started(id)    - Mark service as started
+#   service_state_mark_completed(id)  - Mark service as completed
+#   service_state_mark_failed(id)     - Mark service as failed
+#   service_state_queue_add(id, priority, args) - Add to execution queue
+#   service_state_queue_pop(id)       - Pop from execution queue
+#   service_state_get_circuit_state(id) - Get circuit breaker state
+#
+# Core Functions (from service-core.sh):
+#   See service-core.sh for full list of configuration and execution functions
 # =============================================================================
 
 # Prevent double-sourcing
 [ -n "${_SERVICE_SCHEDULER_LOADED:-}" ] && return 0
 _SERVICE_SCHEDULER_LOADED=1
 
-# Source dependencies
-source "$WIGGUM_HOME/lib/service/service-loader.sh"
+# Source dependencies - use consolidated service-core.sh
+source "$WIGGUM_HOME/lib/service/service-core.sh"
 source "$WIGGUM_HOME/lib/service/service-state.sh"
-source "$WIGGUM_HOME/lib/service/service-runner.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 
 # Scheduler configuration

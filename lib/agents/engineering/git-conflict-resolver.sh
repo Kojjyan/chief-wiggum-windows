@@ -8,8 +8,11 @@ set -euo pipefail
 #   merge conflicts in the workspace. Uses ralph loop pattern with summaries.
 #   Parses conflict markers, applies intelligent resolution strategies, and
 #   stages resolved files. Does NOT commit - only resolves and stages.
+#   Supports coordinated resolution via resolution-plan.md when available.
 # REQUIRED_PATHS:
 #   - workspace : Directory containing the git repository with conflicts
+# OPTIONAL_PATHS:
+#   - resolution-plan.md : Coordination plan from multi-PR planner
 # OUTPUT_FILES:
 #   - resolution-summary.md : Documentation of conflict resolutions applied
 #   - resolve-result.json   : Contains PASS, FAIL, or SKIP
@@ -43,10 +46,19 @@ agent_run() {
         return 1
     fi
 
-    # Verify workspace is a git repository
-    if [ ! -d "$workspace/.git" ] && ! git -C "$workspace" rev-parse --git-dir &>/dev/null; then
-        log_error "Workspace is not a git repository: $workspace"
+    # Verify workspace is a functional git repository (catches broken worktrees)
+    if ! git -C "$workspace" rev-parse HEAD &>/dev/null; then
+        log_error "Workspace is not a functional git repository (broken worktree?): $workspace"
+        agent_write_result "$worker_dir" "FAIL" '{"error":"broken_worktree"}'
         return 1
+    fi
+
+    # Pre-flight: Commit any uncommitted changes before attempting resolution
+    # This prevents "Your local changes would be overwritten" errors during merge
+    if ! git -C "$workspace" diff --quiet || ! git -C "$workspace" diff --cached --quiet; then
+        log "Working tree has uncommitted changes - committing before conflict resolution"
+        git -C "$workspace" add -A
+        git -C "$workspace" commit -m "chore: auto-commit before conflict resolution" 2>/dev/null || true
     fi
 
     # Create standard directories
@@ -78,8 +90,18 @@ No merge conflicts were found in the workspace. The repository is in a clean sta
     conflict_count=$(echo "$conflicted_files" | wc -l)
     log "Found $conflict_count file(s) with merge conflicts"
 
+    # Check for resolution plan from multi-PR planner
+    local has_plan=false
+    local plan_file="$worker_dir/resolution-plan.md"
+    if [ -f "$plan_file" ]; then
+        has_plan=true
+        log "Found resolution plan: $plan_file"
+    fi
+
     # Set up callback context using base library
     agent_setup_context "$worker_dir" "$workspace" "$project_dir"
+    _RESOLVER_HAS_PLAN="$has_plan"
+    _RESOLVER_PLAN_FILE="$plan_file"
 
     log "Starting conflict resolution..."
 
@@ -88,7 +110,7 @@ No merge conflicts were found in the workspace. The repository is in a clean sta
 
     # Run resolution loop
     run_ralph_loop "$workspace" \
-        "$(_get_system_prompt "$workspace")" \
+        "$(_get_system_prompt "$workspace" "$has_plan")" \
         "_conflict_user_prompt" \
         "_conflict_completion_check" \
         "$max_iterations" "$max_turns" "$worker_dir" "$session_prefix"
@@ -123,6 +145,27 @@ _conflict_user_prompt() {
 
     # Always include the initial prompt to ensure full context after summarization
     _get_user_prompt
+
+    # Include resolution plan context if available
+    if [ "${_RESOLVER_HAS_PLAN:-false}" = true ] && [ -f "${_RESOLVER_PLAN_FILE:-}" ]; then
+        cat << 'PLAN_EOF'
+
+## COORDINATION PLAN AVAILABLE
+
+A resolution plan has been created to coordinate this resolution with other PRs
+that are also in conflict. Read the plan at @../resolution-plan.md and follow
+its guidance EXACTLY.
+
+The plan specifies:
+- Which changes from each branch should be kept
+- The order of operations to avoid re-conflicts
+- Any files that require special handling
+
+**IMPORTANT**: Follow the plan precisely. Do not deviate from the specified
+resolution strategy as it was designed to ensure all related PRs can merge
+successfully without creating new conflicts.
+PLAN_EOF
+    fi
 
     if [ "$iteration" -gt 0 ]; then
         # Add continuation context for subsequent iterations
@@ -163,6 +206,21 @@ _conflict_completion_check() {
 # System prompt
 _get_system_prompt() {
     local workspace="$1"
+    local has_plan="${2:-false}"
+
+    local plan_section=""
+    if [ "$has_plan" = true ]; then
+        plan_section="
+## IMPORTANT: Resolution Plan Available
+
+A resolution-plan.md file exists in the parent directory. This plan was created
+by a multi-PR coordination system to ensure your resolution is compatible with
+other PRs that are also being resolved.
+
+**You MUST read and follow the plan exactly.** The plan specifies which changes
+to keep from each branch and how to handle overlapping modifications.
+"
+    fi
 
     cat << EOF
 GIT CONFLICT RESOLVER:
@@ -170,7 +228,7 @@ GIT CONFLICT RESOLVER:
 You resolve merge conflicts. Your job is to produce correct, working code - not to guess.
 
 WORKSPACE: $workspace
-
+$plan_section
 ## Resolution Philosophy
 
 * UNDERSTAND BEFORE RESOLVING - Read surrounding code to understand intent
@@ -184,6 +242,7 @@ WORKSPACE: $workspace
 * You MUST stage resolved files with 'git add <file>'
 * You must NOT commit - only resolve and stage
 * If unsure about intent, preserve BOTH sides rather than dropping code
+$([ "$has_plan" = true ] && echo "* Follow the resolution-plan.md guidance EXACTLY")
 EOF
 }
 

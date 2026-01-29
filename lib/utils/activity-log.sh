@@ -14,6 +14,8 @@
 [ -n "${_ACTIVITY_LOG_LOADED:-}" ] && return 0
 _ACTIVITY_LOG_LOADED=1
 
+source "$WIGGUM_HOME/lib/core/file-lock.sh"
+
 # Global path to the activity log file (set by activity_init)
 _ACTIVITY_LOG_FILE=""
 
@@ -82,9 +84,6 @@ activity_log() {
         json=$(echo "$json" | jq -c --arg k "$key" --arg v "$val" '. + {($k): $v}')
     done
 
-    # Atomic append with flock
-    (
-        flock -w 2 200 || return 0
-        echo "$json" >> "$_ACTIVITY_LOG_FILE"
-    ) 200>"${_ACTIVITY_LOG_FILE}.lock"
+    # Atomic append with flock (using shared utility)
+    append_with_lock "$_ACTIVITY_LOG_FILE" "$json"
 }
