@@ -5,7 +5,7 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Static, Select, Tree
+from textual.widgets import Static, Select, Input, Tree
 from textual.widgets.tree import TreeNode
 from textual.widget import Widget
 
@@ -125,6 +125,11 @@ class ConversationPanel(Widget):
         padding: 0 1;
     }
 
+    ConversationPanel #worker-search {
+        width: 20;
+        margin-top: -1;
+    }
+
     ConversationPanel Select {
         width: 1fr;
         margin-top: -1;
@@ -169,6 +174,7 @@ class ConversationPanel(Widget):
         super().__init__()
         self.ralph_dir = ralph_dir
         self._workers_list: list[tuple[str, str]] = []  # (id, label)
+        self._search_text: str = ""
         self.current_worker: str | None = None
         self.conversation: Conversation | None = None
         self._last_data_hash: str = ""
@@ -191,6 +197,7 @@ class ConversationPanel(Widget):
         self._load_workers()
 
         with Horizontal(classes="conv-controls"):
+            yield Input(placeholder="Search...", id="worker-search")
             yield Select(
                 [(label, worker_id) for worker_id, label in self._workers_list],
                 prompt="Select worker...",
@@ -260,17 +267,35 @@ class ConversationPanel(Widget):
         old_list = self._workers_list[:]
         self._load_workers()
         if old_list != self._workers_list:
-            try:
-                select = self.query_one("#worker-select", Select)
-                select.set_options(
-                    [(label, worker_id) for worker_id, label in self._workers_list]
-                )
-                # Restore selection if still valid
-                new_ids = [w[0] for w in self._workers_list]
-                if self.current_worker and self.current_worker in new_ids:
-                    select.value = self.current_worker
-            except Exception:
-                pass
+            self._apply_search_filter()
+
+    def _filtered_workers(self) -> list[tuple[str, str]]:
+        """Return workers list filtered by current search text."""
+        if not self._search_text:
+            return self._workers_list
+        query = self._search_text.lower()
+        return [(wid, label) for wid, label in self._workers_list if query in label.lower()]
+
+    def _apply_search_filter(self) -> None:
+        """Apply current search filter to the Select widget."""
+        try:
+            select = self.query_one("#worker-select", Select)
+            filtered = self._filtered_workers()
+            select.set_options(
+                [(label, worker_id) for worker_id, label in filtered]
+            )
+            # Restore selection if still in filtered list
+            filtered_ids = [w[0] for w in filtered]
+            if self.current_worker and self.current_worker in filtered_ids:
+                select.value = self.current_worker
+        except Exception:
+            pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter worker dropdown based on search text."""
+        if event.input.id == "worker-search":
+            self._search_text = event.value
+            self._apply_search_filter()
 
     def _load_conversation(self, worker_id: str) -> None:
         """Load conversation for a worker."""

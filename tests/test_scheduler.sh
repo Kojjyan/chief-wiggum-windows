@@ -354,7 +354,7 @@ test_get_resumable_workers_resolve_type_from_dirname() {
 
 test_get_resumable_workers_fix_type_from_git_state() {
     _create_resumable_worker "worker-TASK-001-1234567890"
-    echo '{"state": "needs_fix"}' > "$RALPH_DIR/workers/worker-TASK-001-1234567890/git-state.json"
+    echo '{"current_state": "needs_fix"}' > "$RALPH_DIR/workers/worker-TASK-001-1234567890/git-state.json"
 
     local output
     output=$(get_resumable_workers "$RALPH_DIR")
@@ -366,7 +366,7 @@ test_get_resumable_workers_fix_type_from_git_state() {
 
 test_get_resumable_workers_resolve_type_from_git_state() {
     _create_resumable_worker "worker-TASK-001-1234567890"
-    echo '{"state": "resolving"}' > "$RALPH_DIR/workers/worker-TASK-001-1234567890/git-state.json"
+    echo '{"current_state": "resolving"}' > "$RALPH_DIR/workers/worker-TASK-001-1234567890/git-state.json"
 
     local output
     output=$(get_resumable_workers "$RALPH_DIR")
@@ -374,6 +374,32 @@ test_get_resumable_workers_resolve_type_from_git_state() {
     local worker_type
     worker_type=$(echo "$output" | awk '{print $4}')
     assert_equals "resolve" "$worker_type" "Worker with resolving git-state should be type 'resolve'"
+}
+
+test_get_resumable_workers_fix_type_from_pipeline_config() {
+    _create_resumable_worker "worker-TASK-003-1234567890"
+    echo '{"pipeline":{"name":"fix","source":"config/pipelines/fix.json"},"current":{"step_idx":0,"step_id":"pr-fix"},"steps":{}}' \
+        > "$RALPH_DIR/workers/worker-TASK-003-1234567890/pipeline-config.json"
+
+    local output
+    output=$(get_resumable_workers "$RALPH_DIR")
+
+    local worker_type
+    worker_type=$(echo "$output" | awk '{print $4}')
+    assert_equals "fix" "$worker_type" "Worker with fix pipeline config should be type 'fix'"
+}
+
+test_get_resumable_workers_resolve_type_from_pipeline_config() {
+    _create_resumable_worker "worker-TASK-004-1234567890"
+    echo '{"pipeline":{"name":"multi-pr-resolve","source":"config/pipelines/multi-pr-resolve.json"},"current":{"step_idx":0,"step_id":"resolve"},"steps":{}}' \
+        > "$RALPH_DIR/workers/worker-TASK-004-1234567890/pipeline-config.json"
+
+    local output
+    output=$(get_resumable_workers "$RALPH_DIR")
+
+    local worker_type
+    worker_type=$(echo "$output" | awk '{print $4}')
+    assert_equals "resolve" "$worker_type" "Worker with resolve pipeline config should be type 'resolve'"
 }
 
 test_get_resumable_workers_output_has_four_fields() {
@@ -418,6 +444,8 @@ run_test test_get_resumable_workers_fix_type_from_dirname
 run_test test_get_resumable_workers_resolve_type_from_dirname
 run_test test_get_resumable_workers_fix_type_from_git_state
 run_test test_get_resumable_workers_resolve_type_from_git_state
+run_test test_get_resumable_workers_fix_type_from_pipeline_config
+run_test test_get_resumable_workers_resolve_type_from_pipeline_config
 run_test test_get_resumable_workers_output_has_four_fields
 
 print_test_summary

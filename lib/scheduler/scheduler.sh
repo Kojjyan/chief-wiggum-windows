@@ -381,21 +381,10 @@ scheduler_detect_orphan_workers() {
 
         # Check if this PID is already tracked
         if ! pool_get "$worker_pid" > /dev/null 2>&1; then
-            # Determine worker type from git-state
-            local type="main"
+            # Determine worker type from pipeline config, name pattern, and git-state
             local worker_dir="$_SCHED_RALPH_DIR/workers/$worker_id"
-            if [ -f "$worker_dir/git-state.json" ]; then
-                local git_state
-                git_state=$(jq -r '.current_state // ""' "$worker_dir/git-state.json" 2>/dev/null)
-                case "$git_state" in
-                    resolving|needs_resolve|needs_multi_resolve)
-                        type="resolve"
-                        ;;
-                    fixing|needs_fix)
-                        type="fix"
-                        ;;
-                esac
-            fi
+            local type
+            type=$(_detect_worker_type "$worker_dir")
 
             # Check if a different PID for this task is already tracked
             # If so, this is a sub-agent spawn (normal); otherwise it's unexpected
@@ -512,26 +501,8 @@ get_resumable_workers() {
             current_step="execution"
         fi
 
-        # Detect worker type from directory name and git-state
-        worker_type="main"
-        local worker_name
-        worker_name=$(basename "$worker_dir")
-        if [[ "$worker_name" == *"-fix-"* ]]; then
-            worker_type="fix"
-        elif [[ "$worker_name" == *"-resolve-"* ]]; then
-            worker_type="resolve"
-        elif [ -f "$worker_dir/git-state.json" ]; then
-            local git_state
-            git_state=$(jq -r '.state // ""' "$worker_dir/git-state.json" 2>/dev/null)
-            case "$git_state" in
-                fixing|needs_fix)
-                    worker_type="fix"
-                    ;;
-                resolving|needs_resolve|needs_multi_resolve)
-                    worker_type="resolve"
-                    ;;
-            esac
-        fi
+        # Detect worker type from pipeline config, name pattern, and git-state
+        worker_type=$(_detect_worker_type "$worker_dir")
 
         echo "$worker_dir $task_id $current_step $worker_type"
     done

@@ -19,6 +19,66 @@ _WORKER_POOL_LOADED=1
 # Pool storage - PID -> "type|task_id|start_time"
 declare -gA _WORKER_POOL=()
 
+# Detect worker type from pipeline config, directory name, and git-state
+#
+# Checks sources in priority order:
+#   1. pipeline-config.json pipeline.name (most reliable - "fix", "multi-pr-resolve", etc.)
+#   2. Worker directory name pattern (-fix-, -resolve-)
+#   3. git-state.json current_state (fixing/needs_fix → fix, resolving/needs_resolve → resolve)
+#
+# Args:
+#   worker_dir - Full path to worker directory
+#
+# Returns: echoes "main", "fix", or "resolve"
+_detect_worker_type() {
+    local worker_dir="$1"
+
+    # Source 1: pipeline-config.json (authoritative when present)
+    if [ -f "$worker_dir/pipeline-config.json" ]; then
+        local pipeline_name
+        pipeline_name=$(jq -r '.pipeline.name // ""' "$worker_dir/pipeline-config.json" 2>/dev/null)
+        case "$pipeline_name" in
+            fix)
+                echo "fix"
+                return 0
+                ;;
+            *resolve*)
+                echo "resolve"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Source 2: directory name pattern
+    local worker_name
+    worker_name=$(basename "$worker_dir")
+    if [[ "$worker_name" == *"-fix-"* ]]; then
+        echo "fix"
+        return 0
+    elif [[ "$worker_name" == *"-resolve-"* ]]; then
+        echo "resolve"
+        return 0
+    fi
+
+    # Source 3: git-state.json current_state
+    if [ -f "$worker_dir/git-state.json" ]; then
+        local git_state
+        git_state=$(jq -r '.current_state // ""' "$worker_dir/git-state.json" 2>/dev/null)
+        case "$git_state" in
+            fixing|needs_fix)
+                echo "fix"
+                return 0
+                ;;
+            resolving|needs_resolve|needs_multi_resolve)
+                echo "resolve"
+                return 0
+                ;;
+        esac
+    fi
+
+    echo "main"
+}
+
 # Initialize the worker pool (clears any existing state)
 pool_init() {
     _WORKER_POOL=()
@@ -422,16 +482,12 @@ pool_restore_from_workers() {
     while read -r worker_pid task_id _worker_id; do
         [ -n "$worker_pid" ] || continue
 
-        # Determine worker type from worker_id pattern
-        local type="main"
-        if [[ "$_worker_id" == *"-fix-"* ]]; then
-            type="fix"
-        elif [[ "$_worker_id" == *"-resolve-"* ]]; then
-            type="resolve"
-        fi
-
         # Get worker creation time from directory
         local worker_dir="$ralph_dir/workers/$_worker_id"
+
+        # Determine worker type from pipeline config, name pattern, and git-state
+        local type
+        type=$(_detect_worker_type "$worker_dir")
         local start_time
         if [ -d "$worker_dir" ]; then
             # Use directory mtime as approximate start time

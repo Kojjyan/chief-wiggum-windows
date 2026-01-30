@@ -277,13 +277,18 @@ class TaskCard(Static):
         # Build the first line with priority indicator and task ID
         first_line = f"{priority_indicator} [bold #cba6f7]{self._task_data.id}[/]"
 
-        # For in-progress tasks, show running status indicator and duration
+        # For in-progress tasks, show running status indicator, agent info and duration
         if self._task_data.status == TaskStatus.IN_PROGRESS and self._task_data.is_running is not None:
             if self._task_data.is_running:
+                pi = self._task_data.pipeline_info
+                agent_label = pi.agent_short if pi else ""
                 duration = ""
                 if self._task_data.start_time:
                     duration = f" {format_duration(self._task_data.start_time)}"
-                first_line += f" [bold #a6e3a1]●{duration}[/]"
+                if agent_label:
+                    first_line += f" [bold #a6e3a1]● {agent_label}{duration}[/]"
+                else:
+                    first_line += f" [bold #a6e3a1]●{duration}[/]"
             else:
                 first_line += " [bold #f38ba8]●[/]"
 
@@ -518,14 +523,16 @@ class KanbanPanel(Widget):
 
         pending_header = self._get_pending_column_header()
 
-        yield Horizontal(
+        columns = [
             KanbanColumn(TaskStatus.PENDING, pending_tasks, header_suffix=pending_header),
             KanbanColumn(TaskStatus.IN_PROGRESS, grouped[TaskStatus.IN_PROGRESS]),
             KanbanColumn(TaskStatus.PENDING_APPROVAL, pa_tasks),
             KanbanColumn(TaskStatus.COMPLETE, grouped[TaskStatus.COMPLETE]),
-            KanbanColumn(TaskStatus.FAILED, grouped[TaskStatus.FAILED]),
-            classes="kanban-board",
-        )
+        ]
+        if grouped[TaskStatus.FAILED]:
+            columns.append(KanbanColumn(TaskStatus.FAILED, grouped[TaskStatus.FAILED]))
+
+        yield Horizontal(*columns, classes="kanban-board")
 
     def _load_tasks(self) -> None:
         """Load tasks from kanban.md with running status."""
@@ -618,16 +625,16 @@ class KanbanPanel(Widget):
 
             pending_header = self._get_pending_column_header()
 
-            self.mount(
-                Horizontal(
-                    KanbanColumn(TaskStatus.PENDING, pending_tasks, header_suffix=pending_header),
-                    KanbanColumn(TaskStatus.IN_PROGRESS, grouped[TaskStatus.IN_PROGRESS]),
-                    KanbanColumn(TaskStatus.PENDING_APPROVAL, pa_tasks),
-                    KanbanColumn(TaskStatus.COMPLETE, grouped[TaskStatus.COMPLETE]),
-                    KanbanColumn(TaskStatus.FAILED, grouped[TaskStatus.FAILED]),
-                    classes="kanban-board",
-                )
-            )
+            columns = [
+                KanbanColumn(TaskStatus.PENDING, pending_tasks, header_suffix=pending_header),
+                KanbanColumn(TaskStatus.IN_PROGRESS, grouped[TaskStatus.IN_PROGRESS]),
+                KanbanColumn(TaskStatus.PENDING_APPROVAL, pa_tasks),
+                KanbanColumn(TaskStatus.COMPLETE, grouped[TaskStatus.COMPLETE]),
+            ]
+            if grouped[TaskStatus.FAILED]:
+                columns.append(KanbanColumn(TaskStatus.FAILED, grouped[TaskStatus.FAILED]))
+
+            self.mount(Horizontal(*columns, classes="kanban-board"))
             # Restore focus to the previously focused card
             self._restore_focus_by_task_id(focused_task_id)
 
