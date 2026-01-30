@@ -1118,8 +1118,8 @@ handle_fix_worker_timeout() {
             ;;
     esac
 
-    log_warn "Fix worker for $task_id timed out after ${timeout}s"
-    git_state_set "$worker_dir" "failed" "priority-workers" "Fix worker timed out after ${timeout}s"
+    log_warn "Fix worker for $task_id timed out after ${timeout}s - resetting to needs_fix for retry"
+    git_state_set "$worker_dir" "needs_fix" "priority-workers" "Fix worker timed out after ${timeout}s - reset for retry"
 }
 
 # Handle timeout for resolve workers
@@ -1144,6 +1144,6 @@ handle_resolve_worker_timeout() {
             ;;
     esac
 
-    log_warn "Resolve worker for $task_id timed out after ${timeout}s"
-    git_state_set "$worker_dir" "failed" "priority-workers" "Resolve worker timed out after ${timeout}s"
+    log_warn "Resolve worker for $task_id timed out after ${timeout}s - resetting to needs_resolve for retry"
+    git_state_set "$worker_dir" "needs_resolve" "priority-workers" "Resolve worker timed out after ${timeout}s - reset for retry"
 }

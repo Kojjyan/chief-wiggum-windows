@@ -32,6 +32,7 @@ source "$WIGGUM_HOME/lib/scheduler/conflict-registry.sh"
 source "$WIGGUM_HOME/lib/scheduler/pr-merge-optimizer.sh"
 source "$WIGGUM_HOME/lib/scheduler/orchestrator-functions.sh"
 source "$WIGGUM_HOME/lib/scheduler/terminal-header.sh"
+source "$WIGGUM_HOME/lib/scheduler/smart-routing.sh"
 
 # Service-based scheduler (consolidated module includes core + state)
 source "$WIGGUM_HOME/lib/service/service-scheduler.sh"
@@ -46,9 +47,9 @@ AGENT_TYPE="system.task-worker"  # Default agent type (can be overridden with 'p
 PID_WAIT_TIMEOUT=300   # Deciseconds to wait for agent.pid (30 seconds)
 FORCE_LOCK=false       # --force flag state for lock override
 MAX_SKIP_RETRIES=3     # Kanban update failures before permanent skip
-FIX_WORKER_TIMEOUT=1800  # Fix worker max runtime (seconds)
+FIX_WORKER_TIMEOUT=7200  # Fix worker max runtime (seconds)
 FIX_WORKER_LIMIT=""    # Max concurrent fix workers (loaded from config or CLI)
-RESOLVE_WORKER_TIMEOUT=1800  # Resolve worker max runtime (seconds)
+RESOLVE_WORKER_TIMEOUT=7200  # Resolve worker max runtime (seconds)
 AGING_FACTOR=7         # Scheduling events per priority level promotion
 SIBLING_WIP_PENALTY=20000  # Fixed-point penalty when sibling is WIP (20000 = 2.0)
 PLAN_BONUS=15000           # Fixed-point bonus for tasks with plans (15000 = 1.5)
@@ -65,6 +66,9 @@ Modes:
   (default)            Use system.task-worker agent (standard execution)
   plan                 Use system.task-worker agent with plan mode enabled (creates
                        implementation plan before execution)
+  --smart              Dynamically select pipeline and plan mode per task based on
+                       complexity inferred from kanban metadata (scope items,
+                       acceptance criteria, description length)
   --fix-only           Skip spawning new workers. Only fix existing PRs (review
                        comments, test failures) and merge them
   --merge-only         Skip new workers AND fix workers. Only merge PRs that are
@@ -86,6 +90,8 @@ Options:
 Examples:
   wiggum run                              # Start orchestration with defaults
   wiggum run plan                         # Use planning mode for all workers
+  wiggum run --smart                      # Auto-select pipeline/plan per task
+  wiggum run --smart --max-workers 2      # Smart mode with 2 workers
   wiggum run --max-workers 8              # Start with max 8 workers
   wiggum run plan --max-workers 2         # Planning mode with 2 workers
   wiggum run --pipeline fast              # Use the fast pipeline
@@ -974,12 +980,32 @@ _main_loop() {
                     continue
                 fi
 
+                # Smart routing: select pipeline and plan mode per task
+                local _saved_pipeline="${WIGGUM_PIPELINE:-}"
+                local _saved_plan_mode="${WIGGUM_PLAN_MODE:-false}"
+                if [ "${WIGGUM_SMART_MODE:-false}" = "true" ]; then
+                    local _complexity _routing _rt_pipeline _rt_plan_mode
+                    _complexity=$(smart_assess_complexity "$RALPH_DIR/kanban.md" "$task_id")
+                    _routing=$(smart_get_routing "$_complexity")
+                    IFS='|' read -r _rt_pipeline _rt_plan_mode <<< "$_routing"
+                    export WIGGUM_PIPELINE="$_rt_pipeline"
+                    export WIGGUM_PLAN_MODE="$_rt_plan_mode"
+                    log "Smart routing: $task_id -> $_complexity (pipeline=${_rt_pipeline:-default}, plan=$_rt_plan_mode)"
+                fi
+
                 # Spawn worker (wiggum-start handles backgrounding)
                 if ! spawn_worker "$task_id"; then
                     log_error "Failed to spawn worker for $task_id"
                     update_kanban_status "$RALPH_DIR/kanban.md" "$task_id" "*"
+                    # Restore saved values before continuing
+                    export WIGGUM_PIPELINE="$_saved_pipeline"
+                    export WIGGUM_PLAN_MODE="$_saved_plan_mode"
                     continue
                 fi
+
+                # Restore saved pipeline/plan values after spawn
+                export WIGGUM_PIPELINE="$_saved_pipeline"
+                export WIGGUM_PLAN_MODE="$_saved_plan_mode"
 
                 pool_add "$SPAWNED_WORKER_PID" "main" "$task_id"
                 scheduler_mark_event
@@ -1058,6 +1084,10 @@ main() {
                 export WIGGUM_PLAN_MODE=true
                 shift
                 ;;
+            --smart)
+                export WIGGUM_SMART_MODE=true
+                shift
+                ;;
             --fix-only)
                 WIGGUM_RUN_MODE="fix-only"
                 shift
@@ -1133,6 +1163,20 @@ main() {
     if [[ "$WIGGUM_RUN_MODE" != "default" && "${WIGGUM_PLAN_MODE:-false}" == "true" ]]; then
         echo "Error: --${WIGGUM_RUN_MODE} cannot be combined with plan mode"
         exit $EXIT_USAGE
+    fi
+    if [[ "${WIGGUM_SMART_MODE:-false}" == "true" ]]; then
+        if [[ "${WIGGUM_PLAN_MODE:-false}" == "true" ]]; then
+            echo "Error: --smart cannot be combined with plan mode"
+            exit $EXIT_USAGE
+        fi
+        if [[ -n "${WIGGUM_PIPELINE:-}" ]]; then
+            echo "Error: --smart cannot be combined with --pipeline"
+            exit $EXIT_USAGE
+        fi
+        if [[ "$WIGGUM_RUN_MODE" != "default" ]]; then
+            echo "Error: --smart cannot be combined with --${WIGGUM_RUN_MODE}"
+            exit $EXIT_USAGE
+        fi
     fi
 
     # Initialize project if needed
@@ -1327,6 +1371,8 @@ main() {
         mode_desc="fix-only"
     elif [[ "$WIGGUM_RUN_MODE" == "merge-only" ]]; then
         mode_desc="merge-only"
+    elif [ "${WIGGUM_SMART_MODE:-false}" = "true" ]; then
+        mode_desc="smart"
     elif [ "${WIGGUM_PLAN_MODE:-false}" = "true" ]; then
         mode_desc="plan mode"
     fi
