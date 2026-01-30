@@ -29,7 +29,15 @@ _TH_TERM_ROWS=0
 _TH_TERM_COLS=0
 _TH_LAST_CONTENT=""
 _TH_RUN_MODE=""
-_TH_MAX_LINES="${WIGGUM_HEADER_MAX_LINES:-10}"
+_TH_MAX_LINES="${WIGGUM_HEADER_MAX_LINES:-12}"
+
+# Cached status counts (set by terminal_header_set_status_data)
+_TH_READY_COUNT=0
+_TH_BLOCKED_COUNT=0
+_TH_DEFERRED_COUNT=0
+_TH_CYCLIC_COUNT=0
+_TH_ERROR_COUNT=0
+_TH_STUCK_COUNT=0
 
 # =============================================================================
 # Public API
@@ -141,6 +149,27 @@ terminal_header_cleanup() {
 # Returns: 0 if enabled, 1 if disabled
 terminal_header_is_enabled() {
     [[ "$_TH_ENABLED" == true ]]
+}
+
+# Set cached status counts for header display
+#
+# Called by the scheduler on each scheduling event to update the status
+# summary line shown in the fixed header.
+#
+# Args:
+#   ready    - Ready task count
+#   blocked  - Blocked task count
+#   deferred - Deferred (file conflict) task count
+#   cyclic   - Cyclic dependency task count
+#   errors   - Recent error count
+#   stuck    - Stuck worker count
+terminal_header_set_status_data() {
+    _TH_READY_COUNT="${1:-0}"
+    _TH_BLOCKED_COUNT="${2:-0}"
+    _TH_DEFERRED_COUNT="${3:-0}"
+    _TH_CYCLIC_COUNT="${4:-0}"
+    _TH_ERROR_COUNT="${5:-0}"
+    _TH_STUCK_COUNT="${6:-0}"
 }
 
 # =============================================================================
@@ -263,7 +292,7 @@ _terminal_header_build_content() {
         pool_foreach "all" _th_collect_worker
 
         local entry_count=${#_th_entries[@]}
-        local max_worker_lines=$((_TH_MAX_LINES - 2))  # reserve banner + separator
+        local max_worker_lines=$((_TH_MAX_LINES - 3))  # reserve banner + status + separator
         [[ "$max_worker_lines" -ge 1 ]] || max_worker_lines=1
 
         local worker_lines_needed=$(( (entry_count + 1) / 2 ))
@@ -296,6 +325,24 @@ _terminal_header_build_content() {
             echo "$line"
         done
     fi
+
+    # --- Status summary line ---
+    local status_parts="┄ ready: ${_TH_READY_COUNT}  blocked: ${_TH_BLOCKED_COUNT}"
+    [[ "$_TH_DEFERRED_COUNT" -gt 0 ]] && status_parts+="  deferred: ${_TH_DEFERRED_COUNT}"
+    [[ "$_TH_CYCLIC_COUNT" -gt 0 ]] && status_parts+="  cyclic: ${_TH_CYCLIC_COUNT}"
+    status_parts+="  errors: ${_TH_ERROR_COUNT}"
+    [[ "$_TH_STUCK_COUNT" -gt 0 ]] && status_parts+="  stuck: ${_TH_STUCK_COUNT}"
+    status_parts+=" "
+
+    local status_len=${#status_parts}
+    if [[ "$status_len" -lt "$_TH_TERM_COLS" ]]; then
+        local status_pad_count=$((_TH_TERM_COLS - status_len))
+        local status_padding
+        printf -v status_padding '%*s' "$status_pad_count" ''
+        status_padding="${status_padding// /┄}"
+        status_parts="${status_parts}${status_padding}"
+    fi
+    echo "$status_parts"
 
     # --- Separator line ---
     local separator

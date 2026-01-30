@@ -1007,14 +1007,16 @@ _main_loop() {
         scheduler_update_aging
 
         if [ "$SCHED_SCHEDULING_EVENT" = true ]; then
-            terminal_header_force_redraw
-        fi
-        terminal_header_refresh "$iteration" "$MAX_WORKERS"
-
-        if [ "$SCHED_SCHEDULING_EVENT" = true ]; then
-            local cyclic_ref
+            local cyclic_ref status_counts
             cyclic_ref=$(scheduler_get_cyclic_tasks_ref)
-            display_orchestrator_status \
+            status_counts=$(compute_status_counts "$SCHED_READY_TASKS" "$SCHED_BLOCKED_TASKS" "$cyclic_ref" "$RALPH_DIR")
+            local _sc_ready _sc_blocked _sc_deferred _sc_cyclic _sc_errors _sc_stuck
+            IFS='|' read -r _sc_ready _sc_blocked _sc_deferred _sc_cyclic _sc_errors _sc_stuck <<< "$status_counts"
+            terminal_header_set_status_data "$_sc_ready" "$_sc_blocked" "$_sc_deferred" "$_sc_cyclic" "$_sc_errors" "$_sc_stuck"
+            terminal_header_force_redraw
+
+            # Log detailed status to file only (visible via WIGGUM_LOG_LEVEL=debug)
+            _log_detailed_status \
                 "$iteration" \
                 "$MAX_WORKERS" \
                 "$SCHED_READY_TASKS" \
@@ -1025,7 +1027,13 @@ _main_loop() {
                 "$AGING_FACTOR" \
                 "$PLAN_BONUS" \
                 "$DEP_BONUS_PER_TASK"
+
+            # Non-TTY fallback: log one-liner status to stdout
+            if ! terminal_header_is_enabled; then
+                log "[status] ready: $_sc_ready | blocked: $_sc_blocked | deferred: $_sc_deferred | errors: $_sc_errors"
+            fi
         fi
+        terminal_header_refresh "$iteration" "$MAX_WORKERS"
 
         # Persist service state periodically
         service_state_save 2>/dev/null || true

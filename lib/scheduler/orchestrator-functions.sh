@@ -582,7 +582,7 @@ _orch_spawn_worker() {
     return 0
 }
 
-# Display status on scheduling events
+# Update header status data and log detailed status on scheduling events
 orch_display_status() {
     local ralph_dir="${RALPH_DIR:-}"
     local max_workers="${MAX_WORKERS:-4}"
@@ -591,9 +591,15 @@ orch_display_status() {
     local dep_bonus="${DEP_BONUS_PER_TASK:-7000}"
 
     if [ "$SCHED_SCHEDULING_EVENT" = true ]; then
-        local cyclic_ref
+        local cyclic_ref status_counts
         cyclic_ref=$(scheduler_get_cyclic_tasks_ref)
-        display_orchestrator_status \
+        status_counts=$(compute_status_counts "$SCHED_READY_TASKS" "$SCHED_BLOCKED_TASKS" "$cyclic_ref" "$ralph_dir")
+        local _sc_ready _sc_blocked _sc_deferred _sc_cyclic _sc_errors _sc_stuck
+        IFS='|' read -r _sc_ready _sc_blocked _sc_deferred _sc_cyclic _sc_errors _sc_stuck <<< "$status_counts"
+        terminal_header_set_status_data "$_sc_ready" "$_sc_blocked" "$_sc_deferred" "$_sc_cyclic" "$_sc_errors" "$_sc_stuck"
+        terminal_header_force_redraw
+
+        _log_detailed_status \
             "0" \
             "$max_workers" \
             "$SCHED_READY_TASKS" \
@@ -604,6 +610,11 @@ orch_display_status() {
             "$aging_factor" \
             "$plan_bonus" \
             "$dep_bonus"
+
+        # Non-TTY fallback
+        if ! terminal_header_is_enabled; then
+            log "[status] ready: $_sc_ready | blocked: $_sc_blocked | deferred: $_sc_deferred | errors: $_sc_errors"
+        fi
     fi
 }
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # status-display.sh - Orchestrator status output formatting
 #
-# Extracts the 140+ line status display block from wiggum-run into a
-# dedicated module for better maintainability and testability.
+# Provides:
+#   compute_status_counts()  - Returns pipe-delimited status counts for header
+#   _log_detailed_status()   - Logs detailed status to LOG_FILE via log_debug
+#   display_final_summary()  - Final summary after orchestration completes
 #
 # shellcheck disable=SC2329  # Functions are invoked indirectly via callbacks
 set -euo pipefail
@@ -17,7 +19,117 @@ source "$WIGGUM_HOME/lib/tasks/task-parser.sh"
 source "$WIGGUM_HOME/lib/tasks/conflict-detection.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 
-# Display full orchestrator status
+# Compute status counts for the terminal header
+#
+# Returns pipe-delimited string: ready|blocked|deferred|cyclic|errors|stuck
+# Extracts count-only logic without any display output.
+#
+# Args:
+#   ready_tasks      - Space-separated list of ready task IDs
+#   blocked_tasks    - Space-separated list of blocked task IDs
+#   cyclic_tasks_ref - Name of associative array containing cyclic task IDs
+#   ralph_dir        - Ralph directory path
+#
+# Outputs: "ready|blocked|deferred|cyclic|errors|stuck"
+compute_status_counts() {
+    local ready_tasks="$1"
+    local blocked_tasks="$2"
+    local -n _csc_cyclic_ref="$3"
+    local ralph_dir="$4"
+
+    local ready_count=0 blocked_count=0 deferred_count=0 cyclic_count=0 error_count=0 stuck_count=0
+
+    # Build PID->task_id map for file conflict checking (once)
+    local -A _csc_workers=()
+    _csc_build_workers() {
+        local pid="$1" type="$2" task_id="$3"
+        [[ "$type" == "main" ]] && _csc_workers[$pid]="$task_id"
+    }
+    pool_foreach "main" _csc_build_workers
+
+    # --- Deferred (file conflict) count ---
+    local task_id
+    for task_id in $ready_tasks; do
+        if has_file_conflict "$ralph_dir" "$task_id" _csc_workers; then
+            ((++deferred_count)) || true
+        fi
+    done
+
+    # --- Ready count (minus deferred; in-progress already excluded by get_ready_tasks) ---
+    if [[ -n "$ready_tasks" ]]; then
+        ready_count=$(echo "$ready_tasks" | wc -w)
+        ready_count=$((ready_count))  # trim whitespace from wc
+        ready_count=$((ready_count - deferred_count))
+        [[ "$ready_count" -lt 0 ]] && ready_count=0
+    fi
+
+    # --- Blocked count (re-validated against race conditions) ---
+    if [[ -n "$blocked_tasks" ]]; then
+        for task_id in $blocked_tasks; do
+            if ! are_dependencies_satisfied "$ralph_dir/kanban.md" "$task_id"; then
+                ((++blocked_count)) || true
+            fi
+        done
+    fi
+
+    # --- Cyclic count ---
+    cyclic_count=${#_csc_cyclic_ref[@]}
+
+    # --- Error count (time-filtered from workers.log) ---
+    if [[ -f "$ralph_dir/logs/workers.log" ]]; then
+        local error_max_age="${ERROR_LOG_MAX_AGE:-3600}"
+        local cutoff_time
+        cutoff_time=$(date -d "@$(($(date +%s) - error_max_age))" -Iseconds 2>/dev/null || \
+                      date -v-"${error_max_age}"S -Iseconds 2>/dev/null || \
+                      echo "")
+
+        local error_lines=""
+        error_lines=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null || true)
+
+        if [[ -n "$error_lines" && -n "$cutoff_time" ]]; then
+            error_count=$(echo "$error_lines" | awk -v cutoff="$cutoff_time" '
+                match($0, /\[([0-9T:+-]+)\]/, ts) {
+                    if (ts[1] >= cutoff) count++
+                }
+                END { print count+0 }
+            ')
+        elif [[ -n "$error_lines" ]]; then
+            error_count=$(echo "$error_lines" | wc -l)
+            error_count=$((error_count))  # trim whitespace
+        fi
+    fi
+
+    # --- Stuck count (activity idle threshold) ---
+    local now_ts stuck_threshold
+    now_ts=$(date +%s)
+    stuck_threshold="${STUCK_WORKER_THRESHOLD:-1800}"
+    if [[ "$stuck_threshold" -gt 0 ]]; then
+        _csc_check_stuck() {
+            local pid="$1" type="$2" task_id="$3"
+            [[ "$type" == "main" ]] || return 0
+            local worker_dir
+            worker_dir=$(find_worker_by_task_id "$ralph_dir" "$task_id" 2>/dev/null || true)
+            [[ -n "$worker_dir" ]] || return 0
+            local activity_file="$worker_dir/activity.jsonl"
+            if [[ -f "$activity_file" ]]; then
+                local last_activity
+                last_activity=$(stat -c %Y "$activity_file" 2>/dev/null || stat -f %m "$activity_file" 2>/dev/null || echo "$now_ts")
+                local idle_time=$((now_ts - last_activity))
+                if [[ "$idle_time" -ge "$stuck_threshold" ]]; then
+                    ((++stuck_count)) || true
+                fi
+            fi
+        }
+        pool_foreach "main" _csc_check_stuck
+    fi
+
+    echo "${ready_count}|${blocked_count}|${deferred_count}|${cyclic_count}|${error_count}|${stuck_count}"
+}
+
+# Log detailed orchestrator status via log_debug
+#
+# All output goes to LOG_FILE + stderr (not stdout/scroll region).
+# Visible via WIGGUM_LOG_LEVEL=debug or in orchestrator.log.
 #
 # Args:
 #   iteration         - Current iteration number
@@ -32,7 +144,7 @@ source "$WIGGUM_HOME/lib/core/logger.sh"
 #   dep_bonus_per_task - Dependency bonus per task
 #
 # Uses: _WORKER_POOL from worker-pool.sh
-display_orchestrator_status() {
+_log_detailed_status() {
     local iteration="$1"
     local max_workers="$2"
     local ready_tasks="$3"
@@ -49,13 +161,13 @@ display_orchestrator_status() {
     fix_count=$(pool_count "fix")
     resolve_count=$(pool_count "resolve")
 
-    echo ""
-    echo "=== Status Update (iteration $iteration) ==="
-    echo "Active workers: $main_count/$max_workers"
+    log_debug ""
+    log_debug "=== Status Update (iteration $iteration) ==="
+    log_debug "Active workers: $main_count/$max_workers"
 
     # Show which tasks are being worked on (main workers)
     if [ "$main_count" -gt 0 ]; then
-        echo "In Progress:"
+        log_debug "In Progress:"
         local now_ts stuck_threshold
         now_ts=$(date +%s)
         stuck_threshold="${STUCK_WORKER_THRESHOLD:-1800}"
@@ -80,7 +192,7 @@ display_orchestrator_status() {
                     fi
                 fi
 
-                echo "  - $task_id (PID: $pid)$status_suffix"
+                log_debug "  - $task_id (PID: $pid)$status_suffix"
             fi
         }
         pool_foreach "main" _display_workers_callback
@@ -88,26 +200,26 @@ display_orchestrator_status() {
 
     # Show active fix workers
     if [ "$fix_count" -gt 0 ]; then
-        echo "Fix Workers:"
+        log_debug "Fix Workers:"
         local now
         now=$(date +%s)
         _display_fix_callback() {
             local pid="$1" type="$2" task_id="$3" start_time="$4"
             local elapsed=$((now - start_time))
-            echo "  - $task_id (PID: $pid, ${elapsed}s elapsed)"
+            log_debug "  - $task_id (PID: $pid, ${elapsed}s elapsed)"
         }
         pool_foreach "fix" _display_fix_callback
     fi
 
     # Show active resolve workers
     if [ "$resolve_count" -gt 0 ]; then
-        echo "Resolve Workers:"
+        log_debug "Resolve Workers:"
         local now
         now=$(date +%s)
         _display_resolve_callback() {
             local pid="$1" type="$2" task_id="$3" start_time="$4"
             local elapsed=$((now - start_time))
-            echo "  - $task_id (PID: $pid, ${elapsed}s elapsed)"
+            log_debug "  - $task_id (PID: $pid, ${elapsed}s elapsed)"
         }
         pool_foreach "resolve" _display_resolve_callback
     fi
@@ -116,6 +228,7 @@ display_orchestrator_status() {
     if [ -n "$blocked_tasks" ]; then
         local has_blocked=false
         local blocked_output=""
+        local task_id
         for task_id in $blocked_tasks; do
             # Re-validate that task is still blocked (handles race with concurrent completions)
             if ! are_dependencies_satisfied "$ralph_dir/kanban.md" "$task_id"; then
@@ -129,20 +242,21 @@ display_orchestrator_status() {
             fi
         done
         if [ "$has_blocked" = true ]; then
-            echo "Blocked (waiting on dependencies):"
-            printf "%s" "$blocked_output"
+            log_debug "Blocked (waiting on dependencies):"
+            log_debug "$blocked_output"
         fi
     fi
 
     # Show tasks skipped due to dependency cycles
     if [ ${#_cyclic_tasks_ref[@]} -gt 0 ]; then
-        echo "Skipped (dependency cycle):"
+        log_debug "Skipped (dependency cycle):"
+        local task_id
         for task_id in "${!_cyclic_tasks_ref[@]}"; do
             local error_type="${_cyclic_tasks_ref[$task_id]}"
             if [ "$error_type" = "SELF" ]; then
-                echo "  - $task_id (self-dependency)"
+                log_debug "  - $task_id (self-dependency)"
             else
-                echo "  - $task_id (circular dependency)"
+                log_debug "  - $task_id (circular dependency)"
             fi
         done
     fi
@@ -159,6 +273,7 @@ display_orchestrator_status() {
 
     # Show tasks deferred due to file conflicts
     local deferred_conflicts=()
+    local task_id
     for task_id in $ready_tasks; do
         # Create a temporary associative array in the format expected by has_file_conflict
         # has_file_conflict expects: PID -> task_id mapping
@@ -177,7 +292,7 @@ display_orchestrator_status() {
     done
 
     if [ ${#deferred_conflicts[@]} -gt 0 ]; then
-        echo "Deferred (file conflict):"
+        log_debug "Deferred (file conflict):"
         for task_id in "${deferred_conflicts[@]}"; do
             local -A _temp_workers=()
             _build_temp_workers_for_conflict() {
@@ -190,7 +305,7 @@ display_orchestrator_status() {
 
             local conflicting_tasks
             conflicting_tasks=$(get_conflicting_tasks "$ralph_dir" "$task_id" _temp_workers | tr '\n' ',' | sed 's/,$//')
-            echo "  - $task_id (conflicts with: $conflicting_tasks)"
+            log_debug "  - $task_id (conflicts with: $conflicting_tasks)"
         done
     fi
 
@@ -203,7 +318,7 @@ display_orchestrator_status() {
     ready_count=$((ready_count - ${#deferred_conflicts[@]}))
 
     if [ "$ready_count" -gt 0 ]; then
-        echo "Ready ($ready_count tasks, top 7 by priority):"
+        log_debug "Ready ($ready_count tasks, top 7 by priority):"
 
         # Get priority scores for display
         local all_metadata
@@ -220,6 +335,7 @@ display_orchestrator_status() {
 
             # Skip deferred tasks
             local is_deferred=false
+            local deferred
             for deferred in "${deferred_conflicts[@]}"; do
                 if [ "$task_id" = "$deferred" ]; then
                     is_deferred=true
@@ -245,7 +361,7 @@ display_orchestrator_status() {
             effective_pri=$((effective_pri - dep_depth * dep_bonus_per_task))
             [[ "$effective_pri" -lt 0 ]] && effective_pri=0 || true
 
-            echo "  - $task_id (score: $effective_pri)"
+            log_debug "  - $task_id (score: $effective_pri)"
             ((++display_count))
         done
     fi
@@ -257,53 +373,33 @@ display_orchestrator_status() {
 
         # Calculate cutoff timestamp (now - max_age)
         cutoff_time=$(date -d "@$(($(date +%s) - error_max_age))" -Iseconds 2>/dev/null || \
-                      date -v-${error_max_age}S -Iseconds 2>/dev/null || \
+                      date -v-"${error_max_age}"S -Iseconds 2>/dev/null || \
                       echo "")
 
-        if [ -n "$cutoff_time" ]; then
-            # Filter by timestamp: only show errors newer than cutoff
-            # Format: [2026-01-27T18:17:25+00:00] ERROR: ...
-            recent_errors=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null | \
+        local error_lines=""
+        error_lines=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null || true)
+
+        if [[ -n "$error_lines" && -n "$cutoff_time" ]]; then
+            recent_errors=$(echo "$error_lines" | \
                 awk -v cutoff="$cutoff_time" '
                     match($0, /\[([0-9T:+-]+)\]/, ts) {
                         if (ts[1] >= cutoff) print
                     }
-                ' | tail -n 5 || true)
+                ' | tail -n 5)
+        elif [[ -n "$error_lines" ]]; then
+            recent_errors=$(echo "$error_lines" | tail -n 5)
         else
-            # Fallback: just show last 5 errors if date command doesn't support options
-            recent_errors=$(grep -i "ERROR\|WARN" "$ralph_dir/logs/workers.log" 2>/dev/null | tail -n 5 || true)
+            recent_errors=""
         fi
 
         if [ -n "$recent_errors" ]; then
-            echo ""
-            echo "Recent errors:"
-            echo "$recent_errors" | sed 's/^/  /'
+            log_debug ""
+            log_debug "Recent errors:"
+            log_debug "$recent_errors"
         fi
     fi
 
-    echo "=========================================="
-}
-
-# Display a compact status line (for non-scheduling iterations)
-#
-# Args:
-#   iteration   - Current iteration number
-#   max_workers - Maximum workers allowed
-display_compact_status() {
-    local iteration="$1"
-    local max_workers="$2"
-
-    local main_count fix_count resolve_count
-    main_count=$(pool_count "main")
-    fix_count=$(pool_count "fix")
-    resolve_count=$(pool_count "resolve")
-
-    local priority_info=""
-    if [ "$fix_count" -gt 0 ] || [ "$resolve_count" -gt 0 ]; then
-        priority_info=" | fix:$fix_count resolve:$resolve_count"
-    fi
-
-    echo "[iter $iteration] workers: $main_count/$max_workers$priority_info"
+    log_debug "=========================================="
 }
 
 # Display final summary when orchestration completes
