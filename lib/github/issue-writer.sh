@@ -172,18 +172,23 @@ github_issue_create() {
         [ -n "$label" ] && label_args+=(--label "$label")
     done
 
-    local result exit_code=0
+    local result stderr_file exit_code=0
+    stderr_file=$(mktemp)
+
     result=$(timeout "${WIGGUM_GH_TIMEOUT:-30}" gh issue create \
         --title "$title" \
         --body "$body" \
         "${label_args[@]}" \
-        2>&1) || exit_code=$?
+        2>"$stderr_file") || exit_code=$?
 
     if [ "$exit_code" -ne 0 ]; then
-        log_error "Failed to create GitHub issue for $task_id (exit: $exit_code)"
-        log_debug "Output: $result"
+        local err_output
+        err_output=$(cat "$stderr_file" 2>/dev/null)
+        rm -f "$stderr_file"
+        log_error "Failed to create GitHub issue for $task_id (exit: $exit_code): $err_output"
         return 1
     fi
+    rm -f "$stderr_file"
 
     # gh issue create outputs the issue URL; extract number from it
     local issue_number

@@ -191,7 +191,9 @@ _parse_kanban_task_fields() {
     local kanban_file="$1"
     local task_id="$2"
 
-    awk -v tid="$task_id" '
+    # Extract raw tab-separated values via awk, then build JSON safely with jq
+    local raw
+    raw=$(awk -v tid="$task_id" '
     BEGIN { found = 0; brief = ""; desc = ""; pri = "MEDIUM"; deps = "none"; status = " " }
 
     # Match the task line
@@ -235,10 +237,29 @@ _parse_kanban_task_fields() {
 
     END {
         if (brief != "" || desc != "") {
-            printf "{\"brief\":\"%s\",\"description\":\"%s\",\"priority\":\"%s\",\"dependencies\":\"%s\",\"status\":\"%s\"}", brief, desc, pri, deps, status
+            print brief "\t" desc "\t" pri "\t" deps "\t" status
         }
     }
-    ' "$kanban_file"
+    ' "$kanban_file")
+
+    [ -n "$raw" ] || return 0
+
+    local _brief _desc _pri _deps _status
+    IFS=$'\t' read -r _brief _desc _pri _deps _status <<< "$raw"
+
+    jq -n \
+        --arg brief "${_brief:-}" \
+        --arg description "${_desc:-}" \
+        --arg priority "${_pri:-MEDIUM}" \
+        --arg dependencies "${_deps:-none}" \
+        --arg status "${_status:- }" \
+        '{
+            brief: $brief,
+            description: $description,
+            priority: $priority,
+            dependencies: $dependencies,
+            status: $status
+        }'
 }
 
 # Get task IDs present in kanban but not tracked in sync state
