@@ -266,7 +266,7 @@ _MODULE_LOADED=1
 
 ### Arithmetic
 - Use `(( ))` for arithmetic: `((++count))`, `((i + 1))`
-- Add `|| true` when increment might be 0 under `set -e`: `((count++)) || true`
+- Prefer pre-increment `((++count))` over post-increment `((count++))` — post-increment evaluates to the old value, so `((0++))` is falsy and kills the script under `set -e`. Pre-increment evaluates to the new value, avoiding this entirely.
 
 ### Conditionals
 - Use `[[ ]]` for tests: `[[ -n "$var" ]]`, `[[ "$a" == "$b" ]]`

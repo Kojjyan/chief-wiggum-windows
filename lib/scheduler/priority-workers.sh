@@ -839,7 +839,7 @@ _spawn_batch_resolve_worker() {
     local wait_count=0
     while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 30 ]; do
         sleep 0.1
-        ((wait_count++)) || true
+        ((++wait_count))
     done
 
     if [ -f "$worker_dir/agent.pid" ]; then

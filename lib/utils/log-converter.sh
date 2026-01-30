@@ -262,7 +262,7 @@ convert_dir() {
         [ -f "$log_file" ] || continue
         local_name=$(basename "$log_file" .log)
         convert_log "$log_file" "$conv_dir/${local_name}.md"
-        ((converted++)) || true
+        ((++converted))
     done < <(find_sorted_by_mtime "$logs_dir" -name "*.log" ! -name "*summary*")
 
     echo "Converted $converted log files to conversations in $conv_dir" >&2

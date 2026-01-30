@@ -210,7 +210,7 @@ main() {
 
     # Main loop: service-driven orchestration
     while [ ! -f "$RALPH_DIR/orchestrator/should-exit" ]; do
-        ((_ORCH_ITERATION++))
+        ((++_ORCH_ITERATION))
 
         # Handle rate-limit pause from previous session
         _check_rate_limit_pause

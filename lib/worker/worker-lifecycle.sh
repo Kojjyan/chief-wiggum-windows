@@ -362,7 +362,7 @@ wait_for_worker_pid() {
     local wait_count=0
     while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt "$timeout" ]; do
         sleep 0.1
-        ((wait_count++)) || true
+        ((++wait_count))
     done
 
     [ -f "$worker_dir/agent.pid" ]
@@ -438,7 +438,7 @@ terminate_single_worker() {
         local elapsed=0
         while kill -0 "$pid" 2>/dev/null && [ $elapsed -lt "$timeout" ]; do
             sleep 1
-            ((elapsed++)) || true
+            ((++elapsed))
         done
     fi
 
@@ -520,7 +520,7 @@ terminate_all_workers() {
             done
             [ "$all_stopped" = true ] && break
             sleep 1
-            ((elapsed++)) || true
+            ((++elapsed))
         done
     else
         sleep 1

@@ -558,7 +558,7 @@ cmd_task_fix() {
     local wait_count=0
     while [ ! -f "$worker_dir/agent.pid" ] && [ $wait_count -lt 10 ]; do
         sleep 0.1
-        ((wait_count++)) || true
+        ((++wait_count))
     done
 
     if [ -f "$worker_dir/agent.pid" ]; then
