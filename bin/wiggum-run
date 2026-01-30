@@ -647,8 +647,22 @@ _schedule_resume_workers() {
                 --max-turns "$MAX_TURNS" \
                 ${WIGGUM_PIPELINE:+--pipeline "$WIGGUM_PIPELINE"}
         ) >> "$RALPH_DIR/logs/workers.log" 2>&1 &
+        local resume_pid=$!
 
-        # Track the worker
+        # Wait for wiggum-resume to complete before checking agent.pid.
+        # Resume runs LLM analysis (resume-decide) before launching the worker
+        # subprocess, so agent.pid won't exist until after that analysis finishes.
+        # The previous approach of immediately polling for agent.pid with a 30s
+        # timeout failed because the LLM call alone can exceed 30 seconds.
+        local resume_exit=0
+        wait "$resume_pid" 2>/dev/null || resume_exit=$?
+
+        if [ "$resume_exit" -ne 0 ]; then
+            log_error "Resume command failed for $task_id (exit code: $resume_exit)"
+            continue
+        fi
+
+        # Track the worker — short wait since setsid subprocess was already launched
         if wait_for_worker_pid "$worker_dir" "$PID_WAIT_TIMEOUT"; then
             local pid
             pid=$(cat "$worker_dir/agent.pid")
