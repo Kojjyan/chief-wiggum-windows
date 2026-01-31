@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bash](https://img.shields.io/badge/Language-Bash-blue)](https://www.gnu.org/software/bash/)
+[![Windows](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-green)](https://github.com)
 
 **Chief Wiggum** is an agentic task runner that autonomously executes software engineering tasks using Claude Code. Define tasks in a Kanban board, and Chief Wiggum spawns isolated workers that implement features, run tests, and create pull requests.
 
@@ -9,23 +10,55 @@
 
 ## Prerequisites
 
-- **Linux/macOS** (Bash 4.0+)
+### All Platforms
 - **Git** (2.20+)
 - **Claude Code** (`claude` CLI installed and authenticated)
 - **GitHub CLI** (`gh` installed and authenticated)
 - **jq** (JSON processor)
-- **setsid** (worker process isolation; macOS users: `brew install util-linux`)
+
+### Linux/macOS
+- **Bash 4.0+**
+- **setsid** (macOS: `brew install util-linux`)
+
+### Windows
+- **Git for Windows** (provides Git Bash - required runtime)
+- All commands must be run in **Git Bash**, not PowerShell or cmd
 
 ## Installation
 
-### Option 1: Global Install
+### Windows
+
+**Option A: PowerShell Installer**
+```powershell
+# Install prerequisites first
+winget install jqlang.jq
+winget install GitHub.cli
+# Install Claude Code from https://docs.anthropic.com/en/docs/claude-code
+
+# Close and reopen PowerShell, then run:
+.\install.ps1
+```
+
+**Option B: Git Bash**
+```bash
+./install.sh
+```
+
+After installation, add to your `~/.bashrc`:
+```bash
+echo 'export PATH="$HOME/.claude/chief-wiggum/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Linux/macOS
 
 ```bash
 ./install.sh
-export PATH="$HOME/.claude/chief-wiggum/bin:$PATH"
+echo 'export PATH="$HOME/.claude/chief-wiggum/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-### Option 2: Run from Source
+### Run from Source (All Platforms)
 
 ```bash
 export WIGGUM_HOME=$(pwd)
@@ -33,6 +66,8 @@ export PATH="$WIGGUM_HOME/bin:$PATH"
 ```
 
 ## Quick Start
+
+> **Windows Users:** All commands below must be run in **Git Bash**.
 
 ### 1. Initialize
 
@@ -53,6 +88,7 @@ Edit `.ralph/kanban.md`:
 - [ ] **[TASK-001]** Add user authentication
   - Description: Implement JWT-based auth with login/logout endpoints
   - Priority: HIGH
+  - Dependencies: none
 ```
 
 Task markers:
@@ -125,6 +161,18 @@ Override defaults in `.ralph/config.json`:
   "max_turns": 50
 }
 ```
+
+## Platform Notes
+
+### Windows
+- Uses `disown` instead of `setsid` for process isolation
+- Uses `tasklist`/`taskkill` for process management
+- Uses directory-based file locking instead of `flock`
+- Git Bash provides Unix compatibility layer
+
+### Linux/macOS
+- Uses native `setsid` and `flock`
+- Full POSIX compatibility
 
 ## Documentation
 
