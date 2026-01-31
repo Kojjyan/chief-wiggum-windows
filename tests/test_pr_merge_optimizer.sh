@@ -22,6 +22,9 @@ setup() {
     mkdir -p "$RALPH_DIR/orchestrator"
     mkdir -p "$PROJECT_DIR"
 
+    # Set approved user IDs so review gate is active (matches mock pr-reviews.json)
+    export WIGGUM_APPROVED_USER_IDS="12345,67890"
+
     # Create a minimal kanban.md
     cat > "$RALPH_DIR/kanban.md" << 'EOF'
 # Kanban
@@ -77,9 +80,9 @@ EOF
     # Create pr_url.txt
     echo "https://github.com/test/repo/pull/$pr_number" > "$worker_dir/pr_url.txt"
 
-    # Create mock pr-reviews.json (copilot reviewed)
+    # Create mock pr-reviews.json (approved review from user ID 12345)
     cat > "$worker_dir/pr-reviews.json" << 'EOF'
-[{"user": {"login": "copilot"}, "state": "APPROVED"}]
+[{"user_id": 12345, "state": "APPROVED", "submitted_at": "2024-01-27T12:00:00Z"}]
 EOF
 
     echo "$worker_dir"
@@ -623,6 +626,90 @@ test_gather_includes_worker_with_no_git_state() {
 }
 
 # =============================================================================
+# _is_pr_ready_to_merge() — Copilot Review Gate Tests
+# =============================================================================
+
+test_ready_to_merge_blocks_without_reviews() {
+    pr_merge_init "$RALPH_DIR"
+    local state_file="$RALPH_DIR/orchestrator/pr-merge-state.json"
+
+    # PR with no review from approved user (copilot_reviewed=false)
+    jq '.prs = {
+        "TASK-001": {
+            "pr_number": 1,
+            "has_new_comments": false,
+            "copilot_reviewed": false,
+            "mergeable_to_main": true
+        }
+    }' "$state_file" > "$state_file.tmp"
+    mv "$state_file.tmp" "$state_file"
+
+    local exit_code=0
+    local reason
+    reason=$(_is_pr_ready_to_merge "$state_file" "TASK-001" 2>/dev/null) || exit_code=$?
+    assert_not_equals "0" "$exit_code" "PR without review should not be ready to merge"
+    assert_output_contains "$reason" "unaddressed review" "Should mention review requests"
+}
+
+test_ready_to_merge_allows_approved_review() {
+    pr_merge_init "$RALPH_DIR"
+    local state_file="$RALPH_DIR/orchestrator/pr-merge-state.json"
+
+    jq '.prs = {
+        "TASK-001": {
+            "pr_number": 1,
+            "has_new_comments": false,
+            "copilot_reviewed": true,
+            "mergeable_to_main": true
+        }
+    }' "$state_file" > "$state_file.tmp"
+    mv "$state_file.tmp" "$state_file"
+
+    local exit_code=0
+    _is_pr_ready_to_merge "$state_file" "TASK-001" 2>/dev/null || exit_code=$?
+    assert_equals "0" "$exit_code" "PR with approved review should be ready to merge"
+}
+
+test_ready_to_merge_blocks_changes_requested() {
+    pr_merge_init "$RALPH_DIR"
+    local state_file="$RALPH_DIR/orchestrator/pr-merge-state.json"
+
+    jq '.prs = {
+        "TASK-001": {
+            "pr_number": 1,
+            "has_new_comments": false,
+            "copilot_reviewed": false,
+            "mergeable_to_main": true
+        }
+    }' "$state_file" > "$state_file.tmp"
+    mv "$state_file.tmp" "$state_file"
+
+    local exit_code=0
+    local reason
+    reason=$(_is_pr_ready_to_merge "$state_file" "TASK-001" 2>/dev/null) || exit_code=$?
+    assert_not_equals "0" "$exit_code" "PR with changes requested should not be ready to merge"
+}
+
+# Verify user_id filtering uses exact numeric match, not substring.
+# Approved ID 12345 must NOT match a reviewer with ID 123456.
+test_review_filter_rejects_substring_user_id() {
+    local reviews_file="$RALPH_DIR/orchestrator/substring-test.json"
+    cat > "$reviews_file" << 'EOF'
+[{"user_id": 123456, "state": "APPROVED", "submitted_at": "2024-01-27T12:00:00Z"}]
+EOF
+
+    local approved_ids="12345,67890"
+    local latest_state
+    latest_state=$(jq -r --arg ids "$approved_ids" '
+        ($ids | split(",") | map(gsub("^\\s+|\\s+$"; "") | tonumber)) as $allowed |
+        [.[] | select(.user_id as $uid | $allowed | any(. == $uid))] |
+        sort_by(.submitted_at) | last | .state // "NONE"
+    ' "$reviews_file" 2>/dev/null || echo "NONE")
+
+    assert_equals "NONE" "$latest_state" "User ID 123456 should not match approved ID 12345"
+}
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
@@ -651,6 +738,10 @@ run_test test_gather_skips_worker_in_fixing_state
 run_test test_gather_skips_worker_in_needs_fix_state
 run_test test_gather_includes_worker_in_needs_merge_state
 run_test test_gather_includes_worker_with_no_git_state
+run_test test_ready_to_merge_blocks_without_reviews
+run_test test_ready_to_merge_allows_approved_review
+run_test test_ready_to_merge_blocks_changes_requested
+run_test test_review_filter_rejects_substring_user_id
 
 print_test_summary
 exit_with_test_result

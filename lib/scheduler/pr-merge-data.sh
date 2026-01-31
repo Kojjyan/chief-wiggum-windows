@@ -344,15 +344,41 @@ _gather_pr_data() {
         fi
     fi
 
-    local copilot_reviewed="true"
-    if [ -f "$worker_dir/pr-reviews.json" ]; then
-        local changes_requested
-        changes_requested=$(jq -r '[.[] | select(.state == "CHANGES_REQUESTED")] | length' "$worker_dir/pr-reviews.json" 2>/dev/null || echo "0")
-        if [ "$changes_requested" -gt 0 ]; then
-            local latest_state
-            latest_state=$(jq -r 'sort_by(.submitted_at) | last | .state // "NONE"' "$worker_dir/pr-reviews.json" 2>/dev/null || echo "NONE")
-            if [ "$latest_state" = "CHANGES_REQUESTED" ]; then
-                copilot_reviewed="false"
+    # Fetch PR reviews from GitHub and filter by approved user IDs.
+    # If approved_user_ids is configured, require an APPROVED review from one
+    # of those IDs before allowing merge (usernames are not trusted).
+    local _approved_ids="${WIGGUM_APPROVED_USER_IDS:-}"
+    local copilot_reviewed="false"
+
+    # No approved user IDs configured → no review gate
+    if [ -z "$_approved_ids" ]; then
+        copilot_reviewed="true"
+    elif [ -d "$workspace" ]; then
+        local _remote_url _repo _reviews_json
+        _remote_url=$(git -C "$workspace" remote get-url origin 2>/dev/null || echo "")
+        _repo=""
+        if [[ "$_remote_url" =~ github\.com[:/]([^/]+/[^/.]+) ]]; then
+            _repo="${BASH_REMATCH[1]}"
+            _repo="${_repo%.git}"
+        fi
+        if [ -n "$_repo" ]; then
+            _reviews_json=$(timeout "${WIGGUM_GH_TIMEOUT:-30}" gh api "repos/$_repo/pulls/$pr_number/reviews" \
+                --jq '[.[] | {user_id: .user.id, state: .state, submitted_at: .submitted_at}]' \
+                2>/dev/null || echo "")
+            if [ -n "$_reviews_json" ] && [ "$_reviews_json" != "[]" ] && [ "$_reviews_json" != "null" ]; then
+                echo "$_reviews_json" > "$worker_dir/pr-reviews.json"
+            fi
+        fi
+        # Check reviews from approved user IDs only
+        if [ -f "$worker_dir/pr-reviews.json" ]; then
+            local _latest_approved_state
+            _latest_approved_state=$(jq -r --arg ids "$_approved_ids" '
+                ($ids | split(",") | map(gsub("^\\s+|\\s+$"; "") | tonumber)) as $allowed |
+                [.[] | select(.user_id as $uid | $allowed | any(. == $uid))] |
+                sort_by(.submitted_at) | last | .state // "NONE"
+            ' "$worker_dir/pr-reviews.json" 2>/dev/null || echo "NONE")
+            if [ "$_latest_approved_state" = "APPROVED" ]; then
+                copilot_reviewed="true"
             fi
         fi
     fi
