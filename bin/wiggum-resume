@@ -368,8 +368,9 @@ do_resume() {
 
     mkdir -p "$RALPH_DIR/logs"
 
-    # Launch agent in background using setsid to create a new session/process group.
+    # Launch agent in background using run_detached to create a new session/process group.
     # This prevents SIGINT from the parent (wiggum resume) from killing the worker.
+    # (Uses setsid on Unix, disown on Windows)
     #
     # Security: Pass variables via environment exports, not string interpolation.
     # This prevents command injection if any variable contains shell metacharacters.
@@ -392,7 +393,7 @@ do_resume() {
     export _WORKER_RESUME_INSTRUCTIONS="${resume_instructions_path:-}"
 
     # shellcheck disable=SC2016
-    setsid bash -c '
+    run_detached bash -c '
         set -euo pipefail
         _log_ts() { echo "[$(date -Iseconds)] $*"; }
         _log_ts "INFO: Worker subprocess starting (resume)"

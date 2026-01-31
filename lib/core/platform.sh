@@ -12,7 +12,34 @@ set -euo pipefail
 _PLATFORM_LOADED=1
 
 # =============================================================================
-# PLATFORM DETECTION (cached at source time)
+# PLATFORM TYPE DETECTION (cached at source time)
+# =============================================================================
+
+# Platform type constants - set exactly once at source time
+_PLATFORM_WINDOWS=0
+_PLATFORM_MACOS=0
+_PLATFORM_LINUX=0
+
+case "$OSTYPE" in
+    msys*|cygwin*|mingw*)
+        _PLATFORM_WINDOWS=1
+        ;;
+    darwin*)
+        _PLATFORM_MACOS=1
+        ;;
+    *)
+        _PLATFORM_LINUX=1
+        ;;
+esac
+
+# Platform detection functions
+# Returns: 0 (true) if on that platform, 1 (false) otherwise
+is_windows() { (( _PLATFORM_WINDOWS )); }
+is_macos()   { (( _PLATFORM_MACOS )); }
+is_linux()   { (( _PLATFORM_LINUX )); }
+
+# =============================================================================
+# FEATURE DETECTION (cached at source time)
 # =============================================================================
 
 # Detect GNU find (supports -printf) vs BSD find (macOS)
@@ -30,7 +57,7 @@ fi
 # Usage: sed_inplace <sed_expression> <file>
 # Example: sed_inplace 's/foo/bar/' myfile.txt
 sed_inplace() {
-    if [[ "$OSTYPE" == darwin* ]]; then
+    if is_macos; then
         sed -i '' "$@"
     else
         sed -i "$@"
@@ -270,7 +297,7 @@ date_today_midnight() {
 grep_pcre_match() {
     local pattern="$1"
     local file="${2:-}"
-    if [[ "$OSTYPE" == darwin* ]]; then
+    if is_macos; then
         # macOS: use perl since grep doesn't support -P
         if [ -n "$file" ]; then
             perl -ne 'while (m{'"$pattern"'}g) { print "$&\n"; }' "$file" 2>/dev/null
@@ -278,7 +305,7 @@ grep_pcre_match() {
             perl -ne 'while (m{'"$pattern"'}g) { print "$&\n"; }' 2>/dev/null
         fi
     else
-        # Linux: use native grep -oP
+        # Linux/Windows: use native grep -oP
         if [ -n "$file" ]; then
             grep -oP "$pattern" "$file" 2>/dev/null
         else
@@ -293,7 +320,7 @@ grep_pcre_match() {
 grep_pcre_test() {
     local pattern="$1"
     local file="${2:-}"
-    if [[ "$OSTYPE" == darwin* ]]; then
+    if is_macos; then
         # macOS: use perl since grep doesn't support -P
         if [ -n "$file" ]; then
             perl -ne 'exit 0 if m{'"$pattern"'}' "$file" 2>/dev/null && return 0
@@ -302,11 +329,71 @@ grep_pcre_test() {
         fi
         return 1
     else
-        # Linux: use native grep -qP
+        # Linux/Windows: use native grep -qP
         if [ -n "$file" ]; then
             grep -qP "$pattern" "$file" 2>/dev/null
         else
             grep -qP "$pattern" 2>/dev/null
         fi
+    fi
+}
+
+# =============================================================================
+# PORTABLE UUID GENERATION
+# =============================================================================
+
+# Generate a UUID (cross-platform)
+#
+# Uses uuidgen if available, falls back to PowerShell on Windows,
+# /proc/sys/kernel/random/uuid on Linux, or pseudo-UUID as last resort.
+#
+# Returns: UUID string on stdout (e.g., "550e8400-e29b-41d4-a716-446655440000")
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen
+    elif is_windows; then
+        # Windows: use PowerShell for UUID generation
+        powershell.exe -NoProfile -Command "[guid]::NewGuid().ToString()" 2>/dev/null
+    elif [[ -f /proc/sys/kernel/random/uuid ]]; then
+        # Linux: use kernel random UUID
+        cat /proc/sys/kernel/random/uuid
+    else
+        # Fallback: generate pseudo-UUID using $RANDOM
+        # Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (version 4 UUID)
+        printf '%04x%04x-%04x-%04x-%04x-%04x%04x%04x\n' \
+            $RANDOM $RANDOM \
+            $RANDOM \
+            $(( ($RANDOM & 0x0fff) | 0x4000 )) \
+            $(( ($RANDOM & 0x3fff) | 0x8000 )) \
+            $RANDOM $RANDOM $RANDOM
+    fi
+}
+
+# =============================================================================
+# PORTABLE PROCESS SPAWNING
+# =============================================================================
+
+# Run a command in background, detached from the current session (cross-platform)
+#
+# On Unix, uses setsid to create a new session/process group.
+# On Windows (Git Bash), uses bash with disown for similar isolation.
+#
+# Usage: run_detached <command> [args...]
+# Note: The command runs in the background. Use $! to get the PID.
+#
+# Example:
+#   run_detached bash -c 'echo hello' >> /tmp/log 2>&1
+#   echo "Background PID: $!"
+run_detached() {
+    if is_windows; then
+        # Windows: run in background and disown
+        # disown removes the job from the shell's job table so it won't
+        # receive SIGHUP when the parent shell exits
+        "$@" &
+        disown $! 2>/dev/null || true
+    else
+        # Unix: use setsid to create a new session/process group
+        # This prevents signals from the parent from reaching the child
+        setsid "$@" &
     fi
 }

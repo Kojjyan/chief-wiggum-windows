@@ -528,9 +528,10 @@ cmd_task_fix() {
         log "Launching fix pipeline for $(basename "$worker_dir") (with test verification)"
     fi
 
-    # Launch agent in background via setsid (new session, won't receive parent signals)
+    # Launch agent in background via run_detached (new session, won't receive parent signals)
+    # (Uses setsid on Unix, disown on Windows)
     # shellcheck disable=SC2016
-    setsid bash -c '
+    run_detached bash -c '
         set -euo pipefail
         _log_ts() { echo "[$(date -Iseconds)] $*"; }
         _log_ts "INFO: Fix agent subprocess starting"

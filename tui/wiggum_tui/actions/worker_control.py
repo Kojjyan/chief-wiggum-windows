@@ -1,8 +1,12 @@
 """Worker control actions - stop, kill, verify via wiggum CLI."""
 
 import os
+import platform
 import subprocess
 from pathlib import Path
+
+# Platform detection
+IS_WINDOWS = platform.system() == "Windows"
 
 
 def stop_worker(worker_id: str) -> bool:
@@ -46,7 +50,7 @@ def kill_worker(worker_id: str) -> bool:
 
 
 def verify_worker_process(pid: int) -> bool:
-    """Verify PID is actually a worker process.
+    """Verify PID is actually a worker process (cross-platform).
 
     Args:
         pid: Process ID to verify.
@@ -54,19 +58,34 @@ def verify_worker_process(pid: int) -> bool:
     Returns:
         True if the process is a worker, False otherwise.
     """
-    try:
-        cmdline_path = Path(f"/proc/{pid}/cmdline")
-        if cmdline_path.exists():
-            cmdline = cmdline_path.read_text()
+    if IS_WINDOWS:
+        try:
+            # Windows: Use WMIC to get command line
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             # Agents run in bash subshells via run_agent()
-            return "bash" in cmdline
-        return False
-    except (OSError, PermissionError):
-        return False
+            return "bash" in result.stdout.lower()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False
+    else:
+        # Linux: Use /proc filesystem
+        try:
+            cmdline_path = Path(f"/proc/{pid}/cmdline")
+            if cmdline_path.exists():
+                cmdline = cmdline_path.read_text()
+                # Agents run in bash subshells via run_agent()
+                return "bash" in cmdline
+            return False
+        except (OSError, PermissionError):
+            return False
 
 
 def is_process_running(pid: int) -> bool:
-    """Check if a process is running.
+    """Check if a process is running (cross-platform).
 
     Args:
         pid: Process ID to check.
@@ -74,11 +93,25 @@ def is_process_running(pid: int) -> bool:
     Returns:
         True if process exists, False otherwise.
     """
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it
-        return True
+    if IS_WINDOWS:
+        try:
+            # Windows: Use tasklist to check if process exists
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    else:
+        # Unix: Use os.kill with signal 0
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Process exists but we can't signal it
+            return True

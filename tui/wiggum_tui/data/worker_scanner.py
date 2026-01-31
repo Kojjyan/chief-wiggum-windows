@@ -2,10 +2,14 @@
 
 import json
 import os
+import platform
 import re
 import subprocess
 from pathlib import Path
 from .models import PipelineInfo, Worker, WorkerStatus
+
+# Platform detection
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # Pattern: worker-TASK-XXX-TIMESTAMP
@@ -83,18 +87,32 @@ def read_pipeline_config(worker_dir: Path) -> PipelineInfo | None:
 
 
 def is_process_running(pid: int) -> bool:
-    """Check if a process is running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+    """Check if a process is running (cross-platform)."""
+    if IS_WINDOWS:
+        try:
+            # Use tasklist to check if process exists
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    else:
+        # Unix: use os.kill with signal 0 (doesn't actually send a signal)
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
 
 
 def batch_check_processes(pids: list[int]) -> dict[int, str]:
-    """Check multiple PIDs in a single ps call.
+    """Check multiple PIDs in a single call (cross-platform).
 
     Args:
         pids: List of process IDs to check.
@@ -106,33 +124,66 @@ def batch_check_processes(pids: list[int]) -> dict[int, str]:
     if not pids:
         return {}
 
-    try:
-        # Single ps call for all PIDs - much faster than per-PID calls
-        result = subprocess.run(
-            ["ps", "-p", ",".join(str(p) for p in pids), "-o", "pid=,args="],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        process_info: dict[int, str] = {}
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
-                continue
-            parts = line.strip().split(None, 1)
-            if len(parts) >= 2:
+    if IS_WINDOWS:
+        try:
+            # Windows: Use WMIC to get process info for all PIDs
+            # Note: WMIC is deprecated but still widely available
+            result = subprocess.run(
+                ["wmic", "process", "get", "ProcessId,CommandLine"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            process_info: dict[int, str] = {}
+            pid_set = set(pids)
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                # WMIC output format: CommandLine ProcessId
+                # But actual format can vary, so we'll try to extract PID
+                parts = line.strip().split()
+                if not parts:
+                    continue
                 try:
-                    pid = int(parts[0])
-                    args = parts[1]
-                    process_info[pid] = args
+                    # PID is typically the last element
+                    pid = int(parts[-1])
+                    if pid in pid_set:
+                        # CommandLine is everything except the last part
+                        cmdline = " ".join(parts[:-1])
+                        process_info[pid] = cmdline
                 except ValueError:
                     continue
-        return process_info
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return {}
+            return process_info
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return {}
+    else:
+        try:
+            # Unix: Single ps call for all PIDs - much faster than per-PID calls
+            result = subprocess.run(
+                ["ps", "-p", ",".join(str(p) for p in pids), "-o", "pid=,args="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            process_info: dict[int, str] = {}
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.strip().split(None, 1)
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[0])
+                        args = parts[1]
+                        process_info[pid] = args
+                    except ValueError:
+                        continue
+            return process_info
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return {}
 
 
 def is_worker_process(pid: int, process_info: dict[int, str] | None = None) -> bool:
-    """Check if PID is actually a worker process.
+    """Check if PID is actually a worker process (cross-platform).
 
     Args:
         pid: Process ID to check.
@@ -141,24 +192,37 @@ def is_worker_process(pid: int, process_info: dict[int, str] | None = None) -> b
     """
     if process_info is not None:
         args = process_info.get(pid, "")
-        return "bash" in args
+        return "bash" in args.lower()
 
     # Fallback to single-PID check
-    try:
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "args="],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        # Agents run in bash subshells via run_agent()
-        return "bash" in result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+    if IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            # Agents run in bash subshells via run_agent()
+            return "bash" in result.stdout.lower()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    else:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "args="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            # Agents run in bash subshells via run_agent()
+            return "bash" in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
 
 
 def is_orchestrator_process(pid: int, process_info: dict[int, str] | None = None) -> bool:
-    """Check if PID is actually an orchestrator process.
+    """Check if PID is actually an orchestrator process (cross-platform).
 
     Args:
         pid: Process ID to check.
@@ -170,16 +234,28 @@ def is_orchestrator_process(pid: int, process_info: dict[int, str] | None = None
         return "wiggum-run" in args
 
     # Fallback to single-PID check
-    try:
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "args="],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return "wiggum-run" in result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+    if IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return "wiggum-run" in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    else:
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "args="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return "wiggum-run" in result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
 
 
 def get_prd_status(prd_path: Path) -> str:

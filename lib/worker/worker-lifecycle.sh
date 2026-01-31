@@ -14,6 +14,93 @@ source "$WIGGUM_HOME/lib/core/platform.sh"
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/file-lock.sh"
 
+# =============================================================================
+# CROSS-PLATFORM PROCESS MANAGEMENT
+# =============================================================================
+
+# Check if a process exists (cross-platform)
+#
+# Args:
+#   pid - Process ID to check
+#
+# Returns: 0 if process exists, 1 otherwise
+process_exists() {
+    local pid="$1"
+
+    if is_windows; then
+        # Windows: use tasklist to check if process exists
+        # Note: Using // for Windows-style flags in Git Bash
+        tasklist.exe //FI "PID eq $pid" 2>/dev/null | grep -q "$pid"
+    else
+        # Unix: use kill -0 (doesn't actually send signal, just checks)
+        kill -0 "$pid" 2>/dev/null
+    fi
+}
+
+# Get child process IDs (cross-platform)
+#
+# Args:
+#   parent_pid - Parent process ID
+#
+# Returns: Child PIDs on stdout (space-separated), or empty if none
+get_child_pids() {
+    local parent_pid="$1"
+
+    if is_windows; then
+        # Windows: use PowerShell to query child processes via WMI
+        powershell.exe -NoProfile -Command \
+            "Get-CimInstance Win32_Process | Where-Object { \$_.ParentProcessId -eq $parent_pid } | Select-Object -ExpandProperty ProcessId" 2>/dev/null || true
+    else
+        # Unix: use pgrep -P
+        pgrep -P "$parent_pid" 2>/dev/null || true
+    fi
+}
+
+# Get process command line (cross-platform)
+#
+# Args:
+#   pid - Process ID
+#
+# Returns: Command line string on stdout, or empty if not found
+get_process_cmdline() {
+    local pid="$1"
+
+    if is_windows; then
+        # Windows: use WMIC to get command line
+        # WMIC output has header + data lines, we want the data
+        wmic.exe process where "ProcessId=$pid" get CommandLine 2>/dev/null | tail -n +2 | head -1 | tr -d '\r'
+    else
+        # Unix: use ps -p with args format
+        ps -p "$pid" -o args= 2>/dev/null
+    fi
+}
+
+# Kill a process (cross-platform)
+#
+# Args:
+#   pid    - Process ID to kill
+#   signal - Signal to send: TERM (graceful) or KILL (force). Default: KILL
+#
+# Returns: 0 on success (or if process doesn't exist), 1 on error
+kill_process() {
+    local pid="$1"
+    local signal="${2:-KILL}"
+
+    if is_windows; then
+        # Windows: use taskkill
+        if [[ "$signal" == "KILL" || "$signal" == "9" ]]; then
+            # Force kill
+            taskkill.exe //F //PID "$pid" >/dev/null 2>&1 || true
+        else
+            # Graceful termination (without /F)
+            taskkill.exe //PID "$pid" >/dev/null 2>&1 || true
+        fi
+    else
+        # Unix: use kill with signal
+        kill -"$signal" "$pid" 2>/dev/null || true
+    fi
+}
+
 # Global lock file for PID operations (prevents race conditions)
 _PID_OPS_LOCK_FILE=""
 
@@ -128,8 +215,8 @@ get_valid_worker_pid() {
         return 1
     fi
 
-    # Check if process is running
-    if ! kill -0 "$pid" 2>/dev/null; then
+    # Check if process is running (cross-platform)
+    if ! process_exists "$pid"; then
         return 1
     fi
 
@@ -137,9 +224,9 @@ get_valid_worker_pid() {
     # Check process args for wiggum patterns or bash (for agent subshells)
     if [ -n "$process_pattern" ]; then
         local cmdline
-        cmdline=$(ps -p "$pid" -o args= 2>/dev/null)
+        cmdline=$(get_process_cmdline "$pid")
         # Accept wiggum commands, bash subshells, or explicit pattern
-        if ! echo "$cmdline" | grep -qE "(wiggum|$process_pattern|/bin/bash|\.ralph/)"; then
+        if ! echo "$cmdline" | grep -qE "(wiggum|$process_pattern|/bin/bash|bash|\.ralph/)"; then
             return 1
         fi
     fi
@@ -181,8 +268,8 @@ get_worker_pid() {
     fi
 
     # Check if process is running AND is a bash process (agent subshell)
-    if kill -0 "$pid" 2>/dev/null; then
-        if ps -p "$pid" -o args= 2>/dev/null | grep -q "bash"; then
+    if process_exists "$pid"; then
+        if get_process_cmdline "$pid" | grep -q "bash"; then
             echo "$pid"
             return 0
         else
@@ -236,13 +323,8 @@ scan_active_workers() {
 
     lock_file=$(_get_pid_ops_lock "$ralph_dir")
 
-    # Use flock for atomic PID operations
-    (
-        flock -w 10 200 || {
-            log_warn "scan_active_workers: Failed to acquire lock after 10s"
-            exit 2  # Distinguishable exit code for lock failure
-        }
-
+    # Inner function to do the actual scanning
+    _do_scan() {
         for worker_dir in "$ralph_dir/workers"/worker-*; do
             [ -d "$worker_dir" ] || continue
 
@@ -263,8 +345,27 @@ scan_active_workers() {
                 rm -f "$pid_file"
             fi
         done
+    }
 
-    ) 200>"$lock_file"
+    if is_windows; then
+        # Windows: use directory-based locking
+        if _acquire_dir_lock "$lock_file" 10; then
+            _do_scan
+            _release_dir_lock "$lock_file"
+        else
+            log_warn "scan_active_workers: Failed to acquire lock after 10s"
+            return 2
+        fi
+    else
+        # Unix: use flock for atomic PID operations
+        (
+            flock -w 10 200 || {
+                log_warn "scan_active_workers: Failed to acquire lock after 10s"
+                exit 2  # Distinguishable exit code for lock failure
+            }
+            _do_scan
+        ) 200>"$lock_file"
+    fi
 }
 
 # Atomically write a PID file
@@ -282,20 +383,33 @@ write_pid_file() {
     local lock_file
     lock_file=$(_get_pid_ops_lock "$ralph_dir")
 
-    (
-        flock -w 5 200 || {
-            log_warn "write_pid_file: Failed to acquire lock"
-            # Security: Use umask to restrict PID file permissions
-            umask 077
-            echo "$pid" > "$pid_file"
-            exit 0
-        }
-
+    # Inner function to write the file
+    _do_write() {
         # Security: Use umask to restrict PID file permissions (owner only)
         umask 077
         echo "$pid" > "$pid_file"
+    }
 
-    ) 200>"$lock_file"
+    if is_windows; then
+        # Windows: use directory-based locking
+        if _acquire_dir_lock "$lock_file" 5; then
+            _do_write
+            _release_dir_lock "$lock_file"
+        else
+            log_warn "write_pid_file: Failed to acquire lock"
+            _do_write
+        fi
+    else
+        # Unix: use flock
+        (
+            flock -w 5 200 || {
+                log_warn "write_pid_file: Failed to acquire lock"
+                _do_write
+                exit 0
+            }
+            _do_write
+        ) 200>"$lock_file"
+    fi
 }
 
 # Atomically remove a PID file
@@ -311,16 +425,26 @@ remove_pid_file() {
     local lock_file
     lock_file=$(_get_pid_ops_lock "$ralph_dir")
 
-    (
-        flock -w 5 200 || {
+    if is_windows; then
+        # Windows: use directory-based locking
+        if _acquire_dir_lock "$lock_file" 5; then
+            rm -f "$pid_file"
+            _release_dir_lock "$lock_file"
+        else
             log_warn "remove_pid_file: Failed to acquire lock"
             rm -f "$pid_file"
-            exit 0
-        }
-
-        rm -f "$pid_file"
-
-    ) 200>"$lock_file"
+        fi
+    else
+        # Unix: use flock
+        (
+            flock -w 5 200 || {
+                log_warn "remove_pid_file: Failed to acquire lock"
+                rm -f "$pid_file"
+                exit 0
+            }
+            rm -f "$pid_file"
+        ) 200>"$lock_file"
+    fi
 }
 
 # Kill a process and all its descendants (children, grandchildren, etc.)
@@ -341,17 +465,17 @@ kill_process_tree() {
         return 1
     fi
 
-    # Get all child PIDs
+    # Get all child PIDs (cross-platform)
     local children
-    children=$(pgrep -P "$pid" 2>/dev/null) || true
+    children=$(get_child_pids "$pid")
 
     # Recursively kill children first (depth-first)
     for child in $children; do
         kill_process_tree "$child" "$signal"
     done
 
-    # Now kill the parent
-    kill -"$signal" "$pid" 2>/dev/null || true
+    # Now kill the parent (cross-platform)
+    kill_process "$pid" "$signal"
 }
 
 # Wait for worker PID file to be created
@@ -438,13 +562,13 @@ terminate_single_worker() {
     else
         # Wait for graceful shutdown
         local elapsed=0
-        while kill -0 "$pid" 2>/dev/null && [ $elapsed -lt "$timeout" ]; do
+        while process_exists "$pid" && [ $elapsed -lt "$timeout" ]; do
             sleep 1
             ((++elapsed))
         done
     fi
 
-    if kill -0 "$pid" 2>/dev/null; then
+    if process_exists "$pid"; then
         return 1
     fi
 
@@ -493,17 +617,17 @@ terminate_all_workers() {
         return 0
     fi
 
-    # Get running PIDs
+    # Get running PIDs (cross-platform)
     local -a all_pids=()
     for pid in "${!worker_pids_map[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
+        if process_exists "$pid"; then
             all_pids+=("$pid")
         fi
     done
 
     # Send signal to all workers
     for pid in "${all_pids[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
+        if process_exists "$pid"; then
             echo "Stopping ${worker_pids_map[$pid]} (PID $pid)"
             kill_process_tree "$pid" "$signal"
         fi
@@ -515,7 +639,7 @@ terminate_all_workers() {
         while [ $elapsed -lt "$timeout" ]; do
             local all_stopped=true
             for pid in "${all_pids[@]}"; do
-                if kill -0 "$pid" 2>/dev/null; then
+                if process_exists "$pid"; then
                     all_stopped=false
                     break
                 fi
@@ -533,7 +657,7 @@ terminate_all_workers() {
         local worker_id="${worker_pids_map[$pid]}"
         local worker_dir="$ralph_dir/workers/$worker_id"
 
-        if ! kill -0 "$pid" 2>/dev/null; then
+        if ! process_exists "$pid"; then
             ((++TERMINATE_ALL_COUNT)) || true
             [ -f "$worker_dir/agent.pid" ] && rm -f "$worker_dir/agent.pid"
         else
@@ -559,7 +683,7 @@ force_kill_remaining_workers() {
 
     while read -r pid _task_id worker_id; do
         [ -n "$pid" ] || continue
-        if kill -0 "$pid" 2>/dev/null; then
+        if process_exists "$pid"; then
             echo "Force killing $worker_id (PID $pid)"
             kill_process_tree "$pid" KILL
             ((++killed)) || true

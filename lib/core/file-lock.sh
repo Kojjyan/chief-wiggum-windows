@@ -5,6 +5,52 @@ set -euo pipefail
 source "$WIGGUM_HOME/lib/core/platform.sh"
 
 # =============================================================================
+# CROSS-PLATFORM FILE LOCKING (Windows + Unix)
+# =============================================================================
+#
+# Windows does not have flock. We use mkdir atomicity as a portable mutex:
+# - mkdir is atomic on all platforms (including Windows NTFS)
+# - Only one process can successfully create the directory
+# - Other processes fail with EEXIST
+#
+# Unix systems continue to use flock for better performance and semantics.
+
+# Acquire a directory-based lock (cross-platform)
+#
+# Uses mkdir atomicity as mutex. Works on Windows, Linux, and macOS.
+# Creates a .lockdir directory that acts as the lock.
+#
+# Args:
+#   lock_path - Base path for the lock (will create ${lock_path}.lockdir)
+#   timeout   - Maximum seconds to wait for lock (default: 10)
+#
+# Returns: 0 if lock acquired, 1 if timeout
+_acquire_dir_lock() {
+    local lock_path="$1"
+    local timeout="${2:-10}"
+    local lock_dir="${lock_path}.lockdir"
+
+    local elapsed=0
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        (( elapsed++ >= timeout )) && return 1
+        sleep 1
+    done
+    # Write PID for debugging (not used for lock validation)
+    echo "$$" > "$lock_dir/pid" 2>/dev/null || true
+    return 0
+}
+
+# Release a directory-based lock
+#
+# Args:
+#   lock_path - Base path for the lock (same as passed to _acquire_dir_lock)
+_release_dir_lock() {
+    local lock_path="$1"
+    local lock_dir="${lock_path}.lockdir"
+    rm -rf "$lock_dir" 2>/dev/null || true
+}
+
+# =============================================================================
 # APPEND WITH LOCK (Common Pattern)
 # =============================================================================
 # Consolidates duplicate flock-based append implementations from:
@@ -15,7 +61,8 @@ source "$WIGGUM_HOME/lib/core/platform.sh"
 # Append content to a file with flock protection
 #
 # Uses flock for safe concurrent appends from multiple workers.
-# Lock file is NOT removed after use (avoids TOCTOU race conditions).
+# On Windows, uses directory-based locking (mkdir atomicity).
+# Lock file is NOT removed after use on Unix (avoids TOCTOU race conditions).
 #
 # Args:
 #   file    - File to append to
@@ -29,14 +76,26 @@ append_with_lock() {
     local timeout="${3:-2}"
     local lock_file="${file}.lock"
 
-    (
-        flock -w "$timeout" 200 || {
+    if is_windows; then
+        # Windows: use directory-based locking
+        if _acquire_dir_lock "$lock_file" "$timeout"; then
+            echo "$content" >> "$file"
+            _release_dir_lock "$lock_file"
+        else
             # Lock failed, write directly (better than losing data)
             echo "$content" >> "$file"
-            exit 0
-        }
-        echo "$content" >> "$file"
-    ) 200>"$lock_file"
+        fi
+    else
+        # Unix: use flock for better performance
+        (
+            flock -w "$timeout" 200 || {
+                # Lock failed, write directly (better than losing data)
+                echo "$content" >> "$file"
+                exit 0
+            }
+            echo "$content" >> "$file"
+        ) 200>"$lock_file"
+    fi
 }
 
 # Retry a command with file locking
@@ -48,31 +107,54 @@ with_file_lock() {
     local lock_file="${file}.lock"
     local retry=0
 
-    while [ $retry -lt "$max_retries" ]; do
-        # Try to acquire lock with flock
-        # Note: lock file is intentionally NOT removed after use.
-        # Removing it creates a TOCTOU race where concurrent processes
-        # can hold locks on different inodes simultaneously.
-        (
-            flock -w 10 200 || exit 1
+    if is_windows; then
+        # Windows: use directory-based locking
+        while [ $retry -lt "$max_retries" ]; do
+            if _acquire_dir_lock "$lock_file" 10; then
+                # Execute command while holding lock
+                local result=0
+                "$@" || result=$?
+                _release_dir_lock "$lock_file"
 
-            # Execute command while holding lock
-            "$@"
+                if [ $result -eq 0 ]; then
+                    return 0
+                fi
+            fi
 
-        ) 200>"$lock_file"
+            # Failed - retry after delay
+            ((++retry))
+            if [ $retry -lt "$max_retries" ]; then
+                sleep $((retry * 2))  # Exponential backoff
+            fi
+        done
+    else
+        # Unix: use flock for better performance
+        while [ $retry -lt "$max_retries" ]; do
+            # Try to acquire lock with flock
+            # Note: lock file is intentionally NOT removed after use.
+            # Removing it creates a TOCTOU race where concurrent processes
+            # can hold locks on different inodes simultaneously.
+            (
+                flock -w 10 200 || exit 1
 
-        local result=$?
+                # Execute command while holding lock
+                "$@"
 
-        if [ $result -eq 0 ]; then
-            return 0
-        fi
+            ) 200>"$lock_file"
 
-        # Failed - retry after delay
-        ((++retry))
-        if [ $retry -lt "$max_retries" ]; then
-            sleep $((retry * 2))  # Exponential backoff
-        fi
-    done
+            local result=$?
+
+            if [ $result -eq 0 ]; then
+                return 0
+            fi
+
+            # Failed - retry after delay
+            ((++retry))
+            if [ $retry -lt "$max_retries" ]; then
+                sleep $((retry * 2))  # Exponential backoff
+            fi
+        done
+    fi
 
     return 1
 }

@@ -7,6 +7,7 @@ set -euo pipefail
 
 source "$WIGGUM_HOME/lib/core/logger.sh"
 source "$WIGGUM_HOME/lib/core/exit-codes.sh"
+source "$WIGGUM_HOME/lib/core/platform.sh"
 
 # Terminal colors (if supported)
 if [ -t 1 ]; then
@@ -309,8 +310,15 @@ check_uuidgen() {
 }
 
 # Check setsid is installed (used for worker process isolation)
+# On Windows, setsid is not required - we use disown instead
 check_setsid() {
     local name="setsid"
+
+    # Windows doesn't have setsid, but we use disown as an alternative
+    if is_windows; then
+        _print_check "info" "$name" "Not required on Windows (using disown)"
+        return 0
+    fi
 
     if ! check_command_exists setsid; then
         _print_check "fail" "$name" "Not installed. Install: apt install util-linux / brew install util-linux (macOS)"
@@ -318,6 +326,47 @@ check_setsid() {
     fi
 
     _print_check "pass" "$name" "Available"
+    return 0
+}
+
+# Check Windows-specific tools (tasklist, powershell)
+# Only called on Windows - these are used for process management
+check_windows_tools() {
+    local name="Windows tools"
+
+    # Skip on non-Windows
+    if ! is_windows; then
+        return 0
+    fi
+
+    local missing=()
+
+    # Check tasklist.exe (used for process existence checks)
+    if ! command -v tasklist.exe &>/dev/null; then
+        missing+=("tasklist.exe")
+    fi
+
+    # Check powershell.exe (used for child process discovery)
+    if ! command -v powershell.exe &>/dev/null; then
+        missing+=("powershell.exe")
+    fi
+
+    # Check wmic.exe (used for process command line)
+    if ! command -v wmic.exe &>/dev/null; then
+        missing+=("wmic.exe")
+    fi
+
+    # Check taskkill.exe (used for process termination)
+    if ! command -v taskkill.exe &>/dev/null; then
+        missing+=("taskkill.exe")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        _print_check "fail" "$name" "Missing: ${missing[*]}. These should be in System32."
+        return 1
+    fi
+
+    _print_check "pass" "$name" "tasklist, powershell, wmic, taskkill available"
     return 0
 }
 
@@ -444,6 +493,7 @@ run_preflight_checks() {
     check_curl
     check_uuidgen
     check_setsid
+    check_windows_tools
     check_timeout
     check_gh_cli
     check_claude_cli

@@ -6,6 +6,32 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${HOME}/.claude/chief-wiggum"
 
+# Detect Windows
+is_windows() {
+    case "$OSTYPE" in
+        msys*|cygwin*|mingw*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Show Windows-specific guidance
+if is_windows; then
+    echo "=== Windows Detected ==="
+    echo ""
+    echo "You're running this script on Windows via Git Bash."
+    echo "This is the recommended way to use Chief Wiggum on Windows."
+    echo ""
+    echo "Prerequisites:"
+    echo "  - Git for Windows (you have it - provides bash)"
+    echo "  - jq: choco install jq OR winget install jqlang.jq"
+    echo "  - gh: choco install gh OR winget install GitHub.cli"
+    echo "  - claude: https://docs.anthropic.com/en/docs/claude-code"
+    echo ""
+    echo "Note: setsid is not available on Windows."
+    echo "      Chief Wiggum will use alternative process isolation."
+    echo ""
+fi
+
 # Check for required binaries
 check_dependencies() {
     local missing=()

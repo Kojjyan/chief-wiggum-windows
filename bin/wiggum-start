@@ -222,11 +222,12 @@ do_start() {
     else
         # Launch agent in background (daemonize)
         # run_agent writes PID to agent.pid - orchestrator can poll for it
-        # Use setsid to create a new session/process group for the worker
+        # Use run_detached to create a new session/process group for the worker
         # This prevents SIGINT from the orchestrator from killing workers
+        # (Uses setsid on Unix, disown on Windows)
 
         # shellcheck disable=SC2016
-        setsid bash -c '
+        run_detached bash -c '
             set -euo pipefail
 
             # Initialize logging early using proper logger infrastructure
