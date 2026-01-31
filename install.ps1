@@ -9,26 +9,67 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 Write-Host "Installing Chief Wiggum to $WIGGUM_HOME" -ForegroundColor Green
 Write-Host ""
 
+# Refresh PATH from registry (picks up newly installed tools)
+function Update-PathFromRegistry {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
+
+# Find a command, checking common installation paths
+function Find-Command {
+    param([string]$Name)
+
+    # First check if it's in PATH
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd) { return $true }
+
+    # Check common paths for specific tools
+    $commonPaths = @(
+        # Git and bash
+        "C:\Program Files\Git\bin\$Name.exe",
+        "C:\Program Files\Git\usr\bin\$Name.exe",
+        "C:\Program Files (x86)\Git\bin\$Name.exe",
+        # Winget installs
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\$Name.exe",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\$Name.exe",
+        # Chocolatey
+        "C:\ProgramData\chocolatey\bin\$Name.exe",
+        # User local bin
+        "$env:USERPROFILE\.local\bin\$Name.exe",
+        "$env:USERPROFILE\AppData\Local\Microsoft\WinGet\Packages\*\$Name.exe"
+    )
+
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) { return $true }
+    }
+
+    return $false
+}
+
 # Check prerequisites
 function Test-Prerequisites {
+    # Refresh PATH first to pick up recently installed tools
+    Update-PathFromRegistry
+
     $required = @{
         "git" = "Git for Windows (https://git-scm.com/download/win)"
         "bash" = "Git Bash (comes with Git for Windows)"
-        "jq" = "choco install jq OR winget install jqlang.jq"
-        "gh" = "choco install gh OR winget install GitHub.cli"
+        "jq" = "winget install jqlang.jq OR choco install jq"
+        "gh" = "winget install GitHub.cli OR choco install gh"
         "curl" = "Should be included with Git for Windows"
     }
 
     $missing = @()
 
     foreach ($cmd in $required.Keys) {
-        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+        if (-not (Find-Command $cmd)) {
             $missing += "$cmd - $($required[$cmd])"
         }
     }
 
     # Check for Claude CLI
-    if (-not (Get-Command "claude" -ErrorAction SilentlyContinue)) {
+    if (-not (Find-Command "claude")) {
         $missing += "claude - https://docs.anthropic.com/en/docs/claude-code"
     }
 
@@ -38,7 +79,10 @@ function Test-Prerequisites {
             Write-Host "  - $m" -ForegroundColor Yellow
         }
         Write-Host ""
-        Write-Host "Please install the missing tools and run this script again." -ForegroundColor Red
+        Write-Host "If you just installed these tools, try:" -ForegroundColor Cyan
+        Write-Host "  1. Close and reopen PowerShell" -ForegroundColor White
+        Write-Host "  2. Run this script again" -ForegroundColor White
+        Write-Host ""
         exit 1
     }
 
