@@ -345,6 +345,22 @@ setsid bash -c '
 ' ...
 ```
 
+### `IFS` and TSV Parsing with `read`
+- **Never use `IFS=$'\t'` with `read` to parse TSV** — bash treats tab as whitespace, so consecutive tabs (empty fields) collapse into a single delimiter, silently shifting all subsequent fields.
+- Use a non-whitespace record separator instead (e.g., ASCII RS `\x1e`):
+
+```bash
+# BAD - empty fields collapse, downstream variables get wrong values
+while IFS=$'\t' read -r name type value; do
+    echo "$value"                    # WRONG: shifted if 'type' was empty
+done < <(jq -r '[.name, .type, .value] | @tsv' file.json)
+
+# GOOD - \x1e is non-whitespace, empty fields preserved
+while IFS=$'\x1e' read -r name type value; do
+    echo "$value"                    # Correct even when 'type' is ""
+done < <(jq -r '[.name, .type, .value] | join("\u001e")' file.json)
+```
+
 ### Platform Compatibility
 - Code must work on both Linux and macOS — use `lib/core/platform.sh` for OS-specific operations (e.g., `stat`, `date`, `sed -i`)
 - Never use GNU-only flags directly; call the platform abstraction instead

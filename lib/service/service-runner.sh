@@ -60,17 +60,13 @@ service_run() {
     shift
     local extra_args=("$@")
 
-    # Get execution config
-    local execution
-    execution=$(service_get_execution "$id")
+    # Get execution config from cache (avoids jq for common function/command types)
+    local exec_type="${_SVC_CACHE["exec_type:${id}"]:-}"
 
-    if [ -z "$execution" ] || [ "$execution" = "null" ]; then
+    if [ -z "$exec_type" ]; then
         log_error "No execution config for service: $id"
         return 1
     fi
-
-    local exec_type
-    exec_type=$(echo "$execution" | jq -r '.type // "unknown"')
 
     local timeout
     timeout=$(service_get_timeout "$id")
@@ -84,9 +80,9 @@ service_run() {
 
     case "$exec_type" in
         command)
-            local command working_dir
-            command=$(echo "$execution" | jq -r '.command // ""')
-            working_dir=$(echo "$execution" | jq -r '.working_dir // ""')
+            local command="${_SVC_CACHE["exec_cmd:${id}"]:-}"
+            local working_dir
+            working_dir=$(service_get_field "$id" ".execution.working_dir" "")
 
             if [ -z "$command" ]; then
                 log_error "Service $id has no command defined"
@@ -97,9 +93,8 @@ service_run() {
             ;;
 
         function)
-            local func args_json
-            func=$(echo "$execution" | jq -r '.function // ""')
-            args_json=$(echo "$execution" | jq -c '.args // []')
+            local func="${_SVC_CACHE["exec_func:${id}"]:-}"
+            local args_json="[]"
 
             if [ -z "$func" ]; then
                 log_error "Service $id has no function defined"
@@ -111,7 +106,7 @@ service_run() {
 
         pipeline)
             local pipeline_name
-            pipeline_name=$(echo "$execution" | jq -r '.pipeline // ""')
+            pipeline_name=$(service_get_field "$id" ".execution.pipeline" "")
 
             if [ -z "$pipeline_name" ]; then
                 log_error "Service $id has no pipeline defined"
@@ -123,13 +118,16 @@ service_run() {
 
         agent)
             local agent_type
-            agent_type=$(echo "$execution" | jq -r '.agent // ""')
+            agent_type=$(service_get_field "$id" ".execution.agent" "")
 
             if [ -z "$agent_type" ]; then
                 log_error "Service $id has no agent defined"
                 return 1
             fi
 
+            # Agent type needs full execution JSON for config pass-through
+            local execution
+            execution=$(service_get_execution "$id")
             _run_service_agent "$id" "$agent_type" "$timeout" "$execution" "$limits" "${extra_args[@]}"
             ;;
 
@@ -608,11 +606,7 @@ service_run_sync() {
     shift
     local extra_args=("$@")
 
-    local execution
-    execution=$(service_get_execution "$id")
-
-    local exec_type
-    exec_type=$(echo "$execution" | jq -r '.type // "unknown"')
+    local exec_type="${_SVC_CACHE["exec_type:${id}"]:-}"
 
     local timeout
     timeout=$(service_get_timeout "$id")
@@ -630,9 +624,9 @@ service_run_sync() {
 
     case "$exec_type" in
         command)
-            local command working_dir
-            command=$(echo "$execution" | jq -r '.command // ""')
-            working_dir=$(echo "$execution" | jq -r '.working_dir // ""')
+            local command="${_SVC_CACHE["exec_cmd:${id}"]:-}"
+            local working_dir
+            working_dir=$(service_get_field "$id" ".execution.working_dir" "")
 
             local dir="${working_dir:-$_RUNNER_PROJECT_DIR}"
 
@@ -660,9 +654,8 @@ service_run_sync() {
             ;;
 
         function)
-            local func args_json
-            func=$(echo "$execution" | jq -r '.function // ""')
-            args_json=$(echo "$execution" | jq -c '.args // []')
+            local func="${_SVC_CACHE["exec_func:${id}"]:-}"
+            local args_json="[]"
 
             # Security: Validate function name starts with required prefix
             if [[ "$func" != "${_SERVICE_FUNCTION_PREFIX}"* ]]; then
@@ -714,7 +707,7 @@ service_run_sync() {
 
         pipeline)
             local pipeline_name
-            pipeline_name=$(echo "$execution" | jq -r '.pipeline // ""')
+            pipeline_name=$(service_get_field "$id" ".execution.pipeline" "")
 
             # Find pipeline config
             local pipeline_config=""
@@ -743,11 +736,11 @@ service_run_sync() {
 
         agent)
             local agent_type worker_dir max_iterations max_turns monitor_interval
-            agent_type=$(echo "$execution" | jq -r '.agent // ""')
-            worker_dir=$(echo "$execution" | jq -r '.worker_dir // ""')
-            max_iterations=$(echo "$execution" | jq -r '.max_iterations // 20')
-            max_turns=$(echo "$execution" | jq -r '.max_turns // 50')
-            monitor_interval=$(echo "$execution" | jq -r '.monitor_interval // 30')
+            agent_type=$(service_get_field "$id" ".execution.agent" "")
+            worker_dir=$(service_get_field "$id" ".execution.worker_dir" "")
+            max_iterations=$(service_get_field "$id" ".execution.max_iterations" "20")
+            max_turns=$(service_get_field "$id" ".execution.max_turns" "50")
+            monitor_interval=$(service_get_field "$id" ".execution.monitor_interval" "30")
 
             if [ -z "$agent_type" ]; then
                 log_error "Service $id has no agent defined"

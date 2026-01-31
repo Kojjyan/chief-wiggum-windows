@@ -140,6 +140,15 @@ EOF
 # =============================================================================
 
 main() {
+    # Raise file descriptor limit (orchestrator spawns many subprocesses per tick)
+    # Default 1024 on some systems (NixOS) is insufficient for the jq/fork overhead.
+    # Try 65536 first, fall back to doubling the current limit.
+    local _cur_nofile
+    _cur_nofile=$(ulimit -n 2>/dev/null) || _cur_nofile=1024
+    if [ "$_cur_nofile" -lt 8192 ]; then
+        ulimit -n 65536 2>/dev/null || ulimit -n 8192 2>/dev/null || ulimit -n 4096 2>/dev/null || true
+    fi
+
     # Parse verbose flags first
     parse_verbose_flags "$@"
     set -- "${WIGGUM_REMAINING_ARGS[@]}"
@@ -186,6 +195,11 @@ main() {
         log "Merge-only mode: disabled fix-workers, multi-pr-planner services"
     elif [[ "$WIGGUM_RUN_MODE" == "fix-only" ]]; then
         log "Fix-only mode: task spawning disabled"
+    fi
+
+    # Invalidate service config cache after run-mode modifications to _SERVICE_JSON
+    if [[ "$WIGGUM_RUN_MODE" != "default" ]]; then
+        _service_populate_cache
     fi
 
     # Export configuration for service handlers

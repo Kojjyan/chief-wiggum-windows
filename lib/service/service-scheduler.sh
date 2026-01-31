@@ -360,15 +360,11 @@ _run_service_if_allowed() {
     shift
     local args=("$@")
 
-    # Check concurrency
-    local concurrency
-    concurrency=$(service_get_concurrency "$id")
-
-    local max_instances if_running priority queue_max
-    max_instances=$(echo "$concurrency" | jq -r '.max_instances // 1')
-    if_running=$(echo "$concurrency" | jq -r '.if_running // "skip"')
-    priority=$(echo "$concurrency" | jq -r '.priority // "normal"')
-    queue_max=$(echo "$concurrency" | jq -r '.queue_max // 10')
+    # Check concurrency (from cache — avoids 5 jq calls per invocation)
+    local max_instances="${_SVC_CACHE["conc_max:${id}"]:-1}"
+    local if_running="${_SVC_CACHE["conc_if_running:${id}"]:-skip}"
+    local priority="${_SVC_CACHE["conc_priority:${id}"]:-normal}"
+    local queue_max="${_SVC_CACHE["conc_queue_max:${id}"]:-10}"
 
     local running_count
     running_count=$(service_state_get_running_count "$id")
@@ -551,10 +547,7 @@ _circuit_breaker_blocks() {
             ;;
         open)
             # Check if cooldown has passed
-            local cb_config
-            cb_config=$(service_get_circuit_breaker "$id")
-            local cooldown
-            cooldown=$(echo "$cb_config" | jq -r '.cooldown // 300')
+            local cooldown="${_SVC_CACHE["cb_cooldown:${id}"]:-300}"
 
             local opened_at
             opened_at=$(service_state_get_circuit_opened_at "$id")
@@ -573,10 +566,7 @@ _circuit_breaker_blocks() {
             ;;
         half-open)
             # Allow limited test requests
-            local cb_config
-            cb_config=$(service_get_circuit_breaker "$id")
-            local half_open_requests
-            half_open_requests=$(echo "$cb_config" | jq -r '.half_open_requests // 1')
+            local half_open_requests="${_SVC_CACHE["cb_half_open:${id}"]:-1}"
 
             local attempts
             attempts=$(service_state_get_half_open_attempts "$id")
@@ -600,10 +590,7 @@ _update_circuit_breaker() {
     local fail_count
     fail_count=$(service_state_get_fail_count "$id")
 
-    local cb_config
-    cb_config=$(service_get_circuit_breaker "$id")
-    local threshold
-    threshold=$(echo "$cb_config" | jq -r '.threshold // 5')
+    local threshold="${_SVC_CACHE["cb_threshold:${id}"]:-5}"
 
     local circuit_state
     circuit_state=$(service_state_get_circuit_state "$id")
@@ -900,6 +887,8 @@ service_scheduler_set_group_enabled() {
     if [ -n "$_SERVICE_JSON" ]; then
         _SERVICE_JSON=$(echo "$_SERVICE_JSON" | jq --arg g "$group" --argjson e "$enabled" \
             '.groups[$g].enabled = $e')
+        # Rebuild cache since enabled services may have changed
+        _service_populate_cache
         log "Service group '$group' $([ "$enabled" = "true" ] && echo "enabled" || echo "disabled")"
     fi
 }
@@ -985,16 +974,12 @@ _run_phase_services() {
 
         log_debug "Phase $phase: running $id"
 
-        local exec_config
-        exec_config=$(service_get_execution "$id")
-        local exec_type
-        exec_type=$(echo "$exec_config" | jq -r '.type // "function"')
+        local exec_type="${_SVC_CACHE["exec_type:${id}"]:-function}"
 
         local exec_rc=0
         case "$exec_type" in
             function)
-                local func_name
-                func_name=$(echo "$exec_config" | jq -r '.function // ""')
+                local func_name="${_SVC_CACHE["exec_func:${id}"]:-}"
                 if [ -n "$func_name" ] && declare -F "$func_name" > /dev/null 2>&1; then
                     service_state_mark_started "$id"
                     "$func_name" || exec_rc=$?
@@ -1009,8 +994,7 @@ _run_phase_services() {
                 fi
                 ;;
             command)
-                local cmd
-                cmd=$(echo "$exec_config" | jq -r '.command // ""')
+                local cmd="${_SVC_CACHE["exec_cmd:${id}"]:-}"
                 if [ -n "$cmd" ]; then
                     service_state_mark_started "$id"
                     bash -c "$cmd" || exec_rc=$?

@@ -102,81 +102,58 @@ service_state_init() {
 # Persist current state to disk
 #
 # Called periodically and on shutdown to preserve state for recovery.
+# Builds JSON entirely in bash to avoid N+1 jq subprocess calls per tick.
+# All values are simple numbers or known-safe strings from bash arrays.
 service_state_save() {
     [ -n "$_SERVICE_STATE_FILE" ] || return 1
 
-    local state_json='{"version":"1.0","services":{}}'
+    local now
+    now=$(epoch_now)
 
-    # Build services object
+    # Build JSON in bash (no jq needed — values are numbers/simple strings)
+    local json='{"version":"1.0","saved_at":'"$now"',"services":{'
+    local first=true
+
     for id in "${!_SERVICE_LAST_RUN[@]}"; do
-        local last_run="${_SERVICE_LAST_RUN[$id]:-0}"
-        local status="${_SERVICE_STATUS[$id]:-stopped}"
-        local run_count="${_SERVICE_RUN_COUNT[$id]:-0}"
-        local fail_count="${_SERVICE_FAIL_COUNT[$id]:-0}"
-        local pid="${_SERVICE_RUNNING_PID[$id]:-}"
-        local circuit_state="${_SERVICE_CIRCUIT_STATE[$id]:-closed}"
-        local circuit_opened="${_SERVICE_CIRCUIT_OPENED_AT[$id]:-0}"
-        local half_open_attempts="${_SERVICE_HALF_OPEN_ATTEMPTS[$id]:-0}"
-        local total_duration="${_SERVICE_TOTAL_DURATION[$id]:-0}"
-        local success_count="${_SERVICE_SUCCESS_COUNT[$id]:-0}"
-        local last_duration="${_SERVICE_LAST_DURATION[$id]:-0}"
-        local min_duration="${_SERVICE_MIN_DURATION[$id]:-0}"
-        local max_duration="${_SERVICE_MAX_DURATION[$id]:-0}"
-        local queue="${_SERVICE_QUEUE[$id]:-[]}"
-        local backoff_until="${_SERVICE_BACKOFF_UNTIL[$id]:-0}"
-        local retry_count="${_SERVICE_RETRY_COUNT[$id]:-0}"
-        local last_success="${_SERVICE_LAST_SUCCESS[$id]:-0}"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            json+=','
+        fi
 
-        state_json=$(echo "$state_json" | jq --arg id "$id" \
-            --argjson last_run "$last_run" \
-            --arg status "$status" \
-            --argjson run_count "$run_count" \
-            --argjson fail_count "$fail_count" \
-            --arg pid "$pid" \
-            --arg circuit_state "$circuit_state" \
-            --argjson circuit_opened "$circuit_opened" \
-            --argjson half_open_attempts "$half_open_attempts" \
-            --argjson total_duration "$total_duration" \
-            --argjson success_count "$success_count" \
-            --argjson last_duration "$last_duration" \
-            --argjson min_duration "$min_duration" \
-            --argjson max_duration "$max_duration" \
-            --argjson queue "$queue" \
-            --argjson backoff_until "$backoff_until" \
-            --argjson retry_count "$retry_count" \
-            --argjson last_success "$last_success" \
-            '.services[$id] = {
-                "last_run": $last_run,
-                "status": $status,
-                "run_count": $run_count,
-                "fail_count": $fail_count,
-                "pid": (if $pid == "" then null else ($pid | tonumber) end),
-                "circuit": {
-                    "state": $circuit_state,
-                    "opened_at": $circuit_opened,
-                    "half_open_attempts": $half_open_attempts
-                },
-                "metrics": {
-                    "total_duration_ms": $total_duration,
-                    "success_count": $success_count,
-                    "last_duration_ms": $last_duration,
-                    "min_duration_ms": $min_duration,
-                    "max_duration_ms": $max_duration
-                },
-                "queue": $queue,
-                "backoff_until": $backoff_until,
-                "retry_count": $retry_count,
-                "last_success": $last_success
-            }')
+        local pid="${_SERVICE_RUNNING_PID[$id]:-}"
+        local pid_json="null"
+        if [ -n "$pid" ]; then
+            pid_json="$pid"
+        fi
+
+        json+='"'"$id"'":{'
+        json+='"last_run":'"${_SERVICE_LAST_RUN[$id]:-0}"
+        json+=',"status":"'"${_SERVICE_STATUS[$id]:-stopped}"'"'
+        json+=',"run_count":'"${_SERVICE_RUN_COUNT[$id]:-0}"
+        json+=',"fail_count":'"${_SERVICE_FAIL_COUNT[$id]:-0}"
+        json+=',"pid":'"$pid_json"
+        json+=',"circuit":{"state":"'"${_SERVICE_CIRCUIT_STATE[$id]:-closed}"'"'
+        json+=',"opened_at":'"${_SERVICE_CIRCUIT_OPENED_AT[$id]:-0}"
+        json+=',"half_open_attempts":'"${_SERVICE_HALF_OPEN_ATTEMPTS[$id]:-0}"'}'
+        json+=',"metrics":{"total_duration_ms":'"${_SERVICE_TOTAL_DURATION[$id]:-0}"
+        json+=',"success_count":'"${_SERVICE_SUCCESS_COUNT[$id]:-0}"
+        json+=',"last_duration_ms":'"${_SERVICE_LAST_DURATION[$id]:-0}"
+        json+=',"min_duration_ms":'"${_SERVICE_MIN_DURATION[$id]:-0}"
+        json+=',"max_duration_ms":'"${_SERVICE_MAX_DURATION[$id]:-0}"'}'
+        json+=',"queue":'"${_SERVICE_QUEUE[$id]:-[]}"
+        json+=',"backoff_until":'"${_SERVICE_BACKOFF_UNTIL[$id]:-0}"
+        json+=',"retry_count":'"${_SERVICE_RETRY_COUNT[$id]:-0}"
+        json+=',"last_success":'"${_SERVICE_LAST_SUCCESS[$id]:-0}"
+        json+='}'
     done
 
-    # Add metadata
-    state_json=$(echo "$state_json" | jq --argjson ts "$(epoch_now)" '.saved_at = $ts')
+    json+='}}'
 
     # Write atomically
     local tmp_file
     tmp_file=$(mktemp)
-    echo "$state_json" > "$tmp_file"
+    echo "$json" > "$tmp_file"
     mv "$tmp_file" "$_SERVICE_STATE_FILE"
 }
 

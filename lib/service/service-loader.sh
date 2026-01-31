@@ -35,6 +35,117 @@ _SERVICE_JSON=""             # Merged JSON string (after overrides)
 _SERVICE_COUNT=0
 _SERVICE_VERSION=""
 
+# Service config cache (populated at load time, avoids per-tick jq calls)
+# All service config is static after load/override — cache once, read forever.
+declare -gA _SVC_CACHE=()       # Flat cache: "key_type:service_id" -> value
+_SVC_CACHE_ENABLED=""            # Space-separated enabled service IDs (cached)
+_SVC_CACHE_VALID=false           # Whether cache is populated
+
+# Clear all cached service config (called on load/override)
+_service_cache_clear() {
+    _SVC_CACHE=()
+    _SVC_CACHE_ENABLED=""
+    _SVC_CACHE_VALID=false
+}
+
+# Populate service config cache with a single jq call
+#
+# Extracts all frequently-accessed fields for all enabled services into
+# bash associative arrays. Reduces per-tick jq calls from ~300 to 0.
+_service_populate_cache() {
+    _service_cache_clear
+
+    # Nothing to cache if no config loaded
+    if [ -z "$_SERVICE_JSON" ] && [ -z "$_SERVICE_JSON_FILE" ]; then
+        return
+    fi
+
+    # shellcheck disable=SC2034
+    local -A phase_lists=()
+
+    # Single jq call: extract all cacheable fields for all enabled services
+    while IFS=$'\x1e' read -r id exec_type exec_func exec_cmd sched_type \
+            sched_interval sched_jitter run_on_startup phase order timeout \
+            cb_enabled cb_cooldown cb_half_open cb_threshold depends_on conc_max \
+            conc_if_running conc_priority conc_queue_max cond_file_exists \
+            cond_file_not_exists cond_env_set cond_command has_condition; do
+        [ -n "$id" ] || continue
+
+        _SVC_CACHE_ENABLED+="${_SVC_CACHE_ENABLED:+ }${id}"
+        phase_lists[$phase]+="${phase_lists[$phase]:+ }${id}"
+
+        _SVC_CACHE["exec_type:${id}"]="$exec_type"
+        _SVC_CACHE["exec_func:${id}"]="$exec_func"
+        _SVC_CACHE["exec_cmd:${id}"]="$exec_cmd"
+        _SVC_CACHE["field:${id}:.schedule.type"]="$sched_type"
+        _SVC_CACHE["field:${id}:.schedule.interval"]="$sched_interval"
+        _SVC_CACHE["field:${id}:.schedule.jitter"]="$sched_jitter"
+        _SVC_CACHE["field:${id}:.schedule.run_on_startup"]="$run_on_startup"
+        _SVC_CACHE["field:${id}:.phase"]="$phase"
+        _SVC_CACHE["field:${id}:.order"]="$order"
+        _SVC_CACHE["field:${id}:.timeout"]="$timeout"
+        _SVC_CACHE["cb_enabled:${id}"]="$cb_enabled"
+        _SVC_CACHE["cb_cooldown:${id}"]="$cb_cooldown"
+        _SVC_CACHE["cb_half_open:${id}"]="$cb_half_open"
+        _SVC_CACHE["cb_threshold:${id}"]="$cb_threshold"
+        _SVC_CACHE["depends_on:${id}"]="$depends_on"
+        _SVC_CACHE["conc_max:${id}"]="$conc_max"
+        _SVC_CACHE["conc_if_running:${id}"]="$conc_if_running"
+        _SVC_CACHE["conc_priority:${id}"]="$conc_priority"
+        _SVC_CACHE["conc_queue_max:${id}"]="$conc_queue_max"
+        _SVC_CACHE["has_condition:${id}"]="$has_condition"
+        _SVC_CACHE["cond_fe:${id}"]="$cond_file_exists"
+        _SVC_CACHE["cond_fne:${id}"]="$cond_file_not_exists"
+        _SVC_CACHE["cond_es:${id}"]="$cond_env_set"
+        _SVC_CACHE["cond_cmd:${id}"]="$cond_command"
+    done < <(_service_jq -r '
+        .groups as $groups |
+        (.defaults.circuit_breaker.enabled // false) as $default_cb |
+        (.defaults.timeout // 300) as $default_timeout |
+        [.services[] |
+            select(.enabled != false) |
+            select(
+                (.groups // []) as $svc_groups |
+                ($svc_groups | length == 0) or
+                ($svc_groups | map(. as $g | $groups[$g].enabled // true) | all)
+            )
+        ] | sort_by(.phase // "periodic", .order // 50) | .[] |
+        [
+            .id,
+            (.execution.type // "function"),
+            (.execution.function // ""),
+            (.execution.command // ""),
+            (.schedule.type // "interval"),
+            (.schedule.interval // 0 | tostring),
+            (.schedule.jitter // 0 | tostring),
+            (.schedule.run_on_startup // false | tostring),
+            (.phase // "periodic"),
+            (.order // 50 | tostring),
+            (.timeout // $default_timeout | tostring),
+            ((.circuit_breaker.enabled // $default_cb) | tostring),
+            (.circuit_breaker.cooldown // 300 | tostring),
+            (.circuit_breaker.half_open_requests // 1 | tostring),
+            (.circuit_breaker.threshold // 5 | tostring),
+            (.depends_on // [] | map(tostring) | join(" ")),
+            (.concurrency.max_instances // 1 | tostring),
+            (.concurrency.if_running // "skip"),
+            (.concurrency.priority // "normal"),
+            (.concurrency.queue_max // 10 | tostring),
+            (.condition.file_exists // ""),
+            (.condition.file_not_exists // ""),
+            (.condition.env_set // ""),
+            (.condition.command // ""),
+            (if .condition != null then "true" else "false" end)
+        ] | join("\u001e")
+    ')
+
+    for phase in "${!phase_lists[@]}"; do
+        _SVC_CACHE["phase_ids:${phase}"]="${phase_lists[$phase]}"
+    done
+
+    _SVC_CACHE_VALID=true
+}
+
 # Internal: run jq against the service source
 #
 # Usage: _service_jq [jq-options...] filter
@@ -168,6 +279,7 @@ service_load() {
     _SERVICE_COUNT="$service_count"
 
     log "Loaded service config with $service_count services"
+    _service_populate_cache
     return 0
 }
 
@@ -244,6 +356,7 @@ service_load_override() {
     ')
 
     log "Merged service overrides from $file (now $_SERVICE_COUNT enabled services)"
+    _service_populate_cache
     return 0
 }
 
@@ -253,6 +366,10 @@ service_load_override() {
 #
 # Returns: Space-separated list of service IDs via stdout
 service_get_enabled() {
+    if [ "$_SVC_CACHE_VALID" = true ]; then
+        echo "$_SVC_CACHE_ENABLED"
+        return
+    fi
     _service_jq -r '
         .groups as $groups |
         [.services[] |
@@ -313,12 +430,27 @@ service_get_field() {
     local field="$2"
     local default="${3:-}"
 
+    # Check cache first (populated at load time or lazily)
+    local cache_key="field:${id}:${field}"
+    if [ -n "${_SVC_CACHE[$cache_key]+x}" ]; then
+        local cached="${_SVC_CACHE[$cache_key]}"
+        if [ -z "$cached" ]; then
+            echo "$default"
+        else
+            echo "$cached"
+        fi
+        return
+    fi
+
+    # Fallback to jq (caches result for next call)
     local result
     result=$(_service_jq --arg id "$id" '.services[] | select(.id == $id) | '"$field"' // null' -r)
 
     if [ "$result" = "null" ] || [ -z "$result" ]; then
+        _SVC_CACHE[$cache_key]=""
         echo "$default"
     else
+        _SVC_CACHE[$cache_key]="$result"
         echo "$result"
     fi
 }
@@ -331,6 +463,10 @@ service_get_field() {
 # Returns: Interval in seconds (0 if not interval type)
 service_get_interval() {
     local id="$1"
+    if [ -n "${_SVC_CACHE["field:${id}:.schedule.interval"]+x}" ]; then
+        echo "${_SVC_CACHE["field:${id}:.schedule.interval"]}"
+        return
+    fi
     local interval
     interval=$(service_get_field "$id" ".schedule.interval" "0")
     echo "$interval"
@@ -344,6 +480,10 @@ service_get_interval() {
 # Returns: Jitter in seconds (0 if not configured)
 service_get_jitter() {
     local id="$1"
+    if [ -n "${_SVC_CACHE["field:${id}:.schedule.jitter"]+x}" ]; then
+        echo "${_SVC_CACHE["field:${id}:.schedule.jitter"]}"
+        return
+    fi
     service_get_field "$id" ".schedule.jitter" "0"
 }
 
@@ -355,6 +495,10 @@ service_get_jitter() {
 # Returns: 0 if should run on startup, 1 otherwise
 service_runs_on_startup() {
     local id="$1"
+    if [ -n "${_SVC_CACHE["field:${id}:.schedule.run_on_startup"]+x}" ]; then
+        [ "${_SVC_CACHE["field:${id}:.schedule.run_on_startup"]}" = "true" ]
+        return
+    fi
     local run_on_startup
     run_on_startup=$(service_get_field "$id" ".schedule.run_on_startup" "false")
     [ "$run_on_startup" = "true" ]
@@ -426,6 +570,10 @@ service_exists() {
 # Returns: Space-separated list of dependency service IDs
 service_get_dependencies() {
     local id="$1"
+    if [ -n "${_SVC_CACHE["depends_on:${id}"]+x}" ]; then
+        echo "${_SVC_CACHE["depends_on:${id}"]}"
+        return
+    fi
     _service_jq --arg id "$id" -r '.services[] | select(.id == $id) | .depends_on // [] | .[]'
 }
 
@@ -494,12 +642,94 @@ service_get_condition() {
 service_conditions_met() {
     local id="$1"
 
+    # Fast path: use pre-parsed condition fields from cache
+    if [ -n "${_SVC_CACHE["has_condition:${id}"]+x}" ]; then
+        [ "${_SVC_CACHE["has_condition:${id}"]}" = "true" ] || return 0
+
+        # Check file_exists
+        local file_exists_pattern="${_SVC_CACHE["cond_fe:${id}"]:-}"
+        if [ -n "$file_exists_pattern" ]; then
+            # shellcheck disable=SC2086
+            if ! compgen -G $file_exists_pattern > /dev/null 2>&1; then
+                log_debug "Service $id condition file_exists '$file_exists_pattern' not met"
+                return 1
+            fi
+        fi
+
+        # Check file_not_exists
+        local file_not_exists_pattern="${_SVC_CACHE["cond_fne:${id}"]:-}"
+        if [ -n "$file_not_exists_pattern" ]; then
+            # shellcheck disable=SC2086
+            if compgen -G $file_not_exists_pattern > /dev/null 2>&1; then
+                log_debug "Service $id condition file_not_exists '$file_not_exists_pattern' not met"
+                return 1
+            fi
+        fi
+
+        # Check env_set
+        local env_set_var="${_SVC_CACHE["cond_es:${id}"]:-}"
+        if [ -n "$env_set_var" ]; then
+            if [ -z "${!env_set_var:-}" ]; then
+                log_debug "Service $id condition env_set '$env_set_var' not met"
+                return 1
+            fi
+        fi
+
+        # Check command
+        local check_command="${_SVC_CACHE["cond_cmd:${id}"]:-}"
+        if [ -n "$check_command" ]; then
+            if ! bash -c "$check_command" > /dev/null 2>&1; then
+                log_debug "Service $id condition command '$check_command' not met"
+                return 1
+            fi
+        fi
+
+        # env_equals/env_not_equals are rare — fall through to jq only if needed
+        local condition
+        condition=$(service_get_condition "$id")
+        if [ "$condition" != "null" ]; then
+            local env_equals
+            env_equals=$(echo "$condition" | jq -c '.env_equals // null')
+            if [ "$env_equals" != "null" ]; then
+                local env_vars
+                env_vars=$(echo "$env_equals" | jq -r 'keys[]')
+                for var in $env_vars; do
+                    local expected_value
+                    expected_value=$(echo "$env_equals" | jq -r --arg v "$var" '.[$v]')
+                    local actual_value="${!var:-}"
+                    if [ "$actual_value" != "$expected_value" ]; then
+                        log_debug "Service $id condition env_equals '$var=$expected_value' not met (actual: '$actual_value')"
+                        return 1
+                    fi
+                done
+            fi
+
+            local env_not_equals
+            env_not_equals=$(echo "$condition" | jq -c '.env_not_equals // null')
+            if [ "$env_not_equals" != "null" ]; then
+                local env_ne_vars
+                env_ne_vars=$(echo "$env_not_equals" | jq -r 'keys[]')
+                for var in $env_ne_vars; do
+                    local excluded_value
+                    excluded_value=$(echo "$env_not_equals" | jq -r --arg v "$var" '.[$v]')
+                    local actual_value="${!var:-}"
+                    if [ "$actual_value" = "$excluded_value" ]; then
+                        log_debug "Service $id condition env_not_equals '$var!=$excluded_value' not met (actual: '$actual_value')"
+                        return 1
+                    fi
+                done
+            fi
+        fi
+
+        return 0
+    fi
+
+    # Fallback: original jq-based path (for uncached services)
     local condition
     condition=$(service_get_condition "$id")
 
     [ "$condition" = "null" ] && return 0
 
-    # Check file_exists
     local file_exists_pattern
     file_exists_pattern=$(echo "$condition" | jq -r '.file_exists // empty')
     if [ -n "$file_exists_pattern" ]; then
@@ -510,7 +740,6 @@ service_conditions_met() {
         fi
     fi
 
-    # Check file_not_exists
     local file_not_exists_pattern
     file_not_exists_pattern=$(echo "$condition" | jq -r '.file_not_exists // empty')
     if [ -n "$file_not_exists_pattern" ]; then
@@ -521,7 +750,6 @@ service_conditions_met() {
         fi
     fi
 
-    # Check env_set
     local env_set_var
     env_set_var=$(echo "$condition" | jq -r '.env_set // empty')
     if [ -n "$env_set_var" ]; then
@@ -531,7 +759,6 @@ service_conditions_met() {
         fi
     fi
 
-    # Check env_equals
     local env_equals
     env_equals=$(echo "$condition" | jq -c '.env_equals // null')
     if [ "$env_equals" != "null" ]; then
@@ -548,7 +775,6 @@ service_conditions_met() {
         done
     fi
 
-    # Check env_not_equals
     local env_not_equals
     env_not_equals=$(echo "$condition" | jq -c '.env_not_equals // null')
     if [ "$env_not_equals" != "null" ]; then
@@ -565,7 +791,6 @@ service_conditions_met() {
         done
     fi
 
-    # Check command
     local check_command
     check_command=$(echo "$condition" | jq -r '.command // empty')
     if [ -n "$check_command" ]; then
@@ -677,6 +902,10 @@ service_get_circuit_breaker() {
 # Returns: 0 if enabled, 1 otherwise
 service_circuit_breaker_enabled() {
     local id="$1"
+    if [ -n "${_SVC_CACHE["cb_enabled:${id}"]+x}" ]; then
+        [ "${_SVC_CACHE["cb_enabled:${id}"]}" = "true" ]
+        return
+    fi
     local cb
     cb=$(service_get_circuit_breaker "$id")
     local enabled
@@ -996,6 +1225,7 @@ service_load_builtin_defaults() {
     _SERVICE_COUNT=6
 
     log "Loaded built-in default services with $_SERVICE_COUNT services"
+    _service_populate_cache
 }
 
 # =============================================================================
@@ -1032,6 +1262,11 @@ service_get_order() {
 # Returns: Space-separated list of service IDs, sorted by order
 service_get_phase_services() {
     local phase="$1"
+
+    if [ "$_SVC_CACHE_VALID" = true ] && [ -n "${_SVC_CACHE["phase_ids:${phase}"]+x}" ]; then
+        echo "${_SVC_CACHE["phase_ids:${phase}"]}"
+        return
+    fi
 
     _service_jq -r --arg phase "$phase" '
         .groups as $groups |
